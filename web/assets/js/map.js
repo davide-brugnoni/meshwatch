@@ -3,18 +3,15 @@
 const map = L.map('map').setView([42.5, 12.5], 6);
 // mappe di base, tutte gratuite e senza chiave; la scelta resta salvata nel browser
 const OSM = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
-const CARTO = OSM + ' © <a href="https://carto.com/attributions">CARTO</a>';
 const esriImg = () => L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: '© Esri, Maxar, Earthstar Geographics' });
 const BASES = {
-  'Chiara (CARTO Voyager)': L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 20, subdomains: 'abcd', attribution: CARTO }),
-  'Scura (CARTO Dark Matter)': L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 20, subdomains: 'abcd', attribution: CARTO }),
   'OpenStreetMap': L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: OSM, referrerPolicy: 'origin' }),
   'Escursionismo (CyclOSM)': L.tileLayer('https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', { maxZoom: 20, attribution: OSM + ' · CyclOSM', referrerPolicy: 'origin' }),
   'Topografica (OpenTopoMap)': L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: 17, attribution: OSM + ' · © OpenTopoMap (CC-BY-SA)' }),
   'Satellite (Esri)': esriImg(),
   'Satellite con nomi': L.layerGroup([esriImg(), L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 })]),
 };
-let baseName = 'Chiara (CARTO Voyager)';
+let baseName = 'OpenStreetMap';
 try { if (BASES[localStorage.getItem('baseLayer')]) baseName = localStorage.getItem('baseLayer'); } catch (e) { }
 BASES[baseName].addTo(map);
 const trackLayer = L.layerGroup().addTo(map);

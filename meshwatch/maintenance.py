@@ -58,7 +58,8 @@ def purge(db, days):
     n = 0
     n += db._exec(
         "DELETE FROM positions WHERE ts < ? AND rowid NOT IN (SELECT (SELECT p2.rowid FROM positions p2 "
-        "WHERE p2.tracker_id=t.id ORDER BY p2.ts DESC, p2.rowid DESC LIMIT 1) FROM trackers t)",
+        "WHERE p2.tracker_id=t.id ORDER BY p2.ts DESC, p2.rowid DESC LIMIT 1) AS r FROM trackers t "
+        "WHERE r IS NOT NULL)",   # un NULL nella lista (dispositivo senza posizioni) bloccherebbe tutto
         (cutoff,)).rowcount
     n += db._exec("DELETE FROM tracker_polls WHERE ts < ?", (cutoff,)).rowcount
     n += db._exec("DELETE FROM sensor_readings WHERE ts < ?", (cutoff,)).rowcount

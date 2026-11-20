@@ -342,7 +342,7 @@ def create_app(core, auth, web_cfg, updater=None):
         return {"ok": True}
 
     @app.delete("/api/trackers/{tid}/track")
-    async def clear_tracker_track(tid: int, keep_last: bool = True, u=Depends(admin)):
+    async def clear_tracker_track(tid: int, keep_last: bool = False, u=Depends(admin)):
         t = get_tracker(tid)
         n = db.clear_track(tid, keep_last)
         audit(u, "traccia cancellata", f"{t['label']}: {n} punti")
@@ -350,7 +350,7 @@ def create_app(core, auth, web_cfg, updater=None):
         return {"ok": True, "deleted": n}
 
     @app.delete("/api/track")
-    async def clear_all_tracks(keep_last: bool = True, u=Depends(admin)):
+    async def clear_all_tracks(keep_last: bool = False, u=Depends(admin)):
         n = db.clear_track(None, keep_last)
         audit(u, "tracce cancellate", f"tutti i dispositivi: {n} punti")
         core.events.publish("state")

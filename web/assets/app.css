@@ -164,6 +164,15 @@ body.tab-chat #chat-view { display:grid; } body.tab-chat main { display:none; }
 .net-legend .cov-note { color:var(--mute); }
 .net-legend i { display:inline-block; width:18px; height:3px; vertical-align:middle; margin-right:6px; border-radius:2px; }
 #toast.err { background:var(--warn); }
+/* avviso di messaggio arrivato: in alto a destra, si tocca per aprire la conversazione */
+#msg-note { position:fixed; top:calc(64px + env(safe-area-inset-top)); right:16px; z-index:3000; width:min(340px, calc(100% - 32px));
+            background:var(--card); border:1px solid var(--acc); border-radius:10px; padding:10px 12px; cursor:pointer;
+            box-shadow:0 6px 24px rgba(0,0,0,.45); display:flex; flex-direction:column; gap:2px; }
+#msg-note[hidden] { display:none; }
+#msg-note b { color:var(--acc); font-size:13px; }
+#msg-note span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#msg-note small { color:var(--mute); font-size:12px; }
+#msg-note .x { position:absolute; top:4px; right:6px; border:none; background:transparent; color:var(--mute); padding:2px 6px; font-size:16px; }
 /* leaflet scuro */
 .leaflet-bar a, .leaflet-control-layers { background:var(--card); color:var(--ink); border-color:var(--line) !important; }
 .leaflet-bar a:hover { background:#20262a; }

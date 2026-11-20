@@ -14,7 +14,7 @@ Gira su un Raspberry Pi con una radio MeshCore in modalità *Companion USB* (Hel
 
 - **Tracciamento GPS**: a intervalli regolari chiede la telemetria ai dispositivi scelti e salva la traccia. Più dispositivi, ognuno con il suo colore, intervallo, fascia oraria e soglie di avviso.
 - **Intervallo adattivo**: facoltativo, per dispositivo. Se tra due posizioni si è spostato più di 150 m viene interrogato più spesso; quando si ferma torna all'intervallo normale.
-- **Pulizia tracce**: dal cestino sulla mappa (tutti i dispositivi) o da "Cancella traccia" (uno solo) si eliminano i punti salvati; resta l'ultima posizione. Solo admin.
+- **Pulizia tracce**: dal cestino sulla mappa (tutti i dispositivi) o da "Cancella traccia" (uno solo) si eliminano tutte le posizioni salvate, compresa l'ultima: sulla mappa non resta nulla. Solo admin.
 - **Sensori**: tutti i valori della telemetria (temperatura, umidità, pressione, luce, tensione, …) salvati a ogni risposta, anche senza fix GPS, con grafico per sensore e **soglie di avviso** su Telegram.
 - **Percorso dei pacchetti**: per ogni risposta i ripetitori attraversati (*via Rip-Monte → Rip-Valle*), disegnati sulla mappa dal gateway al dispositivo; percorso anche per ogni contatto della rubrica.
 - **Mappa della copertura**: celle colorate dove il dispositivo risponde e dove no, con salti medi: mostra dove manca un ripetitore.
@@ -22,7 +22,7 @@ Gira su un Raspberry Pi con una radio MeshCore in modalità *Companion USB* (Hel
 - **Chat**: messaggi privati e canali (Public e canali privati) direttamente dalla Heltec collegata al Raspberry, dalla pagina, senza accendere un altro dispositivo. Conferma di consegna, nuovi tentativi automatici, messaggi salvati anche a pagina chiusa.
 - **Mappa della rete**: livello "Rete MeshCore" con i nodi che annunciano la posizione e i collegamenti tra ripetitori vicini colorati per SNR.
 - **Rubrica del gateway**: contatti della Heltec con salti, posizione e ultimo advert; preferiti, azzera percorso, rimuovi, aggiunta manuale dei nuovi nodi.
-- **Mappe a scelta**: CARTO chiara e scura, OpenStreetMap, CyclOSM, OpenTopoMap, satellite Esri (con o senza nomi). La scelta resta salvata nel browser.
+- **Mappe a scelta**: OpenStreetMap, CyclOSM, OpenTopoMap, satellite Esri (con o senza nomi). La scelta resta salvata nel browser.
 - **Terminale**: comandi CLI ai ripetitori dalla pagina o da Telegram, con conferma per i comandi che modificano o riavviano e registro di tutti i comandi inviati.
 - **Gateway**: stato e configurazione della radio collegata (nome, potenza, posizione, parametri radio), advert, riavvio.
 - **Sistema**: temperatura, memoria, disco, **avviso di tensione bassa**, riavvio e spegnimento del Raspberry.
@@ -216,9 +216,7 @@ Tutte gratuite e senza chiave, si sceglie dal pulsante dei livelli in alto a des
 
 | Mappa | Adatta per |
 |---|---|
-| Chiara (CARTO Voyager) — predefinita | uso generale, strade e nomi leggibili, tracce ben visibili |
-| Scura (CARTO Dark Matter) | si intona alla pagina scura, la traccia colorata risalta |
-| OpenStreetMap | la più dettagliata (sentieri, edifici, numeri civici) |
+| OpenStreetMap — predefinita | la più dettagliata (sentieri, edifici, numeri civici) |
 | Escursionismo (CyclOSM) | sentieri, piste ciclabili, rilievo |
 | Topografica (OpenTopoMap) | curve di livello, montagna (zoom massimo più basso) |
 | Satellite (Esri) | foto aeree |
