@@ -3,7 +3,7 @@ import time
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -216,6 +216,17 @@ def create_app(core, auth, web_cfg, updater=None):
             s["unread"] = db.unread_count()
         return s
 
+    # ---------- aggiornamenti in tempo reale (Server-Sent Events)
+    @app.get("/api/events")
+    async def events(req: Request, u=Depends(current_user)):
+        try:
+            sub = core.events.subscribe()
+        except (OverflowError, RuntimeError) as e:
+            raise HTTPException(503, str(e))
+        allowed = {"state"} if u["role"] == "guest" else {"state", "chat"}
+        return StreamingResponse(core.events.stream(sub, allowed, req.is_disconnected), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
     # ---------- chat (solo utenti con login: admin e viewer)
     @app.get("/api/chat")
     async def chat_list(u=Depends(viewer)):
@@ -300,6 +311,7 @@ def create_app(core, auth, web_cfg, updater=None):
         tid = db.add_tracker(**f)
         core.schedule_now(tid)
         audit(u, "dispositivo aggiunto", f["label"])
+        core.events.publish("state")
         return {"ok": True, "id": tid}
 
     @app.put("/api/trackers/{tid}")
@@ -318,6 +330,7 @@ def create_app(core, auth, web_cfg, updater=None):
             core.schedule_now(tid)                 # ripreso: chiede subito
         elif "interval_min" in f or "moving_interval_min" in f:
             core.next_due[tid] = time.time() + core.interval_min(db.tracker(tid)) * 60
+        core.events.publish("state")
         return {"ok": True}
 
     @app.delete("/api/trackers/{tid}")
@@ -325,6 +338,7 @@ def create_app(core, auth, web_cfg, updater=None):
         audit(u, "dispositivo eliminato", get_tracker(tid)["label"])
         db.delete_tracker(tid)
         core.next_due.pop(tid, None)
+        core.events.publish("state")
         return {"ok": True}
 
     @app.delete("/api/trackers/{tid}/track")
@@ -332,12 +346,14 @@ def create_app(core, auth, web_cfg, updater=None):
         t = get_tracker(tid)
         n = db.clear_track(tid, keep_last)
         audit(u, "traccia cancellata", f"{t['label']}: {n} punti")
+        core.events.publish("state")
         return {"ok": True, "deleted": n}
 
     @app.delete("/api/track")
     async def clear_all_tracks(keep_last: bool = True, u=Depends(admin)):
         n = db.clear_track(None, keep_last)
         audit(u, "tracce cancellate", f"tutti i dispositivi: {n} punti")
+        core.events.publish("state")
         return {"ok": True, "deleted": n}
 
     # ---------- soglie dei sensori

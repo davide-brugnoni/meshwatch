@@ -16,6 +16,7 @@ header h1 { font-size:17px; margin:0; letter-spacing:.02em; }
 .dot { width:9px; height:9px; border-radius:50%; display:inline-block; background:var(--mute); margin-right:6px; flex:none; }
 .dot.ok { background:var(--ok); box-shadow:0 0 6px var(--ok); } .dot.ko { background:var(--warn); box-shadow:0 0 6px var(--warn); }
 .status { color:var(--mute); font-size:13px; display:flex; align-items:center; }
+.status.live::after { content:'· in diretta'; margin-left:6px; color:var(--acc); font-size:12px; }
 .spacer { flex:1; }
 main { flex:1; min-height:0; display:grid; grid-template-columns: 1fr 390px; }
 #mapwrap { position:relative; min-height:0; }

@@ -4,6 +4,8 @@ import math
 import time
 from datetime import datetime
 
+from .events import Events
+
 log = logging.getLogger("meshwatch.core")
 
 # Comandi che cambiano la configurazione o riavviano: chiedono conferma.
@@ -89,6 +91,7 @@ class Core:
         self.moving = {}             # tracker_id -> True se all'ultima posizione si stava spostando
         self.file_senders = []       # funzioni async(data, filename, caption) per i backup (Telegram)
         self.tasks = set()           # invii della chat in corso
+        self.events = Events()       # notifiche in tempo reale per le pagine aperte
         db.seed_from_config(cfg)
         mesh.on_message = self.on_message
         # invii rimasti a metà quando il programma si è fermato
@@ -140,9 +143,11 @@ class Core:
                 self._update_moving(t, prev, res)
             if res.get("sensors"):
                 self.db.add_sensor_readings(tid, res["sensors"])
+            self.events.publish("state")
             await self._tracker_ok(t, res)
             await self._sensor_alerts(t, res.get("sensors") or [])
         else:
+            self.events.publish("state")
             await self._tracker_fail(t)
         return res
 
@@ -247,6 +252,7 @@ class Core:
     async def poll_repeater(self, name):
         st = await self.mesh.request_status(name, self.repeater_password(name))
         self.db.add_repeater_status(name, st is not None, st)
+        self.events.publish("state")
         await self._repeater_alerts(name, st)
         if st is not None:
             await self.poll_neighbours(name)
@@ -320,6 +326,7 @@ class Core:
         self.db.add_message(dir="in", kind=m["kind"], peer=m["peer"], peer_name=m.get("peer_name"),
                             sender=m.get("sender"), text=m["text"], snr=m.get("snr"),
                             path_len=m.get("path_len"), sender_ts=m.get("sender_ts"), status="received")
+        self.events.publish("chat")
         log.info("Messaggio ricevuto (%s %s)", m["kind"], m.get("peer_name"))
 
     def max_text_bytes(self, kind):
@@ -375,16 +382,17 @@ class Core:
             if trip_ms is not None:
                 f["trip_ms"] = trip_ms
             self.db.update_message(mid, **f)
+            self.events.publish("chat")
         try:
             if kind == "dm":
                 await self.mesh.send_text(peer, text, on_status)
             else:
-                self.db.update_message(mid, status="sending")
+                await on_status("sending")
                 ok = await self.mesh.send_channel(int(peer), text)
-                self.db.update_message(mid, status="sent" if ok else "failed")
+                await on_status("sent" if ok else "failed")
         except Exception as e:
             log.error("Invio messaggio %s: %s", mid, e)
-            self.db.update_message(mid, status="failed")
+            await on_status("failed")
 
     def chat_targets(self):
         """Con chi si può scrivere: canali della radio e contatti companion/room server."""
@@ -547,9 +555,13 @@ class Core:
     async def radio_watchdog(self, tick=20):
         down_since = alerted = None
         last_try = 0
+        was = None
         while True:
             await asyncio.sleep(tick)
             now = time.time()
+            if self.mesh.connected != was:
+                was = self.mesh.connected
+                self.events.publish("state")   # la pagina mostra subito radio collegata/scollegata
             if self.mesh.connected:
                 if down_since:
                     mins = max(1, round((now - down_since) / 60))

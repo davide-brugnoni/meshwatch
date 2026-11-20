@@ -30,6 +30,7 @@ Gira su un Raspberry Pi con una radio MeshCore in modalità *Companion USB* (Hel
 - **Manutenzione e backup**: pulizia automatica dei dati più vecchi di N giorni (default 180); backup di database e config scaricabile dalla pagina o inviato ogni settimana su Telegram.
 - **Registro attività**: login, tentativi falliti e ogni azione di gestione, dalla pagina e da Telegram.
 - **Telegram**: posizione con pin e link Google Maps, ultima posizione, traccia, stato dei nodi, avvisi (dispositivo che non risponde, batteria bassa, ripetitore muto, radio scollegata, nuova versione disponibile).
+- **Tempo reale**: posizioni, ripetitori, stato della radio e messaggi compaiono sulla pagina appena arrivano, senza ricaricare.
 - **Da telefono**: pagina pensata anche per lo smartphone (barra in basso Mappa · Nodi · Gestione).
 - **Aggiornamento dalla pagina**: scarica l'ultima versione da GitHub e riavvia, senza togliere la SD; se la nuova versione non parte torna da sola alla precedente. Quando ne esce una nuova arriva un avviso.
 - **Accesso**: la mappa è libera in casa (sola lettura), la Gestione chiede sempre la password admin. Ruoli *admin* (gestisce tutto) e *viewer* (vede e chiede la posizione). Predisposto per l'accesso da Internet tramite Cloudflare Tunnel.
@@ -142,6 +143,14 @@ sudo systemctl stop meshwatch
 ```bash
 sudo systemctl start meshwatch
 ```
+
+## Tempo reale
+
+La pagina resta collegata al Raspberry (*Server-Sent Events*): quando arriva una posizione, una lettura dei ripetitori, un messaggio o la radio si scollega, il Raspberry avvisa tutte le pagine aperte e queste si aggiornano subito. Accanto allo stato della radio compare **· in diretta**.
+
+- Se il collegamento cade (Wi‑Fi, riavvio, aggiornamento) il browser si ricollega da solo dopo pochi secondi; nel frattempo la pagina torna a chiedere le novità ogni minuto (ogni 4 secondi la chat aperta).
+- Funziona anche tramite Cloudflare Tunnel: ogni 25 secondi passa un segnale che tiene aperta la connessione.
+- L'ospite senza login riceve solo gli aggiornamenti della mappa, non quelli della chat. Al massimo 50 pagine collegate insieme.
 
 ## Chat
 
@@ -281,6 +290,7 @@ meshwatch/            pacchetto Python
   system.py           stato del Raspberry, riavvio/spegnimento
   updater.py          aggiornamento dalla pagina (GitHub), con ripristino
   maintenance.py      pulizia dei dati vecchi e backup
+  events.py           notifiche in tempo reale alla pagina (Server-Sent Events)
 web/index.html        struttura della pagina
 web/assets/app.css    stile
 web/assets/js/        script della pagina, caricati in ordine da index.html:

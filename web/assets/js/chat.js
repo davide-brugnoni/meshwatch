@@ -1,7 +1,8 @@
 // MeshWatch — chat dalla radio gateway
 // ---------- chat
 // I messaggi arrivano alla radio anche a pagina chiusa e restano nel database del Raspberry.
-// La pagina chiede le novità ogni 4 secondi quando la chat è aperta, ogni 30 altrimenti.
+// Il Raspberry avvisa la pagina appena c'è una novità (tempo reale); senza, la pagina
+// chiede le novità ogni 4 secondi quando la chat è aperta, ogni 30 altrimenti.
 const chat = { list: null, cur: null, lastId: 0, msgs: new Map(), timer: null };
 const enc = new TextEncoder();
 const STATUS = {
@@ -136,7 +137,9 @@ async function chatPoll() {
     if (u.messages.length && isChatOpen()) await loadChatList();   // ricalcola anche i non letti
     else setUnread(u.unread);
   } catch (e) { }
-  chat.timer = setTimeout(chatPoll, isChatOpen() && !document.hidden ? 4000 : 30000);
+  // con il tempo reale i messaggi arrivano subito: il controllo periodico è solo di riserva
+  const open_ = isChatOpen() && !document.hidden;
+  chat.timer = setTimeout(chatPoll, live ? (open_ ? 30000 : 120000) : (open_ ? 4000 : 30000));
 }
 function chatPollSoon() { if (canChat()) { clearTimeout(chat.timer); chat.timer = setTimeout(chatPoll, 300); } }
 

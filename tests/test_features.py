@@ -217,10 +217,92 @@ def test_coverage():
     check(v.get("/api/coverage", params={"tracker": other}).json()["cells"] == [], "copertura di un solo dispositivo")
 
 
+def test_events():
+    import threading
+    from meshwatch import events as ev_mod
+    from meshwatch.events import Events
+
+    async def stream_checks():
+        ev = Events()
+        sub = ev.subscribe()
+        st = ev.stream(sub, {"state", "chat"}, ping=0.05)
+        first = await st.__anext__()
+        assert "event: hello" in first
+        ev.publish("state")
+        ev.publish("state")
+        ev.publish("chat")
+        got = [await st.__anext__(), await st.__anext__()]
+        ping = await st.__anext__()
+        # pubblicato da un altro thread (es. una funzione eseguita con asyncio.to_thread)
+        threading.Thread(target=ev.publish, args=("chat",)).start()
+        from_thread = await asyncio.wait_for(st.__anext__(), 2)
+        ev.close()
+        ended = False
+        try:
+            await st.__anext__()
+        except StopAsyncIteration:
+            ended = True
+        return got, ping, from_thread, ended, len(ev.subs)
+    got, ping, from_thread, ended, left = asyncio.run(stream_checks())
+    check(got == ["event: state\ndata: {}\n\n", "event: chat\ndata: {}\n\n"], "notifiche ravvicinate raggruppate per argomento")
+    check(ping == ": ping\n\n", "ping periodico per tenere aperta la connessione")
+    check(from_thread.startswith("event: chat"), "notifica pubblicata da un altro thread")
+    check(ended and left == 0, "riavvio: il flusso si chiude e la pagina viene tolta")
+
+    async def guest_filter():
+        ev = Events()
+        st = ev.stream(ev.subscribe(), {"state"}, ping=5)
+        await st.__anext__()
+        ev.publish("chat")
+        ev.publish("state")
+        out = await asyncio.wait_for(st.__anext__(), 1)
+        await st.aclose()
+        return out, len(ev.subs)
+    out, left = asyncio.run(guest_filter())
+    check(out.startswith("event: state") and left == 0, "l'ospite non riceve le notifiche della chat")
+
+    async def disconnected():
+        ev = Events()
+
+        async def gone():
+            return True
+        st = ev.stream(ev.subscribe(), {"state"}, gone, ping=0.01)
+        await st.__anext__()
+        try:
+            await st.__anext__()
+            return False
+        except StopAsyncIteration:
+            return not ev.subs
+    check(asyncio.run(disconnected()), "pagina chiusa: il flusso finisce")
+
+    async def too_many():
+        ev = Events()
+        for _ in range(ev_mod.MAX_CLIENTS):
+            ev.subscribe()
+        try:
+            ev.subscribe()
+            return False
+        except OverflowError:
+            return True
+    check(asyncio.run(too_many()), "limite di pagine collegate")
+
+    # il core pubblica quando cambia qualcosa
+    db, mesh, core, c, v, anon, tid = setup()
+    seen = []
+    core.events.publish = seen.append
+    asyncio.run(core.poll_tracker(tid))
+    asyncio.run(core.on_message({"kind": "dm", "peer": ALICE[:12], "peer_name": "Alice", "text": "ciao", "sender_ts": 7}))
+    c.put(f"/api/trackers/{tid}", json={"label": "Nuovo nome"})
+    check(seen == ["state", "chat", "state"], "notifiche per posizione, messaggio e dispositivo modificato")
+    closed = TestClient(create_app(core, Auth(db), {"mode": "lan", "public_map": False}))
+    check(closed.get("/api/events").status_code == 401, "tempo reale con login se la mappa non è libera")
+
+
 def main():
     test_sensors()
     test_route()
     test_coverage()
+    test_events()
     print("Tutti i test superati.")
 
 
