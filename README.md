@@ -31,7 +31,7 @@ Gira su un Raspberry Pi con una radio MeshCore in modalità *Companion USB* (Hel
 - **Manutenzione e backup**: pulizia automatica dei dati più vecchi di N giorni (default 180); backup di database e config scaricabile dalla pagina o inviato ogni settimana su Telegram.
 - **Registro attività**: login, tentativi falliti e ogni azione di gestione, dalla pagina e da Telegram.
 - **Telegram**: posizione con pin e link Google Maps, ultima posizione, traccia, stato dei nodi, avvisi (dispositivo che non risponde, batteria bassa, ripetitore muto, radio scollegata, nuova versione disponibile).
-- **Avvisi batteria bassa** (Gestione → Avvisi batteria bassa): ogni quanto ripeterli finché la batteria resta bassa (o una volta sola) e una fascia oraria di silenzio (es. 22:00-07:00). Vale per i dispositivi seguiti e per i ripetitori.
+- **Avvisi batteria bassa**: ripetuti ogni N ore finché la batteria resta bassa (o una volta sola), con fascia oraria di silenzio (es. 22:00-07:00). Per i dispositivi seguiti e i ripetitori; vedi [Avvisi](#avvisi).
 - **Tempo reale**: posizioni, ripetitori, stato della radio e messaggi compaiono sulla pagina appena arrivano, senza ricaricare.
 - **Da telefono**: pagina pensata anche per lo smartphone (barra in basso Mappa · Nodi · Gestione).
 - **Aggiornamento dalla pagina**: scarica l'ultima versione da GitHub e riavvia, senza togliere la SD; se la nuova versione non parte torna da sola alla precedente. Quando ne esce una nuova arriva un avviso.
@@ -84,7 +84,7 @@ sudo systemctl start meshwatch
 Copia `config.example.yaml` in `config.yaml` (con il kit SD il file è `meshwatch-config.yaml` sulla scheda).
 
 - `serial_port: auto` trova da solo la radio.
-- `telegram.token`: crealo con @BotFather. `allowed_chat_ids`: chi può usare il bot e riceve gli avvisi; `admin_chat_ids`: chi può usare il terminale. Il tuo ID te lo dà @userinfobot.
+- `telegram.token`: crealo con @BotFather. `allowed_chat_ids`: chi può usare il bot e riceve gli avvisi; `admin_chat_ids`: chi può usare il terminale. Il tuo ID: scrivi `/start` al bot e te lo risponde lui (oppure chiedilo a @userinfobot).
 - Le sezioni `tracker` e `repeaters` vengono importate solo al primo avvio: poi dispositivi, ripetitori e utenti si gestiscono dalla pagina (scheda **Gestione**).
 
 ### Chi vede cosa
@@ -111,6 +111,7 @@ Copia `config.example.yaml` in `config.yaml` (con il kit SD il file è `meshwatc
 | `/intervallo 30` · `/pausa` · `/riprendi` | gestione del tracciamento |
 | `/advert` | il gateway si annuncia sulla mesh |
 | `/terminale` · `/fine` | comandi CLI a un ripetitore |
+| `/start` · `/aiuto` | tastiera dei comandi rapidi · elenco dei comandi |
 
 Con più dispositivi si scrive il nome dopo il comando, anche solo l'inizio e senza badare alle maiuscole: `/dove escursionista`, `/stats 7 esc`, `/intervallo 15 ciclista`, `/segui 3 esc`. Senza nome il bot chiede quale con dei pulsanti. Scrivendo `/` Telegram mostra l'elenco dei comandi.
 
@@ -141,15 +142,31 @@ Il backup contiene password (token Telegram, ripetitori) e posizioni: conservalo
 - Con il kit SD: `meshwatch.db` in `/var/lib/meshwatch/` (poi `sudo chown meshwatch-svc: /var/lib/meshwatch/meshwatch.db`) e `config.yaml` come `/boot/firmware/meshwatch-config.yaml`, perché viene ricopiato da lì a ogni avvio.
 - Con `install.sh`: entrambi nella cartella del programma.
 
-
-
 ```bash
 sudo systemctl stop meshwatch
-```
-
-```bash
+# ... rimetti meshwatch.db e config.yaml al loro posto ...
 sudo systemctl start meshwatch
 ```
+
+## Avvisi
+
+Arrivano su Telegram alle chat in `allowed_chat_ids`. Dispositivo, ripetitore e radio mandano anche un messaggio quando tornano raggiungibili. La tensione bassa del Raspberry si vede invece nella scheda **Sistema** della pagina.
+
+| Avviso | Quando |
+|---|---|
+| dispositivo che non risponde | nessuna risposta da più di *offline_alert_min* minuti (per dispositivo, default 90) |
+| batteria bassa | tensione del dispositivo sotto la sua soglia (*low_battery_v*) o del ripetitore sotto `repeater_low_battery_v` |
+| ripetitore muto | il ripetitore non risponde da più di 3 ore |
+| sensore fuori soglia | vedi [Sensori](#sensori): un avviso all'uscita e uno al rientro |
+| radio scollegata | la Heltec non risponde; dopo 3 minuti il programma la ricollega da solo |
+| nuova versione | una volta per versione, vedi [Aggiornamenti](#aggiornamenti) |
+
+**Batteria bassa** — in **Gestione → Avvisi batteria bassa** (solo admin):
+
+- **Ripeti l'avviso ogni**: *mai* (una volta sola finché la batteria non risale) oppure ogni 1, 2, 3… ore finché resta sotto la soglia.
+- **Fascia di silenzio** (es. `22:00-07:00`, vuoto = mai): in quelle ore non arriva nulla; se la batteria è ancora bassa l'avviso arriva alla prima lettura dopo la fine della fascia.
+- L'avviso si azzera quando la tensione risale di almeno 0,1 V sopra la soglia, così una batteria che oscilla intorno al limite non manda un messaggio a ogni lettura.
+- Vale solo per i dispositivi seguiti (Gestione → Dispositivi tracciati) e per i ripetitori monitorati, non per gli altri companion della rubrica.
 
 ## Tempo reale
 
@@ -270,7 +287,7 @@ A ogni push GitHub Actions esegue i test (Python 3.11 e 3.13, radio simulata), i
 | `test_smoke.py` | database, ruoli, scheduler, manutenzione, intervallo adattivo, radio |
 | `test_chat.py` | chat, rubrica del gateway, mappa della rete, coda della radio |
 | `test_update.py` | aggiornamento dalla pagina e ripristino |
-| `test_features.py` | sensori e soglie, percorsi, copertura, tempo reale, comandi del bot |
+| `test_features.py` | sensori e soglie, percorsi, copertura, tempo reale, comandi del bot, avvisi batteria |
 | `test_tiles.py` | cache delle mappe con un server delle mappe finto: scadenza, 304, senza Internet, spazio massimo |
 | `test_permissions.py` | **ogni** endpoint dell'API per ospite, viewer e admin; fallisce se se ne aggiunge uno senza dichiarare chi può usarlo |
 | `check_page.py` | file della pagina, id usati dagli script, sintassi JavaScript (serve node) |
