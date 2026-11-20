@@ -105,10 +105,6 @@ def create_app(core, auth, web_cfg, updater=None):
     async def index():
         return FileResponse(WEB_DIR / "index.html")
 
-    @app.get("/icon.svg", include_in_schema=False)
-    async def icon():
-        return FileResponse(WEB_DIR / "icon.svg", media_type="image/svg+xml", headers={"Cache-Control": "max-age=86400"})
-
     # ---------- sessione
     @app.post("/api/login")
     async def login(body: LoginIn, req: Request, resp: Response):
