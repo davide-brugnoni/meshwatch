@@ -80,6 +80,8 @@ function trackerCard(t) {
   else if (p && p.batt_v != null) meta.push(`batteria ${p.batt_v.toFixed(2)} V`);
   if (p && p.alt != null) meta.push(`quota ${Math.round(p.alt)} m`);
   meta.push(`ultima risposta ${fmtTs(t.last_ok)}`);
+  const rt = routeText(t.route);
+  if (rt) meta.push(rt);
   meta.push(t.paused ? 'IN PAUSA' : (t.moving && t.current_interval_min < t.interval_min ? `in movimento, ogni ${t.current_interval_min} min` : `ogni ${t.interval_min} min`)
     + (t.active_hours ? ' (' + t.active_hours + ')' : ''));
   const poll = el('button', { className: 'primary', textContent: 'Chiedi posizione' });
@@ -139,6 +141,7 @@ function render() {
       if (last && !t.track.length) all.push([q.lat, q.lon]);
     });
   });
+  drawRoutes(s.trackers);
   if (!fitDone && all.length) { all.length > 1 ? map.fitBounds(all, { padding: [40, 40], maxZoom: 16 }) : map.setView(all[0], 15); fitDone = true; }
 
   // ripetitori

@@ -19,6 +19,9 @@ async function init() {
     layersCtl.addOverlay(netLayer, 'Rete MeshCore');
     let on = false; try { on = localStorage.getItem('netLayer') === '1'; } catch (e) { }
     if (on) netLayer.addTo(map);
+    layersCtl.addOverlay(routeLayer, 'Percorsi');
+    let rOn = true; try { rOn = localStorage.getItem('routeLayer') !== '0'; } catch (e) { }
+    if (rOn) routeLayer.addTo(map);
   }
   await refresh();
   if (me.role === 'admin' && location.hash === '#gestione') setTab('admin');

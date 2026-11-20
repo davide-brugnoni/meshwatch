@@ -16,9 +16,9 @@ from meshwatch import maintenance  # noqa: E402
 from meshwatch.auth import Auth  # noqa: E402
 from meshwatch.core import Core, fmt_sensor, sensor_info  # noqa: E402
 from meshwatch.db import DB  # noqa: E402
-from meshwatch.mesh import parse_lpp  # noqa: E402
+from meshwatch.mesh import Mesh, decode_path, parse_lpp  # noqa: E402
 from meshwatch.web import create_app  # noqa: E402
-from tests.test_chat import ChatMesh  # noqa: E402
+from tests.test_chat import ALICE, REP, REP2, ChatMesh, contact  # noqa: E402
 
 
 class SensorMesh(ChatMesh):
@@ -29,6 +29,7 @@ class SensorMesh(ChatMesh):
         self.temp = 20.0
         self.fix = True
         self.answer = True
+        self.route = (2, ["b2", "c3"])
 
     async def request_telemetry(self, name):
         if not self.answer:
@@ -39,7 +40,9 @@ class SensorMesh(ChatMesh):
                {"channel": 3, "type": "accelerometer", "value": {"acc_x": 0.1, "acc_y": 0.0, "acc_z": 1.0}}]
         if self.fix:
             lpp.append({"channel": 1, "type": "gps", "value": {"latitude": 45.2, "longitude": 9.2, "altitude": 300}})
-        return parse_lpp(lpp)
+        res = parse_lpp(lpp)
+        res["hops"], res["path"] = self.route
+        return res
 
 
 def check(cond, msg):
@@ -128,8 +131,45 @@ def test_sensors():
     check(not db.sensor_rules(tid) and not db.sensor_latest(tid), "eliminando il dispositivo spariscono letture e soglie")
 
 
+def test_route():
+    db, mesh, core, c, v, anon, tid = setup()
+    check(decode_path("b2c3", 0) == ["b2", "c3"] and decode_path("b2b2c3c3", 1) == ["b2b2", "c3c3"]
+          and decode_path("", 0) == [] and decode_path("b2c", 0) == ["b2"], "decodifica del percorso (1 o 2 byte per salto)")
+    info = Mesh.contact_info({**contact(ALICE, "Alice", 1), "out_path_len": 2, "out_path": "b2c3", "out_path_hash_mode": 0})
+    check(info["path"] == ["b2", "c3"] and Mesh.contact_info(contact(ALICE, "Alice", 1))["path"] == [],
+          "percorso nei contatti della rubrica")
+
+    asyncio.run(core.poll_tracker(tid))
+    r = db.last_route(tid)
+    check(r["hops"] == 2 and r["path"] == ["b2", "c3"], "percorso della risposta salvato")
+    st = v.get("/api/state").json()["trackers"][0]["route"]
+    check([n["name"] for n in st["nodes"]] == ["Rip-Monte", "Rip-Valle"] and st["nodes"][0]["lat"] == 45.1
+          and st["gateway"]["name"] == "Casa" and st["gateway"]["lat"] == 45.05, "ripetitori del percorso con posizione")
+    check(anon.get("/api/state").json()["trackers"][0]["route"] is None, "l'ospite non vede i ripetitori attraversati")
+
+    # prefisso da un byte condiviso da due ripetitori: il più recente, segnato come incerto
+    other = "b2" + "77" * 31
+    mesh.raw[other] = {**contact(other, "Rip-Omonimo", 2, 44.0, 8.0), "last_advert": int(time.time()) - 5}
+    n = core.resolve_path(["b2", "ff"])
+    check(n[0]["name"] == "Rip-Omonimo" and n[0]["ambiguous"] and n[1]["name"] is None, "prefisso ambiguo o sconosciuto")
+    del mesh.raw[other]
+
+    mesh.route = (-1, [])
+    asyncio.run(core.poll_tracker(tid))
+    check(v.get("/api/state").json()["trackers"][0]["route"]["hops"] == -1, "risposta arrivata in flood")
+    mesh.answer = False
+    asyncio.run(core.poll_tracker(tid))
+    check(db.last_route(tid)["hops"] == -1, "una richiesta senza risposta non cambia il percorso")
+
+    mesh.raw[ALICE].update(out_path_len=1, out_path="c3", out_path_hash_mode=0)
+    alice = next(x for x in c.get("/api/contacts").json()["contacts"] if x["name"] == "Alice")
+    check(alice["route"] == ["Rip-Valle"], "percorso dei contatti nella rubrica")
+    check(REP.startswith("b2") and REP2.startswith("c3"), "dati di prova coerenti")
+
+
 def main():
     test_sensors()
+    test_route()
     print("Tutti i test superati.")
 
 

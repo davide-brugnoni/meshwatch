@@ -130,7 +130,7 @@ class Core:
             return None
         res = await self.mesh.request_telemetry(t["contact"])
         ok = res is not None
-        self.db.add_tracker_poll(tid, ok)
+        self.db.add_tracker_poll(tid, ok, *((res.get("hops"), res.get("path")) if ok else (None, None)))
         if ok:
             if res["lat"] is not None:
                 prev = self.db.last_position(tid)
@@ -379,6 +379,34 @@ class Core:
                   for c in self.mesh.contacts() if c["type"] in ("companion", "room server") and c.get("public_key")]
         return chans + people
 
+    # ---------- percorso dei pacchetti
+    def gateway_node(self):
+        si = self.mesh.self_info() if hasattr(self.mesh, "self_info") else {}
+        has_pos = si.get("adv_lat") or si.get("adv_lon")
+        return {"name": si.get("name") or "Gateway", "public_key": si.get("public_key", ""),
+                "lat": si.get("adv_lat") if has_pos else None, "lon": si.get("adv_lon") if has_pos else None}
+
+    def resolve_path(self, path, contacts=None):
+        """Prefissi dei ripetitori → [{hash, name, lat, lon, ambiguous}]. Con prefissi da un byte
+        più ripetitori possono coincidere: si sceglie quello sentito più di recente."""
+        contacts = self.mesh.contacts() if contacts is None else contacts
+        out = []
+        for h in path or []:
+            cands = [c for c in contacts if c.get("public_key", "").lower().startswith(h.lower())]
+            reps = [c for c in cands if c["type"] in ("ripetitore", "room server")] or cands
+            best = max(reps, key=lambda c: c.get("last_advert") or 0) if reps else None
+            out.append({"hash": h, "name": best["name"] if best else None,
+                        "lat": best["lat"] if best else None, "lon": best["lon"] if best else None,
+                        "ambiguous": len(reps) > 1})
+        return out
+
+    def route(self, tid, contacts=None):
+        r = self.db.last_route(tid)
+        if not r:
+            return None
+        return {"ts": r["ts"], "hops": r["hops"], "nodes": self.resolve_path(r["path"], contacts),
+                "gateway": self.gateway_node()}
+
     # ---------- mappa della rete
     def network(self):
         """Nodi con posizione, gateway e collegamenti (vicini dei ripetitori e nodi sentiti
@@ -538,9 +566,10 @@ class Core:
             await asyncio.sleep(3600)
 
     # ---------- dati per interfacce
-    def tracker_state(self, t, since):
+    def tracker_state(self, t, since, contacts=None):
         sensors, history = self.sensors_state(t["id"], since)
         return {
+            "route": self.route(t["id"], contacts),
             "sensors": sensors,
             "sensor_history": history,
             **t,
@@ -554,6 +583,7 @@ class Core:
 
     def state(self, hours=24):
         since = int(time.time()) - hours * 3600
+        contacts = self.mesh.contacts()
         reps = []
         for r in self.db.repeaters():
             last, good = self.db.repeater_latest(r["name"])
@@ -566,7 +596,7 @@ class Core:
             })
         return {
             "radio_connected": self.mesh.connected,
-            "trackers": [self.tracker_state(t, since) for t in self.db.trackers()],
+            "trackers": [self.tracker_state(t, since, contacts) for t in self.db.trackers()],
             "repeaters": reps,
-            "contacts": self.mesh.contacts(),
+            "contacts": contacts,
         }

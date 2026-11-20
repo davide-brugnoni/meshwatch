@@ -348,7 +348,7 @@ function renderContacts() {
     const acts = el('span', { className: 'acts' }, fav, path);
     if (['companion', 'room server'].includes(c.type)) { const w = el('button', { className: 'small', textContent: 'Scrivi' }); w.onclick = () => writeTo(c); acts.append(w); }
     acts.append(rm);
-    const info = [c.type, hopsText(c.hops), 'advert ' + (c.last_advert ? fmtAgo(c.last_advert) : 'mai'),
+    const info = [c.type, hopsText(c.hops) + (c.route && c.route.length ? ' via ' + c.route.join(' → ') : ''), 'advert ' + (c.last_advert ? fmtAgo(c.last_advert) : 'mai'),
       c.lat != null ? `${c.lat.toFixed(4)}, ${c.lon.toFixed(4)}` : 'senza posizione', c.public_key.slice(0, 12)];
     if (c.used_by.length) info.push('usato da ' + c.used_by.join(', '));
     box.append(el('div', { className: 'item' },

@@ -210,6 +210,8 @@ def create_app(core, auth, web_cfg, updater=None):
         s = core.state(max(1, min(hours, 24 * 30)))
         if u["role"] == "guest":
             s["contacts"] = []   # l'ospite vede la mappa, non la rubrica della radio
+            for t in s["trackers"]:
+                t["route"] = None   # né i ripetitori attraversati
         else:
             s["unread"] = db.unread_count()
         return s
@@ -490,8 +492,10 @@ def create_app(core, auth, web_cfg, updater=None):
     async def contacts_list(u=Depends(admin)):
         need_radio()
         out = []
-        for c in core.mesh.contacts():
-            out.append({**c, "used_by": contact_uses(c["name"])})
+        contacts = core.mesh.contacts()
+        for c in contacts:
+            out.append({**c, "used_by": contact_uses(c["name"]),
+                        "route": [n["name"] or n["hash"] for n in core.resolve_path(c.get("path"), contacts)]})
         si = core.mesh.self_info()
         return {"contacts": out, "pending": core.mesh.pending_contacts(),
                 "manual_add": bool(si.get("manual_add_contacts"))}

@@ -16,6 +16,7 @@ Gira su un Raspberry Pi con una radio MeshCore in modalità *Companion USB* (Hel
 - **Intervallo adattivo**: facoltativo, per dispositivo. Se tra due posizioni si è spostato più di 150 m viene interrogato più spesso; quando si ferma torna all'intervallo normale.
 - **Pulizia tracce**: dal cestino sulla mappa (tutti i dispositivi) o da "Cancella traccia" (uno solo) si eliminano i punti salvati; resta l'ultima posizione. Solo admin.
 - **Sensori**: tutti i valori della telemetria (temperatura, umidità, pressione, luce, tensione, …) salvati a ogni risposta, anche senza fix GPS, con grafico per sensore e **soglie di avviso** su Telegram.
+- **Percorso dei pacchetti**: per ogni risposta i ripetitori attraversati (*via Rip-Monte → Rip-Valle*), disegnati sulla mappa dal gateway al dispositivo; percorso anche per ogni contatto della rubrica.
 - **Ripetitori**: login e statistiche periodiche (batteria, uptime, rumore, SNR, RSSI, pacchetti) con grafici di batteria, rumore, SNR e RSSI.
 - **Chat**: messaggi privati e canali (Public e canali privati) direttamente dalla Heltec collegata al Raspberry, dalla pagina, senza accendere un altro dispositivo. Conferma di consegna, nuovi tentativi automatici, messaggi salvati anche a pagina chiusa.
 - **Mappa della rete**: livello "Rete MeshCore" con i nodi che annunciano la posizione e i collegamenti tra ripetitori vicini colorati per SNR.
@@ -167,6 +168,16 @@ Ogni risposta alla telemetria porta, oltre alla posizione, i valori dei sensori 
 - Sulla mappa, dal selettore dei livelli, attiva **Rete MeshCore** (serve il login): rombi gialli i ripetitori, cerchi blu i companion, quadrato verde il gateway. Le linee uniscono i ripetitori che si sentono tra loro: verde SNR ≥ 5 dB, giallo 0–5, arancione sotto 0. La linea tratteggiata indica un ripetitore che il gateway sente direttamente. Compaiono solo i nodi che annunciano la posizione.
 - I vicini vengono chiesti ai ripetitori configurati al massimo ogni 6 ore (servono la password del ripetitore e un firmware recente). Per aggiornarli subito: **Gestione → Rubrica del gateway → Aggiorna mappa della rete**.
 - **Rubrica del gateway** (solo admin): cerca, segna i preferiti, azzera il percorso di un nodo che non risponde più, rimuovi i contatti inutili (la Heltec ne tiene un numero limitato). Con l'**aggiunta manuale** attiva i nodi nuovi restano in attesa finché non li aggiungi. Se rimuovi un contatto usato da un dispositivo o da un ripetitore, la pagina ti avvisa.
+
+## Percorso dei pacchetti
+
+Per raggiungere un nodo il gateway usa un percorso: l'elenco dei ripetitori da attraversare, imparato dalle risposte precedenti. A ogni risposta del dispositivo MeshWatch salva salti e percorso.
+
+- Nella scheda del dispositivo: *diretto dal gateway*, *via Rip-Monte → Rip-Valle* oppure *percorso sconosciuto (flood)* quando il gateway non conosce ancora la strada e la richiesta viene diffusa da tutti.
+- Sulla mappa (con login), livello **Percorsi**: linea tratteggiata dal gateway, attraverso i ripetitori, all'ultima posizione. Servono le posizioni negli advert di gateway e ripetitori; quelli senza posizione vengono saltati e la linea è approssimata.
+- MeshCore identifica i ripetitori del percorso con il primo byte della chiave pubblica: se due ripetitori lo condividono viene scelto quello sentito più di recente e il nome ha un **?**.
+- Nella rubrica del gateway ogni contatto mostra il percorso in uso.
+- L'ospite senza login non vede i percorsi.
 
 ## Mappe
 

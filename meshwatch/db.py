@@ -90,6 +90,12 @@ class DB:
                 if "tracker_id" not in cols:
                     self.conn.execute(f"ALTER TABLE {table} ADD COLUMN tracker_id INTEGER")
             self.conn.execute("CREATE INDEX IF NOT EXISTS i_pos_tr ON positions(tracker_id, ts)")
+            # percorso dei pacchetti: salti e ripetitori attraversati dalla risposta
+            cols = [r[1] for r in self.conn.execute("PRAGMA table_info(tracker_polls)")]
+            for col, typ in (("hops", "INTEGER"), ("path", "TEXT")):
+                if col not in cols:
+                    self.conn.execute(f"ALTER TABLE tracker_polls ADD COLUMN {col} {typ}")
+            self.conn.execute("CREATE INDEX IF NOT EXISTS i_polls_tr ON tracker_polls(tracker_id, ts)")
             # intervallo adattivo: 0 = disattivato
             cols = [r[1] for r in self.conn.execute("PRAGMA table_info(trackers)")]
             if "moving_interval_min" not in cols:
@@ -182,9 +188,17 @@ class DB:
         self._exec("INSERT INTO positions (ts, lat, lon, alt, batt_v, tracker_id) VALUES (?,?,?,?,?,?)",
                    (int(time.time()), lat, lon, alt, batt_v, tid))
 
-    def add_tracker_poll(self, tid, ok):
-        self._exec("INSERT INTO tracker_polls (ts, ok, tracker_id) VALUES (?,?,?)",
-                   (int(time.time()), 1 if ok else 0, tid))
+    def add_tracker_poll(self, tid, ok, hops=None, path=None):
+        self._exec("INSERT INTO tracker_polls (ts, ok, tracker_id, hops, path) VALUES (?,?,?,?,?)",
+                   (int(time.time()), 1 if ok else 0, tid, hops, ",".join(path) if path else None))
+
+    def last_route(self, tid):
+        """Percorso dell'ultima risposta: {ts, hops, path: [prefissi]} o None."""
+        r = self._one("SELECT ts, hops, path FROM tracker_polls WHERE tracker_id=? AND ok=1 AND hops IS NOT NULL "
+                      "ORDER BY ts DESC, rowid DESC LIMIT 1", (tid,))
+        if r:
+            r["path"] = r["path"].split(",") if r["path"] else []
+        return r
 
     def last_position(self, tid):
         return self._one("SELECT * FROM positions WHERE tracker_id=? ORDER BY ts DESC LIMIT 1", (tid,))

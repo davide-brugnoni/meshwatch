@@ -71,5 +71,35 @@ async function loadNetwork() {
     .bindPopup(() => el('div', {}, el('strong', { textContent: n.gateway.name || 'Gateway' }), el('br'), 'gateway (radio collegata al Raspberry)'))
     .addTo(netLayer);
 }
+// percorso dell'ultima risposta: gateway → ripetitori → dispositivo (solo con login)
+const routeLayer = L.layerGroup();
+map.on('overlayadd', e => { if (e.layer === routeLayer) try { localStorage.setItem('routeLayer', '1'); } catch (err) { } });
+map.on('overlayremove', e => { if (e.layer === routeLayer) try { localStorage.setItem('routeLayer', '0'); } catch (err) { } });
+const routeName = n => n.name ? n.name + (n.ambiguous ? '?' : '') : n.hash;
+function routeText(r) {
+  if (!r) return null;
+  if (r.hops < 0) return 'percorso sconosciuto (flood)';
+  if (r.hops === 0 || !r.nodes.length) return 'diretto dal gateway';
+  return 'via ' + r.nodes.map(routeName).join(' → ');
+}
+function drawRoutes(trackers) {
+  routeLayer.clearLayers();
+  trackers.forEach(t => {
+    const r = t.route, p = t.last_position;
+    if (!r || r.hops < 0 || !p) return;
+    const pts = [];
+    if (r.gateway && r.gateway.lat != null) pts.push([r.gateway.lat, r.gateway.lon]);
+    r.nodes.forEach(n => { if (n.lat != null) pts.push([n.lat, n.lon]); });
+    pts.push([p.lat, p.lon]);
+    if (pts.length < 2) return;
+    const missing = r.nodes.filter(n => n.lat == null).length;
+    L.polyline(pts, { color: t.color, weight: 2, opacity: .9, dashArray: '2 7', lineCap: 'round' })
+      .bindPopup(() => el('div', {}, el('strong', { textContent: `Percorso di ${t.label}` }), el('br'),
+        [r.gateway ? r.gateway.name : 'gateway', ...r.nodes.map(routeName), t.label].join(' → '), el('br'),
+        `${hopsText(r.hops)} · ${fmtTs(r.ts)}`, missing ? el('br') : null,
+        missing ? `${missing} ripetitor${missing === 1 ? 'e' : 'i'} senza posizione: linea approssimata` : null))
+      .addTo(routeLayer);
+  });
+}
 const lastMarkers = {};
 const isPhone = () => matchMedia('(max-width: 820px)').matches;

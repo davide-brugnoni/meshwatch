@@ -102,6 +102,15 @@ def parse_lpp(lpp):
     return out
 
 
+def decode_path(path_hex, hash_mode=0):
+    """Percorso di un contatto ("out_path" in esadecimale) → elenco dei ripetitori come
+    prefissi della chiave pubblica (1, 2 o 3 byte per salto secondo hash_mode)."""
+    if not path_hex:
+        return []
+    size = 2 * ((hash_mode if hash_mode and hash_mode > 0 else 0) + 1)
+    return [path_hex[i:i + size] for i in range(0, len(path_hex) - size + 1, size)]
+
+
 def find_serial_port():
     """Trova la porta della radio: prima /dev/serial/by-id, poi ttyUSB*/ttyACM*."""
     import glob
@@ -195,6 +204,7 @@ class Mesh:
                 "last_advert": c.get("last_advert"),
                 "lat": lat if has_pos else None, "lon": lon if has_pos else None,
                 "hops": c.get("out_path_len", -1),          # -1 = percorso sconosciuto (flood)
+                "path": decode_path(c.get("out_path"), c.get("out_path_hash_mode")) if (c.get("out_path_len") or 0) > 0 else [],
                 "favorite": bool((c.get("flags") or 0) & 1)}
 
     def contacts(self):
@@ -221,7 +231,7 @@ class Mesh:
         return self.mc.get_contact_by_key_prefix(key)
 
     async def request_telemetry(self, name, attempts=2):
-        """Chiede la telemetria al nodo. Ritorna dict (lat, lon, alt, batt_v) o None."""
+        """Chiede la telemetria al nodo. Ritorna dict (lat, lon, alt, batt_v, sensors, hops, path) o None."""
         async with self.lock:
             c = await self.contact(name)
             if not c:
@@ -233,7 +243,11 @@ class Mesh:
                         await self.mc.commands.reset_path(c)   # secondo tentativo in flood
                     lpp = await self.mc.commands.req_telemetry_sync(c, min_timeout=20)
                     if lpp is not None:
-                        return parse_lpp(lpp)
+                        res = parse_lpp(lpp)
+                        # percorso che il gateway usa ora per raggiungere il nodo
+                        info = self.contact_info(self.mc.get_contact_by_name(name) or c)
+                        res["hops"], res["path"] = info["hops"], info["path"]
+                        return res
                 except Exception as e:
                     log.error("Telemetria %s: %s", name, e)
             return None
