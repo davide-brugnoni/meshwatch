@@ -6,7 +6,9 @@ async function refresh() {
   const a = document.activeElement;
   if (a && a.tagName === 'INPUT' && ($('trackers').contains(a) || $('reps').contains(a))) { setTimeout(refresh, 5000); return; }
   lastRefresh = Date.now();
-  try { state = await api('/api/state?hours=' + $('range').value); render(); } catch (e) { }
+  let fresh = null;
+  try { fresh = await api('/api/state?hours=' + $('range').value); } catch (e) { }   // rete o login: riprova al prossimo giro
+  if (fresh) { state = fresh; render(); }   // un errore nel disegno deve vedersi in console, non sparire
   if (state && state.unread != null) setUnread(state.unread);
   loadNetwork();
   loadCoverage();

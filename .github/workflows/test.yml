@@ -49,6 +49,9 @@ jobs:
       - name: Test sensori, percorsi, copertura, tempo reale e bot
         run: python tests/test_features.py
 
+      - name: Permessi di tutti gli endpoint per ogni ruolo
+        run: python tests/test_permissions.py
+
   pagina-e-script:
     runs-on: ubuntu-latest
     steps:
@@ -56,6 +59,19 @@ jobs:
 
       - name: Pagina web (file inclusi, id, sintassi JavaScript)
         run: python3 tests/check_page.py
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Browser per il test della pagina
+        run: |
+          pip install -r requirements.txt playwright
+          python -m playwright install --with-deps chromium
+
+      - name: Pagina in un browser vero (computer, telefono, tutte le schede)
+        run: python tests/test_page_browser.py
 
       - name: Script di shell senza errori di sintassi
         run: for f in install.sh tools/*.sh sd-kit/*.sh; do bash -n "$f" && echo "ok $f"; done

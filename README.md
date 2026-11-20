@@ -242,15 +242,29 @@ Cosa succede:
 
 ### Test automatici
 
-A ogni push GitHub Actions esegue i test (Python 3.11 e 3.13, radio simulata), il controllo degli errori nel codice e la verifica della sintassi della pagina e degli script: l'esito è il bollino in cima a questo README e la scheda *Actions* del repository. In locale:
+A ogni push GitHub Actions esegue i test (Python 3.11 e 3.13, radio simulata), il controllo degli errori nel codice e la pagina in un browser vero: l'esito è il bollino in cima a questo README e la scheda *Actions* del repository.
+
+| Test | Cosa controlla |
+|---|---|
+| `test_smoke.py` | database, ruoli, scheduler, manutenzione, intervallo adattivo, radio |
+| `test_chat.py` | chat, rubrica del gateway, mappa della rete, coda della radio |
+| `test_update.py` | aggiornamento dalla pagina e ripristino |
+| `test_features.py` | sensori e soglie, percorsi, copertura, tempo reale, comandi del bot |
+| `test_permissions.py` | **ogni** endpoint dell'API per ospite, viewer e admin; fallisce se se ne aggiunge uno senza dichiarare chi può usarlo |
+| `check_page.py` | file della pagina, id usati dagli script, sintassi JavaScript (serve node) |
+| `test_page_browser.py` | la pagina in Chromium su computer e telefono, tutte le schede, nessun errore JavaScript |
+
+In locale:
 
 ```bash
-pip install httpx pyflakes
+pip install httpx pyflakes playwright && python -m playwright install chromium
 ```
 
 ```bash
-python tests/test_smoke.py && python tests/test_chat.py && python tests/test_update.py && python tests/test_features.py && python tests/check_page.py
-``` Repository e ramo si possono cambiare con la sezione `update:` del config.
+for t in tests/test_*.py tests/check_page.py; do python "$t" || break; done
+```
+
+Repository e ramo si possono cambiare con la sezione `update:` del config.
 
 Ogni 12 ore il programma controlla se c'è una nuova versione: se sì manda un avviso su Telegram (una volta per versione) e mostra un pallino su **Gestione**. Si disattiva con `update.notify: false`.
 
@@ -315,10 +329,14 @@ tests/                test con radio simulata
 ## Sviluppo
 
 ```bash
-python3 -m venv venv && ./venv/bin/pip install -r requirements.txt httpx
-./venv/bin/python tests/test_smoke.py
-./venv/bin/python tests/test_update.py
+python3 -m venv venv && ./venv/bin/pip install -r requirements.txt httpx pyflakes playwright
 ```
+
+```bash
+for t in tests/test_*.py tests/check_page.py; do ./venv/bin/python "$t" || break; done
+```
+
+Per i test della pagina in un browser serve una volta `./venv/bin/python -m playwright install chromium`; senza Playwright quel test viene saltato.
 
 ## Licenza
 
