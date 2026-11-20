@@ -51,3 +51,9 @@ web:
   # Finché non ce ne sono, in modalità lan la pagina è aperta a chi è in casa.
 
 database: meshwatch.db
+
+# Aggiornamento dalla pagina (Gestione → Sistema → Aggiornamento programma).
+# Facoltativo: di solito non serve toccarlo.
+# update:
+#   repo: davide-brugnoni/meshwatch
+#   branch: main

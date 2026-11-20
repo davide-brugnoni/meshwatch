@@ -87,6 +87,22 @@ def main():
     check(c.post("/api/gateway", json={"radio_freq": 869.618, "radio_bw": 62.5, "radio_sf": 9, "radio_cr": 8})
           .status_code == 400, "conferma per cambiare i parametri radio")
 
+    for _ in range(3):
+        c.post("/api/trackers/1/poll")
+    tid2 = db.add_tracker(contact="T2", label="T2", paused=0)
+    db.add_position(tid2, 44.0, 8.0, None, None)
+    db.add_position(tid2, 44.1, 8.0, None, None)
+    n_before = len(db.positions_since(1, 0))
+    last = db.last_position(1)
+    r = c.delete("/api/trackers/1/track").json()
+    check(r["deleted"] == n_before - 1 and db.positions_since(1, 0) == [last]
+          and len(db.positions_since(tid2, 0)) == 2, "cancella traccia di un dispositivo, resta l'ultima posizione")
+    check(c.delete("/api/track").json()["deleted"] == 1 and len(db.positions_since(tid2, 0)) == 1
+          and db.last_position(1) == last, "cancella tutte le tracce")
+    v = TestClient(create_app(core, Auth(db), {"mode": "lan"}))
+    v.post("/api/login", json={"username": "fam", "password": "123456"})
+    check(v.delete("/api/track").status_code == 403, "un viewer non cancella le tracce")
+
     async def sched():
         core.next_due.clear()
         task = asyncio.create_task(core.tracker_loop())

@@ -39,11 +39,6 @@ case "$PWHASH" in
     fi ;;
 esac
 
-# Il servizio puo' riavviare/spegnere il Raspberry dalla pagina web (solo questi due comandi)
-echo 'meshwatch-svc ALL=(root) NOPASSWD: /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff' > /etc/sudoers.d/meshwatch
-chmod 440 /etc/sudoers.d/meshwatch
-visudo -cf /etc/sudoers.d/meshwatch || rm -f /etc/sudoers.d/meshwatch
-
 mkdir -p /opt/meshwatch
 cp -r "$FAT/meshwatch/." /opt/meshwatch/
 python3 -m venv --system-site-packages /opt/meshwatch/venv   # usa PyYAML di sistema (su ARMv7 non ci sono wheel pronte)
@@ -51,38 +46,9 @@ python3 -m venv --system-site-packages /opt/meshwatch/venv   # usa PyYAML di sis
 
 [ -f "$FAT/meshwatch-config.yaml" ] || cp /opt/meshwatch/config.example.yaml "$FAT/meshwatch-config.yaml"
 
-# Prima di ogni avvio: aggiorna il programma se hai copiato una nuova cartella meshwatch sulla SD
-# e copia il config dalla SD in una posizione leggibile solo dal servizio.
-cat > /opt/meshwatch-prestart.sh <<PRE
-#!/bin/sh
-if [ -d $FAT/meshwatch/meshwatch ]; then
-  cp -r $FAT/meshwatch/meshwatch $FAT/meshwatch/web /opt/meshwatch/
-fi
-install -m 600 -o meshwatch-svc -g meshwatch-svc $FAT/meshwatch-config.yaml /var/lib/meshwatch/config.yaml
-PRE
-chmod +x /opt/meshwatch-prestart.sh
-
-cat > /etc/systemd/system/meshwatch.service <<'UNIT'
-[Unit]
-Description=MeshWatch - monitor nodi MeshCore
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-User=meshwatch-svc
-WorkingDirectory=/var/lib/meshwatch
-Environment=PYTHONPATH=/opt/meshwatch
-Environment=PYTHONUNBUFFERED=1
-ExecStartPre=+/opt/meshwatch-prestart.sh
-ExecStart=/opt/meshwatch/venv/bin/python -m meshwatch -c /var/lib/meshwatch/config.yaml
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-UNIT
-
-systemctl daemon-reload
-systemctl enable meshwatch
+# Servizio systemd, permessi di riavvio/spegnimento, aggiornamento dalla pagina web
+rm -f /opt/meshwatch/AGGIORNA
+bash /opt/meshwatch/tools/configura-servizio.sh "$FAT"
+rm -f "$FAT/meshwatch/AGGIORNA"
 systemctl restart meshwatch || true
 echo "=== MeshWatch installato. Pagina: http://$(hostname).local:8080 ==="

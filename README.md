@@ -11,11 +11,14 @@ Gira su un Raspberry Pi con una radio MeshCore in modalità *Companion USB* (Hel
 ## Cosa fa
 
 - **Tracciamento GPS**: a intervalli regolari chiede la telemetria ai dispositivi scelti e salva la traccia. Più dispositivi, ognuno con il suo colore, intervallo, fascia oraria e soglie di avviso.
+- **Pulizia tracce**: dal cestino sulla mappa (tutti i dispositivi) o da "Cancella traccia" (uno solo) si eliminano i punti salvati; resta l'ultima posizione. Solo admin.
 - **Ripetitori**: login e statistiche periodiche (batteria, uptime, rumore, SNR, RSSI, pacchetti) con grafico della batteria.
 - **Terminale**: comandi CLI ai ripetitori dalla pagina o da Telegram, con conferma per i comandi che modificano o riavviano e registro di tutti i comandi inviati.
 - **Gateway**: stato e configurazione della radio collegata (nome, potenza, posizione, parametri radio), advert, riavvio.
 - **Sistema**: temperatura, memoria, disco, **avviso di tensione bassa**, riavvio e spegnimento del Raspberry.
 - **Telegram**: posizione con pin e link Google Maps, ultima posizione, traccia, stato dei nodi, avvisi (dispositivo che non risponde, batteria bassa, ripetitore muto).
+- **Da telefono**: pagina pensata anche per lo smartphone (barra in basso Mappa · Nodi · Gestione).
+- **Aggiornamento dalla pagina**: scarica l'ultima versione da GitHub e riavvia, senza togliere la SD; se la nuova versione non parte torna da sola alla precedente.
 - **Utenti**: ruoli *admin* (gestisce tutto) e *viewer* (vede e chiede la posizione), predisposto per l'accesso da Internet tramite Cloudflare Tunnel.
 
 | Gestione | Sistema e gateway |
@@ -41,7 +44,7 @@ Nella cartella [`sd-kit/`](sd-kit/) c'è tutto per creare una scheda che si inst
 2. Doppio clic su `sd-kit/PREPARA-SD.bat`: chiede nome, password e WiFi, copia MeshWatch sulla SD e apre il config.
 3. Inserisci la SD nel Raspberry con la radio collegata e accendi: in 20–30 minuti è pronto su `http://meshwatch.local:8080`.
 
-Accesso SSH con l'utente `meshwatch` (root disabilitato via SSH). Per aggiornare: SD nel PC e `sd-kit/AGGIORNA-SD.bat`; config e dati restano.
+Accesso SSH con l'utente `meshwatch` (root disabilitato via SSH). Per aggiornare: dalla pagina (vedi [Aggiornamenti](#aggiornamenti)); in alternativa SD nel PC e `sd-kit/AGGIORNA-SD.bat`. Config e dati restano.
 
 ### Metodo 2 — su un Raspberry Pi OS esistente
 
@@ -90,6 +93,32 @@ echo 'meshwatch-svc ALL=(root) NOPASSWD: /usr/bin/systemctl reboot, /usr/bin/sys
 
 (con `install.sh` l'utente del servizio è il tuo utente invece di `meshwatch-svc`: lo script lo configura da solo).
 
+## Aggiornamenti
+
+Dalla pagina: **Gestione → Aggiornamento programma → Controlla aggiornamenti → Aggiorna ora**. Il Raspberry deve raggiungere `api.github.com` e `codeload.github.com`.
+
+Cosa succede:
+
+1. scarica l'ultimo commit del ramo `main` (con `install.sh` da un clone git: `git fetch` + `merge --ff-only`);
+2. controlla che il pacchetto sia completo e che il codice Python compili;
+3. se `requirements.txt` è cambiato aggiorna le librerie nel venv;
+4. mette da parte la versione attuale in `.update/backup`, installa la nuova e riavvia il servizio (circa un minuto: pagina e bot non rispondono);
+5. se la nuova versione non resta accesa 90 secondi per 3 avvii di fila, `tools/guard.sh` (eseguito da systemd prima di ogni avvio) rimette la precedente e la pagina lo segnala.
+
+`config.yaml`, database, utenti e venv non vengono toccati. Repository e ramo si possono cambiare con la sezione `update:` del config.
+
+**Schede preparate prima della versione 1.1** (una volta sola): il programma era di proprietà di root e il servizio non poteva aggiornarsi. Con il Raspberry acceso e in rete, doppio clic su `sd-kit/ABILITA-AGGIORNAMENTI.bat` da Windows, oppure via SSH:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/davide-brugnoni/meshwatch/main/tools/abilita-aggiornamenti.sh | sudo bash
+```
+
+Installa l'ultima versione e riconfigura il servizio (`tools/configura-servizio.sh`). Da quel momento la SD non va più tolta per aggiornare.
+
+Con `install.sh` (Metodo 2) l'aggiornamento dalla pagina funziona se la cartella è un clone git: rilancia `bash install.sh` una volta per aggiungere la protezione `guard.sh` al servizio.
+
+L'aggiornamento da SD (`AGGIORNA-SD.bat`) resta possibile: lascia sulla SD il file `meshwatch/AGGIORNA` e al riavvio il Raspberry copia la nuova versione.
+
 ## Accesso da Internet
 
 1. Crea un utente admin dalla pagina (Gestione → Utenti): da quel momento la pagina chiede il login.
@@ -117,7 +146,9 @@ meshwatch/            pacchetto Python
   bot.py              bot Telegram
   auth.py             login e sessioni
   system.py           stato del Raspberry, riavvio/spegnimento
+  updater.py          aggiornamento dalla pagina (GitHub), con ripristino
 web/index.html        interfaccia (Leaflet incluso in web/vendor)
+tools/                guard.sh (ripristino), configura-servizio.sh, abilita-aggiornamenti.sh
 sd-kit/               preparazione e aggiornamento della SD DietPi da Windows
 install.sh            installazione manuale su Raspberry Pi OS / Debian
 tests/                test con radio simulata
@@ -128,6 +159,7 @@ tests/                test con radio simulata
 ```bash
 python3 -m venv venv && ./venv/bin/pip install -r requirements.txt httpx
 ./venv/bin/python tests/test_smoke.py
+./venv/bin/python tests/test_update.py
 ```
 
 ## Licenza

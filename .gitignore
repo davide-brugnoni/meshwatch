@@ -10,3 +10,7 @@ venv/
 .venv/
 __pycache__/
 *.pyc
+
+# aggiornamento dalla pagina (stato, backup, versione installata)
+.update/
+VERSION.json

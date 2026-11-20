@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from .auth import hash_password
 from . import system
 from .core import is_dangerous
+from .updater import UpdateError
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 COOKIE = "meshwatch_session"
@@ -61,7 +62,7 @@ class UserIn(BaseModel):
     role: str | None = Field(None, pattern=r"^(admin|viewer)$")
 
 
-def create_app(core, auth, web_cfg):
+def create_app(core, auth, web_cfg, updater=None):
     public = web_cfg.get("mode", "lan") == "public"
     db = core.db
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
@@ -171,6 +172,15 @@ def create_app(core, auth, web_cfg):
         db.delete_tracker(tid)
         core.next_due.pop(tid, None)
         return {"ok": True}
+
+    @app.delete("/api/trackers/{tid}/track")
+    async def clear_tracker_track(tid: int, keep_last: bool = True, u=Depends(admin)):
+        get_tracker(tid)
+        return {"ok": True, "deleted": db.clear_track(tid, keep_last)}
+
+    @app.delete("/api/track")
+    async def clear_all_tracks(keep_last: bool = True, u=Depends(admin)):
+        return {"ok": True, "deleted": db.clear_track(None, keep_last)}
 
     # ---------- ripetitori
     @app.post("/api/repeaters/poll")
@@ -294,6 +304,31 @@ def create_app(core, auth, web_cfg):
             raise HTTPException(403, "permesso mancante: esegui una volta il comando indicato nel README")
         import asyncio
         asyncio.create_task(system.run_later(action))
+        return {"ok": True}
+
+    # ---------- aggiornamento del programma
+    def get_updater():
+        if updater is None:
+            raise HTTPException(503, "aggiornamento non disponibile")
+        return updater
+
+    @app.get("/api/update")
+    async def update_status(u=Depends(admin)):
+        return get_updater().status()
+
+    @app.post("/api/update/check")
+    async def update_check(u=Depends(admin)):
+        try:
+            return await get_updater().check()
+        except UpdateError as e:
+            raise HTTPException(502, str(e))
+
+    @app.post("/api/update/apply")
+    async def update_apply(u=Depends(admin)):
+        try:
+            await get_updater().start()
+        except UpdateError as e:
+            raise HTTPException(400, str(e))
         return {"ok": True}
 
     # ---------- varie
