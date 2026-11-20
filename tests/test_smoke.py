@@ -20,7 +20,13 @@ from meshwatch.web import create_app  # noqa: E402
 
 class FakeMesh:
     connected = True
+    connecting = False
     n = 0
+    reconnects = 0
+
+    async def reconnect(self):
+        self.reconnects += 1
+        self.connected = True
 
     async def request_telemetry(self, name):
         self.n += 1
@@ -189,6 +195,22 @@ def main():
     core._update_moving(t1, {"lat": 45.0, "lon": 9.0}, {"lat": 45.01, "lon": 9.0})
     check(core.interval_min(db.tracker(1)) == 60, "intervallo adattivo disattivato")
     core.moving.clear()
+
+    # radio: avviso, riconnessione, ritorno
+    notes = []
+    async def collect(text):
+        notes.append(text)
+    async def watchdog():
+        core.notifiers.append(collect)
+        core.RADIO_ALERT_S, core.RADIO_RECONNECT_S = 0.05, 0.1
+        core.mesh.connected = False
+        task = asyncio.create_task(core.radio_watchdog(tick=0.02))
+        await asyncio.sleep(0.4)
+        task.cancel()
+        core.notifiers.remove(collect)
+    asyncio.run(watchdog())
+    check(core.mesh.reconnects == 1 and core.mesh.connected, "radio scollegata: riconnessione completa")
+    check(len(notes) == 2 and "scollegata" in notes[0] and "di nuovo collegata" in notes[1], "avvisi radio")
 
     async def sched():
         core.next_due.clear()

@@ -265,6 +265,37 @@ class Core:
         self.audit(user, "backup inviato su Telegram", name)
         return True
 
+    # ---------- radio: avviso e riconnessione se si scollega
+    RADIO_ALERT_S = 120       # avviso dopo 2 minuti senza radio
+    RADIO_RECONNECT_S = 180   # poi riconnessione completa (ritrova la porta USB)
+
+    async def radio_watchdog(self, tick=20):
+        down_since = alerted = None
+        last_try = 0
+        while True:
+            await asyncio.sleep(tick)
+            now = time.time()
+            if self.mesh.connected:
+                if down_since:
+                    mins = max(1, round((now - down_since) / 60))
+                    log.info("Radio di nuovo collegata dopo %d min", mins)
+                    if alerted:
+                        self.audit("sistema", "radio ricollegata", f"dopo {mins} min")
+                        await self.notify(f"📻 Radio gateway di nuovo collegata (era scollegata da {mins} min).")
+                down_since = alerted = None
+                continue
+            down_since = down_since or now
+            if not alerted and now - down_since >= self.RADIO_ALERT_S:
+                alerted = True
+                self.audit("sistema", "radio scollegata")
+                await self.notify("📻 Radio gateway scollegata: niente posizioni né ripetitori finché non torna. "
+                                  "Provo a ricollegarla da solo; se non torna controlla il cavo USB e l'alimentazione.")
+            if (now - down_since >= self.RADIO_RECONNECT_S and not self.mesh.connecting
+                    and now - last_try >= self.RADIO_RECONNECT_S):
+                last_try = now
+                log.warning("Radio scollegata da %d s: riconnessione completa", now - down_since)
+                asyncio.create_task(self.mesh.reconnect())
+
     async def maintenance_loop(self):
         """Una volta al giorno pulisce i dati vecchi; ogni settimana invia il backup (se attivo)."""
         from . import maintenance

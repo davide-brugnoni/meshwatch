@@ -225,6 +225,7 @@
       <button id="sys-reboot">Riavvia Raspberry</button>
       <button id="sys-poweroff" class="danger">Spegni Raspberry</button>
       <button id="sys-gw-reboot">Riavvia gateway (Heltec)</button>
+      <button id="sys-radio">Riconnetti radio</button>
       <button id="sys-reload">Aggiorna</button>
     </div>
     <p class="note" id="sys-note"></p>
@@ -956,6 +957,8 @@ $('mnt-purge').onclick = e => {
 };
 $('mnt-telegram').onclick = e => action(e.target, () => post('/api/backup/telegram'), 'Backup inviato').then(loadMaintenance);
 $('mnt-download').onclick = () => setTimeout(loadAdmin, 1500);   // il registro mostra il download
+
+$('sys-radio').onclick = e => action(e.target, () => post('/api/radio/reconnect'), 'Riconnessione avviata: ci vuole qualche secondo');
 
 $('add-tracker').onclick = () => trackerForm(null);
 $('add-rep').onclick = () => repForm(null);

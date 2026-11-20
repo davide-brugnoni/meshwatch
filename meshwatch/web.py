@@ -351,6 +351,15 @@ def create_app(core, auth, web_cfg, updater=None):
             raise HTTPException(500, "non applicato: " + ", ".join(errors))
         return {"ok": True, "radio_changed": radio is not None}
 
+    @app.post("/api/radio/reconnect")
+    async def radio_reconnect(u=Depends(admin)):
+        if core.mesh.connecting:
+            raise HTTPException(409, "riconnessione già in corso")
+        audit(u, "riconnessione radio")
+        import asyncio
+        asyncio.create_task(core.mesh.reconnect())
+        return {"ok": True}
+
     @app.post("/api/gateway/reboot")
     async def gateway_reboot(u=Depends(admin)):
         audit(u, "riavvio gateway")
