@@ -296,6 +296,23 @@ class Core:
                 log.warning("Radio scollegata da %d s: riconnessione completa", now - down_since)
                 asyncio.create_task(self.mesh.reconnect())
 
+    # ---------- nuove versioni del programma
+    async def update_watch(self, updater, every=12 * 3600, first_delay=600):
+        """Controlla GitHub ogni 12 ore e avvisa una volta per ogni nuova versione."""
+        await asyncio.sleep(first_delay)
+        while True:
+            try:
+                st = await updater.check()
+                latest = st.get("latest") or {}
+                if st.get("available") and latest.get("sha") and latest["sha"] != self.db.get("update_notified"):
+                    self.db.set("update_notified", latest["sha"])
+                    how = ("Per installarla: pagina → Gestione → Aggiornamento programma → Aggiorna ora."
+                           if not st.get("problems") else "Dalla pagina non si può aggiornare: vedi Gestione → Aggiornamento programma.")
+                    await self.notify(f"🆕 Nuova versione di MeshWatch disponibile:\n{latest.get('message', '')}\n{how}")
+            except Exception as e:
+                log.info("Controllo aggiornamenti non riuscito: %s", e)
+            await asyncio.sleep(every)
+
     async def maintenance_loop(self):
         """Una volta al giorno pulisce i dati vecchi; ogni settimana invia il backup (se attivo)."""
         from . import maintenance

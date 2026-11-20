@@ -212,6 +212,26 @@ def main():
     check(core.mesh.reconnects == 1 and core.mesh.connected, "radio scollegata: riconnessione completa")
     check(len(notes) == 2 and "scollegata" in notes[0] and "di nuovo collegata" in notes[1], "avvisi radio")
 
+    # avviso di nuova versione: una volta sola per versione
+    class FakeUpdater:
+        sha = "a1"
+        async def check(self):
+            return {"available": True, "problems": [], "latest": {"sha": self.sha, "message": "Novità"}}
+    upd_notes = []
+    async def collect_upd(text):
+        upd_notes.append(text)
+    async def upd_watch():
+        core.notifiers.append(collect_upd)
+        fu = FakeUpdater()
+        task = asyncio.create_task(core.update_watch(fu, every=0.02, first_delay=0))
+        await asyncio.sleep(0.1)
+        fu.sha = "b2"
+        await asyncio.sleep(0.1)
+        task.cancel()
+        core.notifiers.remove(collect_upd)
+    asyncio.run(upd_watch())
+    check(len(upd_notes) == 2 and "Novità" in upd_notes[0], "avviso nuova versione, una volta per versione")
+
     async def sched():
         core.next_due.clear()
         task = asyncio.create_task(core.tracker_loop())

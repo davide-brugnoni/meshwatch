@@ -61,6 +61,9 @@
   .audit .who { color:var(--mute); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .audit .bad { color:var(--warn); }
   @media (max-width: 820px) { .audit div { grid-template-columns:80px 1fr; } .audit .what { grid-column:1 / -1; } }
+  .badge { display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--warn); margin-left:6px; vertical-align:middle; }
+  #mnav .badge { position:absolute; margin:0; transform:translate(10px, -14px); }
+  #mnav button { position:relative; }
   .metric-tabs { display:flex; gap:4px; margin-top:8px; flex-wrap:wrap; }
   .metric-tabs button { font-size:12px; padding:3px 8px; }
   .metric-tabs button.on { border-color:var(--acc); color:var(--acc); }
@@ -901,6 +904,7 @@ function renderUpdate(u) {
   $('upd-apply').disabled = busy || !u.available || u.problems.length > 0;
   $('upd-check').disabled = busy;
   clearTimeout(updPoll);
+  updateBadge();
   if (job.state === 'restarting') waitRestart();
   else if (busy) updPoll = setTimeout(loadUpdate, 2000);
 }
@@ -929,6 +933,15 @@ $('upd-apply').onclick = async e => {
   try { await post('/api/update/apply'); toast('Aggiornamento avviato'); } catch (err) { if (err.message !== 'login') toast('Errore: ' + err.message, true); }
   loadUpdate();
 };
+
+// pallino su "Gestione" quando c'è una nuova versione (controllo automatico ogni 12 ore)
+async function updateBadge() {
+  let u; try { u = await api('/api/update'); } catch (e) { return; }
+  document.querySelectorAll('.badge').forEach(b => b.remove());
+  if (!u.available || !u.latest) return;
+  const title = 'Nuova versione disponibile: ' + u.latest.message;
+  [$('tab-admin'), document.querySelector('#mnav [data-t=admin]')].forEach(b => b.append(el('span', { className: 'badge', title })));
+}
 
 // ---------- manutenzione e backup
 const fmtSize = b => b == null ? '—' : b > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.round(b / 1024) + ' kB';
@@ -982,6 +995,7 @@ async function init() {
   if (me.role === 'admin' && location.hash === '#gestione') setTab('admin');
   else if (location.hash === '#nodi' && isPhone()) setTab('list');
   setInterval(refresh, 60000);
+  if (me.role === 'admin') updateBadge();
   // sul telefono, quando si torna alla pagina (app in primo piano), aggiorna subito
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
 }

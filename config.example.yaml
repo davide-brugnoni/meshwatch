@@ -59,3 +59,4 @@ database: meshwatch.db
 # update:
 #   repo: davide-brugnoni/meshwatch
 #   branch: main
+#   notify: true    # avviso su Telegram quando esce una nuova versione (controllo ogni 12 ore)

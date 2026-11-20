@@ -49,6 +49,8 @@ async def run(cfg):
     serve = asyncio.create_task(server.serve())
     others = [asyncio.create_task(radio()), asyncio.create_task(updater.confirm_later()),
               asyncio.create_task(core.maintenance_loop()), asyncio.create_task(core.radio_watchdog())]
+    if (cfg.get("update") or {}).get("notify", True):
+        others.append(asyncio.create_task(core.update_watch(updater)))
     restart = asyncio.create_task(restart_event.wait())
     await asyncio.wait([serve, restart], return_when=asyncio.FIRST_COMPLETED)
     if restart.done():
