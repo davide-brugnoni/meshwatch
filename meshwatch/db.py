@@ -185,7 +185,7 @@ class DB:
 
     def repeater_history(self, name, since):
         return self._all(
-            "SELECT ts, bat_mv, noise, snr FROM repeater_status WHERE name=? AND ok=1 AND ts>=? ORDER BY ts",
+            "SELECT ts, bat_mv, noise, snr, rssi FROM repeater_status WHERE name=? AND ok=1 AND ts>=? ORDER BY ts",
             (name, since))
 
     # ---------- utenti

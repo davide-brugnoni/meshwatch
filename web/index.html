@@ -56,6 +56,10 @@
   .grid { display:grid; grid-template-columns: repeat(3, 1fr); gap:4px 10px; margin-top:6px; }
   .grid div span { display:block; color:var(--mute); font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
   svg.spark { width:100%; height:34px; margin-top:6px; display:block; }
+  .metric-tabs { display:flex; gap:4px; margin-top:8px; flex-wrap:wrap; }
+  .metric-tabs button { font-size:12px; padding:3px 8px; }
+  .metric-tabs button.on { border-color:var(--acc); color:var(--acc); }
+  .spark-range { display:flex; justify-content:space-between; font-size:11.5px; color:var(--mute); font-family:var(--mono); margin-top:2px; }
   .swatch { width:12px; height:12px; border-radius:3px; display:inline-block; margin-right:8px; flex:none; }
   .admin-only { display:none !important; } body.admin .admin-only { display:flex !important; }
   .admin-block { display:none; } body.admin .admin-block { display:block; }
@@ -454,19 +458,43 @@ function focusTracker(t) {
 }
 
 // ---------- vista mappa
-function spark(history, color) {
-  const pts = history.filter(h => h.bat_mv).map(h => [h.ts, h.bat_mv / 1000]);
+// grafici dei ripetitori: una metrica scelta per tutti (ricordata nel browser)
+const METRICS = {
+  bat: { label: 'Batteria', unit: 'V', dec: 2, get: h => h.bat_mv ? h.bat_mv / 1000 : null, pad: 0.05, color: '#2fb38a' },
+  noise: { label: 'Rumore', unit: 'dBm', dec: 0, get: h => h.noise, pad: 1, color: '#e8c547' },
+  snr: { label: 'SNR', unit: 'dB', dec: 1, get: h => h.snr, pad: 0.5, color: '#5aa9ff' },
+  rssi: { label: 'RSSI', unit: 'dBm', dec: 0, get: h => h.rssi, pad: 1, color: '#c77dff' },
+};
+let repMetric = 'bat';
+try { if (METRICS[localStorage.getItem('repMetric')]) repMetric = localStorage.getItem('repMetric'); } catch (e) { }
+function metricTabs() {
+  return el('div', { className: 'metric-tabs' }, ...Object.entries(METRICS).map(([k, m]) => {
+    const b = el('button', { className: k === repMetric ? 'on' : '', textContent: m.label });
+    b.onclick = () => { repMetric = k; try { localStorage.setItem('repMetric', k); } catch (e) { } render(); };
+    return b;
+  }));
+}
+function metricChart(history) {
+  const m = METRICS[repMetric];
+  const pts = history.map(h => [h.ts, m.get(h)]).filter(p => p[1] != null);
+  if (pts.length < 2) return el('p', { className: 'muted', style: 'margin:6px 0 0;font-size:12.5px', textContent: `${m.label}: pochi dati nel periodo` });
+  const vals = pts.map(p => p[1]), lo = Math.min(...vals), hi = Math.max(...vals);
+  const f = v => v.toFixed(m.dec) + ' ' + m.unit;
+  return el('div', {}, spark(pts, m.color, m.pad, `${m.label} ${f(lo)} – ${f(hi)}`),
+    el('div', { className: 'spark-range' }, el('span', { textContent: `min ${f(lo)}` }), el('span', { textContent: `ultimo ${f(vals.at(-1))}` }), el('span', { textContent: `max ${f(hi)}` })));
+}
+function spark(pts, color, pad, label) {
   if (pts.length < 2) return null;
   const ns = 'http://www.w3.org/2000/svg', svg = document.createElementNS(ns, 'svg');
   svg.setAttribute('class', 'spark'); svg.setAttribute('viewBox', '0 0 300 34'); svg.setAttribute('preserveAspectRatio', 'none');
   const t0 = pts[0][0], t1 = pts.at(-1)[0] || t0 + 1;
   let vmin = Math.min(...pts.map(p => p[1])), vmax = Math.max(...pts.map(p => p[1]));
-  if (vmax - vmin < 0.1) { vmin -= 0.05; vmax += 0.05; }
+  if (vmax - vmin < pad * 2) { vmin -= pad; vmax += pad; }
   const d = pts.map(([t, v], i) => `${i ? 'L' : 'M'}${((t - t0) / (t1 - t0 || 1) * 298 + 1).toFixed(1)},${(32 - (v - vmin) / (vmax - vmin) * 30).toFixed(1)}`).join('');
   const path = document.createElementNS(ns, 'path');
   path.setAttribute('d', d); path.setAttribute('fill', 'none'); path.setAttribute('stroke', color || '#2fb38a'); path.setAttribute('stroke-width', '1.6');
   path.setAttribute('vector-effect', 'non-scaling-stroke');
-  const title = document.createElementNS(ns, 'title'); title.textContent = `Batteria ${vmin.toFixed(2)}–${vmax.toFixed(2)} V`;
+  const title = document.createElementNS(ns, 'title'); title.textContent = label;
   svg.append(title, path); return svg;
 }
 const cell = (label, value) => el('div', {}, el('span', { textContent: label }), value);
@@ -550,9 +578,9 @@ function render() {
       const st = r.status;
       item.append(el('div', { className: 'grid mono' },
         cell('Batteria', st.bat_mv ? (st.bat_mv / 1000).toFixed(2) + ' V' : '—'), cell('Uptime', fmtUp(st.uptime)),
-        cell('Rumore', (st.noise ?? '—') + ' dBm'), cell('SNR', String(st.snr ?? '—')),
+        cell('Rumore', (st.noise ?? '—') + ' dBm'), cell('SNR', st.snr != null ? (+st.snr).toFixed(1) + ' dB' : '—'),
         cell('RSSI', (st.rssi ?? '—') + ' dBm'), cell('Rx/Tx', `${st.nb_recv ?? 0}/${st.nb_sent ?? 0}`)));
-      const sp = spark(r.history); if (sp) item.append(sp);
+      item.append(metricTabs(), metricChart(r.history));
     }
     box.append(item);
   });
