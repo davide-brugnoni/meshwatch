@@ -241,6 +241,23 @@
     <p class="note">Scarica l'ultima versione da GitHub e riavvia il servizio (circa un minuto, di più se cambiano le librerie). Config, dati e utenti restano.
       Se la nuova versione non parte, al terzo tentativo torna da sola a quella precedente.</p>
   </section>
+
+  <section class="card">
+    <h2>Manutenzione e backup</h2>
+    <div id="mnt-info" class="grid mono" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))"><p class="muted">Caricamento…</p></div>
+    <form class="edit" id="form-mnt">
+      <label>Conserva i dati per (giorni, 0 = per sempre) <input type="number" name="retention_days" min="0" max="3650"></label>
+      <label><span class="hours" style="text-transform:none"><input type="checkbox" name="backup_telegram"> backup settimanale su Telegram (alle chat admin)</span></label>
+      <div class="formacts"><button class="primary">Salva</button></div>
+    </form>
+    <div class="row">
+      <a class="btn" id="mnt-download" href="/api/backup">Scarica backup</a>
+      <button id="mnt-telegram">Invia backup su Telegram ora</button>
+      <button id="mnt-purge">Pulisci ora</button>
+    </div>
+    <p class="note">La pulizia gira da sola una volta al giorno: cancella posizioni, statistiche dei ripetitori, comandi e registro più vecchi del limite. Restano sempre l'ultima posizione di ogni dispositivo e l'ultimo stato di ogni ripetitore.
+      Il backup è uno zip con database e config.yaml: contiene password e posizioni, conservalo con cura. Come ripristinarlo è spiegato nel file LEGGIMI.txt dentro lo zip.</p>
+  </section>
   <section class="card">
     <h2>Gateway (radio collegata al Raspberry)</h2>
     <div id="gw-info" class="grid mono" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))"><p class="muted">Caricamento…</p></div>
@@ -456,7 +473,7 @@ function setTab(t) {
   document.body.classList.toggle('tab-list', t === 'list');
   $('tab-map').classList.toggle('on', t !== 'admin'); $('tab-admin').classList.toggle('on', t === 'admin');
   document.querySelectorAll('#mnav button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
-  if (t === 'admin') { loadAdmin(); loadGateway(); loadSystem(); loadUpdate(); } else setTimeout(() => map.invalidateSize(), 50);
+  if (t === 'admin') { loadAdmin(); loadGateway(); loadSystem(); loadUpdate(); loadMaintenance(); } else setTimeout(() => map.invalidateSize(), 50);
 }
 $('tab-map').onclick = () => setTab('map');
 $('tab-admin').onclick = () => setTab('admin');
@@ -679,7 +696,8 @@ function contactSelect(sel, types, exclude, current) {
 }
 const pickedName = (f, sel, free) => f[sel].value === FREE ? f[free].value.trim() : f[sel].value;
 function openForm(form, onSubmit) {
-  document.querySelectorAll('form.edit').forEach(x => x.hidden = true);
+  // chiude gli altri moduli a comparsa (quelli con "Annulla"), non gateway e manutenzione
+  document.querySelectorAll('form.edit').forEach(x => { if (x.querySelector('.cancel')) x.hidden = true; });
   form.hidden = false; form.querySelector('.cancel').onclick = () => form.hidden = true;
   form.onsubmit = async e => { e.preventDefault(); const r = await action(form.querySelector('.primary'), onSubmit); if (r) form.hidden = true; };
   form.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -910,6 +928,34 @@ $('upd-apply').onclick = async e => {
   try { await post('/api/update/apply'); toast('Aggiornamento avviato'); } catch (err) { if (err.message !== 'login') toast('Errore: ' + err.message, true); }
   loadUpdate();
 };
+
+// ---------- manutenzione e backup
+const fmtSize = b => b == null ? '—' : b > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.round(b / 1024) + ' kB';
+async function loadMaintenance() {
+  let m; try { m = await api('/api/maintenance'); } catch (e) { return; }
+  $('mnt-info').replaceChildren(
+    cell('Database', fmtSize(m.db_size)), cell('Posizioni salvate', String(m.positions)),
+    cell('Dati dal', m.oldest ? new Date(m.oldest * 1000).toLocaleDateString('it-IT') : '—'),
+    cell('Ultima pulizia', m.last_purge ? fmtTs(m.last_purge) + (m.last_purge_deleted ? ` (${m.last_purge_deleted} righe)` : '') : 'mai'),
+    cell('Ultimo backup Telegram', m.last_backup ? fmtTs(m.last_backup) : 'mai'));
+  const f = $('form-mnt');
+  f.retention_days.value = m.retention_days;
+  f.backup_telegram.checked = m.backup_telegram; f.backup_telegram.disabled = !m.telegram;
+  f.backup_telegram.parentElement.title = m.telegram ? '' : 'Telegram non configurato';
+  $('mnt-telegram').disabled = !m.telegram;
+  $('mnt-purge').disabled = !m.retention_days;
+}
+$('form-mnt').onsubmit = e => {
+  e.preventDefault(); const f = e.target;
+  action(f.querySelector('.primary'), () => put('/api/maintenance', { retention_days: +f.retention_days.value, backup_telegram: f.backup_telegram.checked }), 'Impostazioni salvate')
+    .then(loadMaintenance);
+};
+$('mnt-purge').onclick = e => {
+  if (!confirm(`Cancellare adesso i dati più vecchi di ${$('form-mnt').retention_days.value} giorni?`)) return;
+  action(e.target, () => post('/api/maintenance/purge'), r => r.deleted ? `Eliminate ${r.deleted} righe` : 'Niente da cancellare').then(loadMaintenance);
+};
+$('mnt-telegram').onclick = e => action(e.target, () => post('/api/backup/telegram'), 'Backup inviato').then(loadMaintenance);
+$('mnt-download').onclick = () => setTimeout(loadAdmin, 1500);   // il registro mostra il download
 
 $('add-tracker').onclick = () => trackerForm(null);
 $('add-rep').onclick = () => repForm(null);

@@ -72,6 +72,7 @@ class Bot:
         a.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.term_text))
         a.add_error_handler(self.on_error)
         core.notifiers.append(self.broadcast)
+        core.file_senders.append(self.send_file)
 
     @staticmethod
     def _request(read_timeout=10):
@@ -106,6 +107,19 @@ class Bot:
                 except (NetworkError, TimedOut) as e:
                     log.warning("Avviso non inviato (tentativo %d): %s", attempt + 1, e)
                     await asyncio.sleep(min(60, 10 * (attempt + 1)))
+
+    async def send_file(self, data, filename, caption=""):
+        """Backup: solo alle chat admin (contiene password)."""
+        from telegram import InputFile
+        for chat in self.admins:
+            for attempt in range(4):
+                try:
+                    await self.app.bot.send_document(chat, InputFile(data, filename=filename), caption=caption,
+                                                     read_timeout=60, write_timeout=60)
+                    break
+                except (NetworkError, TimedOut) as e:
+                    log.warning("Backup non inviato (tentativo %d): %s", attempt + 1, e)
+                    await asyncio.sleep(30 * (attempt + 1))
 
     def ok(self, update: Update):
         if not (update.effective_chat and update.effective_chat.id in self.allowed):

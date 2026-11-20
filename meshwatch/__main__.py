@@ -47,7 +47,8 @@ async def run(cfg):
         await asyncio.gather(core.tracker_loop(), core.repeater_loop())
 
     serve = asyncio.create_task(server.serve())
-    others = [asyncio.create_task(radio()), asyncio.create_task(updater.confirm_later())]
+    others = [asyncio.create_task(radio()), asyncio.create_task(updater.confirm_later()),
+              asyncio.create_task(core.maintenance_loop())]
     restart = asyncio.create_task(restart_event.wait())
     await asyncio.wait([serve, restart], return_when=asyncio.FIRST_COMPLETED)
     if restart.done():
@@ -74,6 +75,7 @@ def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
     cfg = yaml.safe_load(Path(a.config).read_text(encoding="utf-8"))
+    cfg["_config_path"] = str(Path(a.config).resolve())   # per il backup
     asyncio.run(run(cfg))
 
 

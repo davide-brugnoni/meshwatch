@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .auth import hash_password
-from . import system
+from . import maintenance, system
 from .core import is_dangerous
 from .updater import UpdateError
 
@@ -62,6 +62,11 @@ class GatewayIn(BaseModel):
     radio_sf: int | None = Field(None, ge=5, le=12)
     radio_cr: int | None = Field(None, ge=5, le=8)
     confirm_radio: bool = False
+
+
+class MaintenanceIn(BaseModel):
+    retention_days: int | None = Field(None, ge=0, le=3650)
+    backup_telegram: bool | None = None
 
 
 class UserIn(BaseModel):
@@ -394,6 +399,47 @@ def create_app(core, auth, web_cfg, updater=None):
         except UpdateError as e:
             raise HTTPException(400, str(e))
         audit(u, "aggiornamento avviato")
+        return {"ok": True}
+
+    # ---------- manutenzione e backup
+    @app.get("/api/maintenance")
+    async def maintenance_info(u=Depends(admin)):
+        return {**maintenance.settings(db), **maintenance.db_info(db),
+                "telegram": bool(core.file_senders)}
+
+    @app.put("/api/maintenance")
+    async def maintenance_set(body: MaintenanceIn, u=Depends(admin)):
+        if body.retention_days is not None:
+            if 0 < body.retention_days < 7:
+                raise HTTPException(400, "tieni almeno 7 giorni di dati (0 = per sempre)")
+            db.set("retention_days", body.retention_days)
+        if body.backup_telegram is not None:
+            if body.backup_telegram and not core.file_senders:
+                raise HTTPException(400, "Telegram non è configurato")
+            db.set("backup_telegram", "1" if body.backup_telegram else "0")
+        st = maintenance.settings(db)
+        audit(u, "impostazioni manutenzione", f"conserva {st['retention_days'] or 'per sempre'} giorni, "
+              f"backup Telegram {'sì' if st['backup_telegram'] else 'no'}")
+        return {"ok": True}
+
+    @app.post("/api/maintenance/purge")
+    async def maintenance_purge(u=Depends(admin)):
+        if not maintenance.settings(db)["retention_days"]:
+            raise HTTPException(400, "conservazione impostata a \"per sempre\": niente da pulire")
+        return {"ok": True, "deleted": await core.run_purge(u["username"])}
+
+    @app.get("/api/backup")
+    async def backup_download(u=Depends(admin)):
+        import asyncio
+        data, name = await asyncio.to_thread(maintenance.make_backup, db, core.cfg.get("_config_path"))
+        audit(u, "backup scaricato", name)
+        return Response(data, media_type="application/zip",
+                        headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+    @app.post("/api/backup/telegram")
+    async def backup_telegram(u=Depends(admin)):
+        if not await core.send_backup(u["username"]):
+            raise HTTPException(400, "Telegram non è configurato")
         return {"ok": True}
 
     # ---------- varie

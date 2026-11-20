@@ -57,6 +57,7 @@ class Core:
         self.next_due = {}           # tracker_id -> timestamp prossima richiesta
         self.alerts = {}             # chiave -> set di avvisi attivi
         self.moving = {}             # tracker_id -> True se all'ultima posizione si stava spostando
+        self.file_senders = []       # funzioni async(data, filename, caption) per i backup (Telegram)
         db.seed_from_config(cfg)
 
     # ---------- registro attività (pagina e Telegram)
@@ -241,6 +242,44 @@ class Core:
             except Exception as e:
                 log.exception("Errore poll ripetitori: %s", e)
             await asyncio.sleep(int(self.cfg.get("repeater_interval_min", 60)) * 60)
+
+    async def run_purge(self, user="automatico"):
+        from . import maintenance
+        days = maintenance.settings(self.db)["retention_days"]
+        n = await asyncio.to_thread(maintenance.purge, self.db, days)
+        self.db.set("last_purge", int(time.time()))
+        self.db.set("last_purge_deleted", n)
+        if n:
+            self.audit(user, "pulizia dati", f"{n} righe più vecchie di {days} giorni")
+        return n
+
+    async def send_backup(self, user="automatico"):
+        """Invia il backup con Telegram. Ritorna False se Telegram non è configurato."""
+        if not self.file_senders:
+            return False
+        from . import maintenance
+        data, name = await asyncio.to_thread(maintenance.make_backup, self.db, self.cfg.get("_config_path"))
+        for send in self.file_senders:
+            await send(data, name, "💾 Backup di MeshWatch (dati e config). Contiene password: conservalo con cura.")
+        self.db.set("last_backup", int(time.time()))
+        self.audit(user, "backup inviato su Telegram", name)
+        return True
+
+    async def maintenance_loop(self):
+        """Una volta al giorno pulisce i dati vecchi; ogni settimana invia il backup (se attivo)."""
+        from . import maintenance
+        await asyncio.sleep(300)
+        while True:
+            try:
+                st = maintenance.settings(self.db)
+                now = time.time()
+                if now - (st["last_purge"] or 0) > 86400:
+                    await self.run_purge()
+                if st["backup_telegram"] and now - (st["last_backup"] or 0) > maintenance.BACKUP_EVERY_DAYS * 86400:
+                    await self.send_backup()
+            except Exception as e:
+                log.exception("Errore manutenzione: %s", e)
+            await asyncio.sleep(3600)
 
     # ---------- dati per interfacce
     def tracker_state(self, t, since):

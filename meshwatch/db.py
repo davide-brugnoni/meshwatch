@@ -7,6 +7,7 @@ COLORS = ["#2fb38a", "#ff7a45", "#5aa9ff", "#e8c547", "#c77dff", "#ff5c8a"]
 
 class DB:
     def __init__(self, path):
+        self.path = path
         self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.lock = threading.Lock()
@@ -242,6 +243,16 @@ class DB:
     def cli_history(self, node, limit=50):
         rows = self._all("SELECT * FROM cli_log WHERE node=? ORDER BY rowid DESC LIMIT ?", (node, limit))
         return list(reversed(rows))
+
+    def backup_to(self, dest):
+        """Copia coerente del database (API di backup di SQLite)."""
+        import sqlite3 as _sq
+        out = _sq.connect(dest)
+        try:
+            with self.lock:
+                self.conn.backup(out)
+        finally:
+            out.close()
 
     # ---------- impostazioni
     def get(self, key, default=None):

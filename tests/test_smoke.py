@@ -143,6 +143,38 @@ def main():
     check(anon.get("/api/audit").status_code == 401 and v.get("/api/audit").status_code == 403,
           "registro solo per admin")
 
+    # manutenzione e backup
+    import io, zipfile
+    old = int(time.time()) - 400 * 86400
+    db._exec("INSERT INTO positions (ts, lat, lon, alt, batt_v, tracker_id) VALUES (?,?,?,?,?,?)", (old, 1, 1, 0, 0, tid2))
+    db._exec("INSERT INTO repeater_status (ts, name, ok) VALUES (?,?,?)", (old, "Ripetitore-1", 1))
+    db.add_repeater_status("Ripetitore-1", True, {"bat": 4000})
+    db._exec("INSERT INTO audit VALUES (?,?,?,?,?)", (old, "x", "", "vecchio", ""))
+    last2 = db.last_position(tid2)
+    check(c.get("/api/maintenance").json()["retention_days"] == 180, "conservazione di default 180 giorni")
+    check(c.put("/api/maintenance", json={"retention_days": 3}).status_code == 400, "minimo 7 giorni")
+    check(c.put("/api/maintenance", json={"backup_telegram": True}).status_code == 400, "backup Telegram senza bot")
+    n = c.post("/api/maintenance/purge").json()["deleted"]
+    check(n == 3 and db.last_position(tid2) == last2 and db.repeater_latest("Ripetitore-1")[0],
+          "pulizia dei dati vecchi, restano ultima posizione e ultimo stato")
+    tid3 = db.add_tracker(contact="T3", label="T3", paused=0)
+    db._exec("INSERT INTO positions (ts, lat, lon, alt, batt_v, tracker_id) VALUES (?,?,?,?,?,?)", (old, 3, 3, 0, 0, tid3))
+    c.post("/api/maintenance/purge")
+    check(db.last_position(tid3) is not None, "resta l'ultima posizione anche se vecchia")
+    c.put("/api/maintenance", json={"retention_days": 0})
+    check(c.post("/api/maintenance/purge").status_code == 400, "0 = per sempre, niente pulizia")
+    r = c.get("/api/backup")
+    z = zipfile.ZipFile(io.BytesIO(r.content))
+    check(r.status_code == 200 and "meshwatch.db" in z.namelist() and "LEGGIMI.txt" in z.namelist(), "backup scaricabile")
+    check(anon.get("/api/backup").status_code == 401 and v.get("/api/backup").status_code == 403, "backup solo admin")
+    sent = []
+    async def fake_send(data, name, caption):
+        sent.append(name)
+    core.file_senders.append(fake_send)
+    check(c.post("/api/backup/telegram").json()["ok"] and sent and db.get("last_backup"), "backup su Telegram")
+    core.file_senders.clear()
+    db.delete_tracker(tid3)
+
     # intervallo adattivo
     from meshwatch.core import distance_m
     check(abs(distance_m({"lat": 45.0, "lon": 9.0}, {"lat": 45.001, "lon": 9.0}) - 111) < 2, "distanza in metri")
