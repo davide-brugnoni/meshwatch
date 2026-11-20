@@ -101,13 +101,18 @@ Copia `config.example.yaml` in `config.yaml` (con il kit SD il file è `meshwatc
 | Comando | Cosa fa |
 |---|---|
 | `/posizione` | chiede subito la posizione (pin + link Google Maps) |
-| `/ultima` · `/traccia` | ultima posizione · punti delle ultime 12 ore |
+| `/dove` · `/ultima` · `/traccia` | ultima posizione ricevuta · punti delle ultime 12 ore |
+| `/segui 2` · `/basta` | posizione **in diretta** di Telegram per 2 ore (massimo 8): il pin si sposta a ogni nuova posizione · la ferma |
+| `/stats` · `/stats 7` | km percorsi, ore in movimento, risposte, quota e batteria delle ultime 24 ore · degli ultimi 7 giorni |
+| `/sensori` · `/percorso` | ultimi valori dei sensori · ripetitori attraversati dall'ultima risposta |
 | `/nodi` · `/aggiorna` | stato di dispositivi e ripetitori · interroga subito i ripetitori |
 | `/intervallo 30` · `/pausa` · `/riprendi` | gestione del tracciamento |
 | `/advert` | il gateway si annuncia sulla mesh |
 | `/terminale` · `/fine` | comandi CLI a un ripetitore |
 
-Con più dispositivi il bot chiede quale con dei pulsanti.
+Con più dispositivi si scrive il nome dopo il comando, anche solo l'inizio e senza badare alle maiuscole: `/dove escursionista`, `/stats 7 esc`, `/intervallo 15 ciclista`, `/segui 3 esc`. Senza nome il bot chiede quale con dei pulsanti. Scrivendo `/` Telegram mostra l'elenco dei comandi.
+
+Con `/segui` conviene attivare l'intervallo adattivo del dispositivo: in movimento le posizioni arrivano più spesso e il pin si sposta di conseguenza.
 
 ### Riavvio e spegnimento dalla pagina
 

@@ -298,11 +298,141 @@ def test_events():
     check(closed.get("/api/events").status_code == 401, "tempo reale con login se la mappa non è libera")
 
 
+class FakeMsg:
+    def __init__(self, chat, lat=None, lon=None):
+        self.chat, self.lat, self.lon, self.stopped = chat, lat, lon, False
+
+    async def edit_live_location(self, latitude, longitude):
+        if self.stopped:
+            raise RuntimeError("Message can't be edited")
+        self.lat, self.lon = latitude, longitude
+
+    async def stop_live_location(self):
+        self.stopped = True
+
+    async def reply_text(self, text, **kw):
+        self.chat.sent.append(text)
+
+
+class FakeChat:
+    def __init__(self, cid=1):
+        self.id, self.sent, self.locations = cid, [], []
+
+    async def send_message(self, text, **kw):
+        self.sent.append(text)
+
+    async def send_location(self, latitude, longitude, live_period=None, **kw):
+        m = FakeMsg(self, latitude, longitude)
+        m.live_period = live_period
+        self.locations.append(m)
+        return m
+
+
+class FakeUpdate:
+    def __init__(self, chat):
+        from datetime import datetime, timezone
+        self.effective_chat = chat
+        self.message = self.effective_message = FakeMsg(chat)
+        self.message.date = datetime.now(timezone.utc)
+
+
+class Ctx:
+    def __init__(self, *args):
+        self.args = list(args)
+
+
+def test_bot():
+    from meshwatch.bot import COMMANDS, Bot
+    db, mesh, core, c, v, anon, tid = setup()
+    tid2 = db.add_tracker(contact="Bob", label="Ciclista")
+    bot = Bot({"token": "123456:TEST", "allowed_chat_ids": [1]}, core)
+    chat = FakeChat(1)
+    run = asyncio.run
+
+    check([t["label"] for t in core.find_trackers("escurs")] == ["Escursionista"]
+          and [t["label"] for t in core.find_trackers("CICLISTA")] == ["Ciclista"]
+          and len(core.find_trackers("")) == 2 and core.find_trackers("nessuno") == [], "dispositivo scelto per nome")
+
+    # /dove con il nome: niente pulsanti
+    run(core.poll_tracker(tid))
+    run(bot._by_name("last")(FakeUpdate(chat), Ctx("escursionista")))
+    check(chat.locations and "Ultima posizione di Escursionista" in chat.sent[-1], "/dove nome: ultima posizione senza pulsanti")
+    run(bot._by_name("last")(FakeUpdate(chat), Ctx("zzz")))
+    check("Nessun dispositivo si chiama" in chat.sent[-1] and "Ciclista" in chat.sent[-1], "nome sconosciuto: elenco dei dispositivi")
+    stranger = FakeChat(99)
+    run(bot._by_name("last")(FakeUpdate(stranger), Ctx("escursionista")))
+    check(not stranger.sent and not stranger.locations, "chat non autorizzata ignorata")
+
+    # /stats
+    now = int(time.time())
+    db._exec("DELETE FROM positions")
+    for i, (la, alt, b) in enumerate([(45.0, 300, 4.1), (45.01, 350, 4.05), (45.02, 420, 4.0), (45.0201, 420, 3.98)]):
+        db._exec("INSERT INTO positions (ts, lat, lon, alt, batt_v, tracker_id) VALUES (?,?,?,?,?,?)",
+                 (now - 3600 + i * 600, la, 9.0, alt, b, tid))
+    st = core.tracker_stats(tid, now - 86400)
+    check(abs(st["km"] - 2.22) < 0.02 and st["moving_h"] == round(1200 / 3600, 1) and st["points"] == 4
+          and st["alt_max"] == 420 and st["batt_last"] == 3.98, "statistiche: km, movimento (senza il rumore del GPS), quota, batteria")
+    check(st["polls"] == 1 and st["ok_pct"] == 100, "statistiche: risposte")
+    run(bot.stats(FakeUpdate(chat), Ctx("7", "escursionista")))
+    check("ultimi 7 giorni" in chat.sent[-1] and "2.2 km" in chat.sent[-1] and "Quota da 300 a 420 m" in chat.sent[-1],
+          "/stats 7 nome")
+    run(bot.stats(FakeUpdate(chat), Ctx("ciclista")))
+    check("ultime 24 ore" in chat.sent[-1] and "Nessuna posizione" in chat.sent[-1], "/stats senza dati")
+
+    # /sensori e /percorso
+    run(bot._by_name("sens")(FakeUpdate(chat), Ctx("escursionista")))
+    check("Temperatura: 20.0 °C" in chat.sent[-1] and "Batteria: 4.02 V" in chat.sent[-1], "/sensori")
+    run(bot._by_name("route")(FakeUpdate(chat), Ctx("escursionista")))
+    check("2 salti: Casa → Rip-Monte → Rip-Valle → Escursionista" in chat.sent[-1], "/percorso")
+    run(bot._by_name("route")(FakeUpdate(chat), Ctx("ciclista")))
+    check("Nessun percorso" in chat.sent[-1], "/percorso senza dati")
+
+    # /segui: posizione in diretta aggiornata a ogni nuova posizione
+    run(bot.follow(FakeUpdate(chat), Ctx("3", "escursionista")))
+    live = chat.locations[-1]
+    check(live.live_period == 3 * 3600 and (1, tid) in bot.live and "per 3 ore" in chat.sent[-1], "/segui 3 nome")
+    run(bot.follow(FakeUpdate(chat), Ctx("99", "escursionista")))
+    check(chat.locations[-1].live_period == 8 * 3600 and live.stopped, "/segui: al massimo 8 ore, la precedente si ferma")
+    live = chat.locations[-1]
+    mesh.fix = True
+    run(core.poll_tracker(tid))
+    check((live.lat, live.lon) == (45.2, 9.2), "nuova posizione: la posizione in diretta si sposta")
+    bot.live[(1, tid)] = (live, time.time() - 1)
+    run(core.poll_tracker(tid))
+    check((1, tid) not in bot.live, "posizione in diretta scaduta: non viene più aggiornata")
+    run(bot.follow(FakeUpdate(chat), Ctx("escursionista")))
+    live = chat.locations[-1]
+    run(bot.unfollow(FakeUpdate(chat), Ctx()))
+    check(live.stopped and not bot.live and "fermata" in chat.sent[-1], "/basta")
+    run(bot.follow(FakeUpdate(chat), Ctx("ciclista")))
+    check("Nessuna posizione di Ciclista" in chat.sent[-1], "/segui senza posizione")
+
+    # /intervallo con il nome
+    run(bot.interval(FakeUpdate(chat), Ctx("15", "ciclista")))
+    check(db.tracker(tid2)["interval_min"] == 15 and db.tracker(tid)["interval_min"] == 30, "/intervallo 15 nome")
+    # senza nome e con più dispositivi: pulsanti
+    upd = FakeUpdate(chat)
+    asked = []
+
+    async def reply(text, reply_markup=None, **kw):
+        asked.append(reply_markup)
+    upd.message.reply_text = reply
+    run(bot.pick(upd, "stats", "1"))
+    rows = asked[0].inline_keyboard
+    check(len(rows) == 3 and rows[-1][0].callback_data == "stats:all:1", "senza nome: pulsanti con \"Tutti\"")
+    names = [c for c, _ in COMMANDS]
+    check(len(names) == len(set(names)) and all(n.islower() and n.isalpha() for n in names)
+          and {"segui", "basta", "stats", "sensori", "percorso", "dove"} <= set(names), "menu dei comandi valido")
+    acts = [x["action"] for x in c.get("/api/audit").json()]
+    check("posizione in diretta" in acts and "intervallo" in acts, "comandi del bot nel registro attività")
+
+
 def main():
     test_sensors()
     test_route()
     test_coverage()
     test_events()
+    test_bot()
     print("Tutti i test superati.")
 
 

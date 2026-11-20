@@ -22,6 +22,27 @@ KEYBOARD = ReplyKeyboardMarkup(
     resize_keyboard=True)
 
 
+COMMANDS = [
+    ("posizione", "chiede adesso la posizione (anche: /posizione nome)"),
+    ("dove", "ultima posizione ricevuta di un dispositivo"),
+    ("traccia", "posizioni delle ultime 12 ore"),
+    ("segui", "posizione in diretta per qualche ora: /segui 2"),
+    ("basta", "smette di mandare la posizione in diretta"),
+    ("stats", "km, movimento e risposte: /stats 7 per una settimana"),
+    ("sensori", "ultimi valori dei sensori"),
+    ("percorso", "ripetitori attraversati dall'ultima risposta"),
+    ("nodi", "stato di dispositivi e ripetitori"),
+    ("aggiorna", "interroga subito i ripetitori"),
+    ("intervallo", "ogni quanti minuti chiedere la posizione: /intervallo 30"),
+    ("pausa", "sospende il tracciamento"),
+    ("riprendi", "riattiva il tracciamento"),
+    ("advert", "il gateway si annuncia sulla mesh"),
+    ("terminale", "comandi CLI ai ripetitori"),
+    ("aiuto", "elenco dei comandi"),
+]
+FOLLOW_MAX_H = 8
+
+
 def fmt_ts(ts):
     if not ts:
         return "mai"
@@ -46,6 +67,7 @@ class Bot:
         self.admins = set(int(x) for x in cfg.get("admin_chat_ids") or []) or self.allowed
         self.sessions = {}   # chat_id -> (nome ripetitore, scadenza)
         self.pending = {}    # token -> (chat_id, nodo, comando)
+        self.live = {}       # (chat_id, tracker_id) -> (messaggio con la posizione in diretta, scadenza)
         # concurrent_updates: un comando che aspetta la radio non blocca gli altri
         self.app = (Application.builder().token(cfg["token"]).concurrent_updates(True)
                     .request(self._request()).get_updates_request(self._request(read_timeout=30))
@@ -53,11 +75,13 @@ class Bot:
         a = self.app
         a.add_handler(CommandHandler("start", self.start))
         a.add_handler(CommandHandler(["aiuto", "help"], self.help))
-        a.add_handler(CommandHandler("posizione", lambda u, c: self.pick(u, "pos")))
-        a.add_handler(CommandHandler("ultima", lambda u, c: self.pick(u, "last")))
-        a.add_handler(CommandHandler("traccia", lambda u, c: self.pick(u, "track")))
-        a.add_handler(CommandHandler("pausa", lambda u, c: self.pick(u, "pause")))
-        a.add_handler(CommandHandler("riprendi", lambda u, c: self.pick(u, "resume")))
+        # i comandi sui dispositivi accettano il nome: /posizione escursionista
+        for cmd, action in (("posizione", "pos"), ("ultima", "last"), ("dove", "last"), ("traccia", "track"),
+                            ("pausa", "pause"), ("riprendi", "resume"), ("sensori", "sens"), ("percorso", "route")):
+            a.add_handler(CommandHandler(cmd, self._by_name(action)))
+        a.add_handler(CommandHandler("stats", self.stats))
+        a.add_handler(CommandHandler("segui", self.follow))
+        a.add_handler(CommandHandler("basta", self.unfollow))
         a.add_handler(CommandHandler("intervallo", self.interval))
         a.add_handler(CommandHandler("nodi", self.nodes))
         a.add_handler(CommandHandler("aggiorna", self.refresh_nodes))
@@ -73,6 +97,7 @@ class Bot:
         a.add_error_handler(self.on_error)
         core.notifiers.append(self.broadcast)
         core.file_senders.append(self.send_file)
+        core.position_listeners.append(self.on_position)
 
     @staticmethod
     def _request(read_timeout=10):
@@ -96,6 +121,11 @@ class Bot:
         # tranne quelli più vecchi di 3 minuti (vedi self.ok)
         await self.app.updater.start_polling(drop_pending_updates=False)
         log.info("Bot Telegram attivo")
+        try:   # menu dei comandi che Telegram mostra scrivendo "/"
+            from telegram import BotCommand
+            await self.app.bot.set_my_commands([BotCommand(c, d) for c, d in COMMANDS])
+        except Exception as e:
+            log.info("Menu dei comandi non impostato: %s", e)
 
     async def broadcast(self, text):
         """Avvisi: se la rete cade, riprova per qualche minuto invece di perderli."""
@@ -133,19 +163,29 @@ class Bot:
         return update.effective_chat and update.effective_chat.id in self.admins
 
     # ---------- scelta del dispositivo
-    async def pick(self, update: Update, action, arg=""):
-        """Esegue l'azione sul dispositivo; se ce n'è più di uno chiede quale."""
+    def _by_name(self, action):
+        async def handler(update, ctx):
+            await self.pick(update, action, name=" ".join(ctx.args or []))
+        return handler
+
+    async def pick(self, update: Update, action, arg="", name=""):
+        """Esegue l'azione sul dispositivo indicato per nome; se non c'è il nome e i dispositivi
+        sono più di uno, chiede quale con dei pulsanti."""
         if not self.ok(update):
             return
-        ts = self.core.trackers()
-        if not ts:
+        ts = self.core.find_trackers(name)
+        if not self.core.trackers():
             await update.message.reply_text("Nessun dispositivo da tracciare. Aggiungilo dalla pagina web → Gestione.")
+            return
+        if not ts:
+            names = ", ".join(t["label"] for t in self.core.trackers())
+            await update.message.reply_text(f"Nessun dispositivo si chiama \"{name}\". Dispositivi: {names}.")
             return
         if len(ts) == 1:
             await self.do(update.effective_chat, action, ts[0]["id"], arg)
             return
         kb = [[InlineKeyboardButton(t["label"], callback_data=f"{action}:{t['id']}:{arg}")] for t in ts]
-        if action in ("pos", "last"):
+        if action in ("pos", "last", "stats", "sens") and not name:
             kb.append([InlineKeyboardButton("Tutti", callback_data=f"{action}:all:{arg}")])
         await update.message.reply_text("Quale dispositivo?", reply_markup=InlineKeyboardMarkup(kb))
 
@@ -164,6 +204,14 @@ class Bot:
             await self.last_position(chat, t)
         elif action == "track":
             await self.track(chat, t)
+        elif action == "stats":
+            await chat.send_message(self.stats_text(t, int(arg or 1)))
+        elif action == "sens":
+            await chat.send_message(self.sensors_text(t))
+        elif action == "route":
+            await chat.send_message(self.route_text(t))
+        elif action == "follow":
+            await self.follow_start(chat, t, int(arg or 2))
         elif action == "pause":
             self.core.db.update_tracker(t["id"], paused=1)
             self.core.audit(f"telegram:{chat.id}", "pausa tracciamento", t["label"])
@@ -180,6 +228,103 @@ class Bot:
             self.core.next_due[t["id"]] = time.time() + m * 60
             await chat.send_message(f"{t['label']}: posizione ogni {m} minuti.")
 
+    # ---------- statistiche, sensori, percorso
+    def stats_text(self, t, days=1):
+        days = max(1, min(days, 365))
+        st = self.core.tracker_stats(t["id"], int(time.time()) - days * 86400)
+        period = "ultime 24 ore" if days == 1 else f"ultimi {days} giorni"
+        lines = [f"📊 {t['label']} – {period}"]
+        if st["points"]:
+            lines.append(f"Percorsi {st['km']:.1f} km · in movimento circa {st['moving_h']:.1f} h · {st['points']} posizioni")
+        else:
+            lines.append("Nessuna posizione nel periodo.")
+        if st["polls"]:
+            lines.append(f"Risposte {st['ok']} su {st['polls']} richieste ({st['ok_pct']}%)")
+        if st["alt_max"] is not None:
+            lines.append(f"Quota da {st['alt_min']:.0f} a {st['alt_max']:.0f} m")
+        if st["batt_last"] is not None:
+            lines.append(f"Batteria {st['batt_first']:.2f} → {st['batt_last']:.2f} V")
+        return "\n".join(lines)
+
+    def sensors_text(self, t):
+        from .core import fmt_sensor
+        sensors, _ = self.core.sensors_state(t["id"], int(time.time()))
+        if not sensors:
+            return f"{t['label']} non ha ancora mandato valori dei sensori."
+        lines = [f"🌡️ Sensori di {t['label']}"]
+        for x in sensors:
+            lines.append(f"{x['label']}: {fmt_sensor(x['type'], x['channel'], x['value'])} ({fmt_ts(x['ts'])})")
+        return "\n".join(lines)
+
+    def route_text(self, t):
+        r = self.core.route(t["id"])
+        if not r:
+            return f"Nessun percorso registrato per {t['label']}."
+        if r["hops"] < 0:
+            how = "percorso sconosciuto: la richiesta è stata diffusa in flood"
+        elif r["hops"] == 0 or not r["nodes"]:
+            how = "diretto: il gateway lo sente senza ripetitori"
+        else:
+            names = [(n["name"] or n["hash"]) + ("?" if n["ambiguous"] else "") for n in r["nodes"]]
+            how = f"{r['hops']} salt{'o' if r['hops'] == 1 else 'i'}: {r['gateway']['name']} → " + " → ".join(names) + f" → {t['label']}"
+        return f"🛰 Percorso di {t['label']} ({fmt_ts(r['ts'])})\n{how}"
+
+    async def stats(self, update: Update, ctx):
+        args = list(ctx.args or [])
+        days = int(args.pop(0)) if args and args[0].isdigit() else 1
+        await self.pick(update, "stats", str(days), " ".join(args))
+
+    # ---------- posizione in diretta (live location di Telegram)
+    async def follow(self, update: Update, ctx):
+        args = list(ctx.args or [])
+        hours = int(args.pop(0)) if args and args[0].isdigit() else 2
+        await self.pick(update, "follow", str(max(1, min(hours, FOLLOW_MAX_H))), " ".join(args))
+
+    async def follow_start(self, chat, t, hours):
+        p = self.core.db.last_position(t["id"])
+        if not p:
+            await chat.send_message(f"Nessuna posizione di {t['label']} da condividere.")
+            return
+        old = self.live.pop((chat.id, t["id"]), None)
+        if old:
+            await self._stop_live(old[0])
+        msg = await chat.send_location(latitude=p["lat"], longitude=p["lon"], live_period=hours * 3600)
+        self.live[(chat.id, t["id"])] = (msg, time.time() + hours * 3600)
+        self.core.audit(f"telegram:{chat.id}", "posizione in diretta", f"{t['label']}: {hours} h")
+        await chat.send_message(
+            f"📡 Posizione in diretta di {t['label']} per {hours} or{'a' if hours == 1 else 'e'}: si sposta a ogni nuova "
+            f"posizione (ogni {self.core.interval_min(t)} min). /basta per smettere.")
+
+    async def on_position(self, t, p):
+        for (chat_id, tid), (msg, until) in list(self.live.items()):
+            if tid != t["id"]:
+                continue
+            if time.time() > until:
+                self.live.pop((chat_id, tid), None)
+                continue
+            try:
+                await msg.edit_live_location(latitude=p["lat"], longitude=p["lon"])
+            except Exception as e:
+                if "not modified" not in str(e).lower():
+                    log.info("Posizione in diretta terminata (%s): %s", t["label"], e)
+                    self.live.pop((chat_id, tid), None)
+
+    @staticmethod
+    async def _stop_live(msg):
+        try:
+            await msg.stop_live_location()
+        except Exception:
+            pass   # già scaduta o fermata da Telegram
+
+    async def unfollow(self, update: Update, ctx):
+        if not self.ok(update):
+            return
+        chat = update.effective_chat.id
+        mine = [k for k in self.live if k[0] == chat]
+        for k in mine:
+            await self._stop_live(self.live.pop(k)[0])
+        await update.message.reply_text("Posizione in diretta fermata." if mine else "Nessuna posizione in diretta attiva.")
+
     # ---------- comandi
     async def start(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         cid = update.effective_chat.id
@@ -195,15 +340,9 @@ class Bot:
         if not self.ok(update):
             return
         await update.message.reply_text(
-            "/posizione – chiede adesso la posizione\n"
-            "/ultima – ultima posizione ricevuta\n"
-            "/traccia – posizioni delle ultime 12 ore\n"
-            "/nodi – stato di dispositivi e ripetitori\n"
-            "/aggiorna – interroga subito i ripetitori\n"
-            "/intervallo 30 – ogni quanti minuti chiedere la posizione\n"
-            "/pausa · /riprendi – sospende o riattiva il tracciamento\n"
-            "/advert – fa annunciare il gateway sulla mesh\n"
-            "/terminale – comandi CLI ai ripetitori · /fine per uscire",
+            "\n".join(f"/{c} – {d}" for c, d in COMMANDS)
+            + "\n\nCon più dispositivi si può scrivere il nome dopo il comando (/dove escursionista) "
+              "oppure scegliere con i pulsanti.",
             reply_markup=KEYBOARD)
 
     async def _send_pos(self, chat, p, title):
@@ -252,9 +391,9 @@ class Bot:
         try:
             m = int(ctx.args[0])
         except (IndexError, ValueError):
-            await update.message.reply_text("Uso: /intervallo 30")
+            await update.message.reply_text("Uso: /intervallo 30 (oppure /intervallo 30 nome)")
             return
-        await self.pick(update, "interval", str(m))
+        await self.pick(update, "interval", str(m), " ".join(ctx.args[1:]))
 
     async def nodes(self, update: Update, ctx):
         if not self.ok(update):
@@ -298,7 +437,7 @@ class Bot:
         if chat.id not in self.allowed:
             return
         action, _, rest = q.data.partition(":")
-        if action in ("pos", "last", "track", "pause", "resume", "interval"):
+        if action in ("pos", "last", "track", "pause", "resume", "interval", "stats", "sens", "route", "follow"):
             tid, _, arg = rest.partition(":")
             await q.edit_message_reply_markup(None)
             await self.do(chat, action, tid, arg)

@@ -92,6 +92,7 @@ class Core:
         self.file_senders = []       # funzioni async(data, filename, caption) per i backup (Telegram)
         self.tasks = set()           # invii della chat in corso
         self.events = Events()       # notifiche in tempo reale per le pagine aperte
+        self.position_listeners = [] # funzioni async(tracker, posizione) per ogni nuova posizione (Telegram /segui)
         db.seed_from_config(cfg)
         mesh.on_message = self.on_message
         # invii rimasti a metà quando il programma si è fermato
@@ -141,6 +142,11 @@ class Core:
                 prev = self.db.last_position(tid)
                 self.db.add_position(tid, res["lat"], res["lon"], res["alt"], res["batt_v"])
                 self._update_moving(t, prev, res)
+                for listener in self.position_listeners:
+                    try:
+                        await listener(t, self.db.last_position(tid))
+                    except Exception as e:
+                        log.error("Posizione non inoltrata: %s", e)
             if res.get("sensors"):
                 self.db.add_sensor_readings(tid, res["sensors"])
             self.events.publish("state")
@@ -239,6 +245,38 @@ class Core:
                 when = datetime.fromtimestamp(p["ts"]).strftime("%d/%m %H:%M")
                 msg += f"\nUltima posizione ({when}):\n{maps_link(p['lat'], p['lon'])}"
             await self.notify(msg)
+
+    def find_trackers(self, text):
+        """Dispositivi che corrispondono a un nome scritto (es. su Telegram): prima uguale al nome
+        o al contatto, poi che inizia così, poi che lo contiene. Maiuscole indifferenti."""
+        q = (text or "").strip().lower()
+        ts = self.db.trackers()
+        if not q:
+            return ts
+        for test in (lambda n: n == q, lambda n: n.startswith(q), lambda n: q in n):
+            found = [t for t in ts if test(t["label"].lower()) or test(t["contact"].lower())]
+            if found:
+                return found
+        return []
+
+    def tracker_stats(self, tid, since):
+        """Statistiche del periodo: distanza, movimento, risposte, quota, batteria."""
+        pts = self.db.positions_since(tid, since)
+        polls = self.db._all("SELECT ok FROM tracker_polls WHERE tracker_id=? AND ts>=?", (tid, since))
+        dist = moving_s = 0.0
+        for a, b in zip(pts, pts[1:]):
+            d = distance_m(a, b)
+            if d > MOVE_M / 3:          # sotto ~50 m è l'errore del GPS, non uno spostamento
+                dist += d
+                if b["ts"] - a["ts"] <= 3 * 3600:
+                    moving_s += b["ts"] - a["ts"]
+        alts = [p["alt"] for p in pts if p.get("alt") is not None]
+        batt = [p["batt_v"] for p in pts if p.get("batt_v") is not None]
+        ok = sum(1 for p in polls if p["ok"])
+        return {"points": len(pts), "km": round(dist / 1000, 2), "moving_h": round(moving_s / 3600, 1),
+                "polls": len(polls), "ok": ok, "ok_pct": round(100 * ok / len(polls)) if polls else None,
+                "alt_min": min(alts) if alts else None, "alt_max": max(alts) if alts else None,
+                "batt_first": batt[0] if batt else None, "batt_last": batt[-1] if batt else None}
 
     # ---------- ripetitori
     def repeater_password(self, name):
