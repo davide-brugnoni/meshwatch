@@ -177,6 +177,15 @@ def create_app(core, auth, web_cfg, updater=None):
         core.next_due.pop(tid, None)
         return {"ok": True}
 
+    @app.delete("/api/trackers/{tid}/track")
+    async def clear_tracker_track(tid: int, keep_last: bool = True, u=Depends(admin)):
+        get_tracker(tid)
+        return {"ok": True, "deleted": db.clear_track(tid, keep_last)}
+
+    @app.delete("/api/track")
+    async def clear_all_tracks(keep_last: bool = True, u=Depends(admin)):
+        return {"ok": True, "deleted": db.clear_track(None, keep_last)}
+
     # ---------- ripetitori
     @app.post("/api/repeaters/poll")
     async def poll_repeaters(u=Depends(admin)):

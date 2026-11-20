@@ -105,6 +105,9 @@
   /* leaflet scuro */
   .leaflet-bar a, .leaflet-control-layers { background:var(--card); color:var(--ink); border-color:var(--line) !important; }
   .leaflet-bar a:hover { background:#20262a; }
+  .clear-ctl a { display:flex !important; align-items:center; justify-content:center; }
+  .clear-ctl svg { width:16px; height:16px; fill:none; stroke:var(--ink); stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+  @media (hover:hover) { .clear-ctl a:hover svg { stroke:var(--warn); } }
   .leaflet-control-layers-toggle { filter: invert(1) hue-rotate(180deg); }
   .leaflet-control-attribution { background:rgba(15,18,20,.75) !important; color:var(--mute); }
   .leaflet-control-attribution a { color:var(--acc); }
@@ -327,6 +330,20 @@ const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Wo
 topo.addTo(map);
 L.control.layers({ 'Topografica': topo, 'Satellite': sat }).addTo(map);
 const trackLayer = L.layerGroup().addTo(map);
+// pulsante "pulisci tracce" sulla mappa (solo admin)
+L.Control.Clear = L.Control.extend({
+  options: { position: 'topleft' },
+  onAdd() {
+    const box = L.DomUtil.create('div', 'leaflet-bar admin-only clear-ctl');
+    const a = L.DomUtil.create('a', '', box);
+    a.href = '#'; a.title = 'Pulisci tracce'; a.setAttribute('role', 'button'); a.setAttribute('aria-label', 'Pulisci tracce');
+    a.innerHTML = '<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>';
+    L.DomEvent.disableClickPropagation(box);
+    L.DomEvent.on(a, 'click', e => { L.DomEvent.preventDefault(e); clearTracks(null); });
+    return box;
+  }
+});
+new L.Control.Clear().addTo(map);
 const lastMarkers = {};
 const isPhone = () => matchMedia('(max-width: 820px)').matches;
 
@@ -436,7 +453,9 @@ function trackerCard(t) {
   save.onclick = () => action(save, () => put(`/api/trackers/${t.id}`, { interval_min: +iv.value }), 'Intervallo salvato');
   const pause = el('button', { textContent: t.paused ? 'Riprendi' : 'Pausa' });
   pause.onclick = () => action(pause, () => put(`/api/trackers/${t.id}`, { paused: !t.paused }));
-  const admRow = el('div', { className: 'row admin-only' }, el('label', { className: 'muted' }, 'Ogni ', iv, ' min'), save, pause);
+  const clr = el('button', { className: 'danger', textContent: 'Cancella traccia' });
+  clr.onclick = () => clearTracks(t, clr);
+  const admRow = el('div', { className: 'row admin-only' }, el('label', { className: 'muted' }, 'Ogni ', iv, ' min'), save, pause, clr);
   return el('div', { className: 'trk' },
     el('div', { className: 'rep-head' }, el('span', { className: 'rep-name' }, swatch(t.color), t.label), el('span', { className: 'muted', textContent: t.contact !== t.label ? t.contact : '' })),
     el('p', { className: 'big', textContent: p ? fmtTs(p.ts) : 'Nessuna posizione' }),
@@ -501,6 +520,15 @@ function render() {
 
   $('contacts').textContent = s.contacts.length ? s.contacts.map(c => `${c.name} (${c.type})`).join(' · ') : 'nessuno';
   fillTermNodes();
+}
+
+// cancella i punti della traccia (di un dispositivo o di tutti); resta l'ultima posizione
+function clearTracks(t, btn) {
+  const who = t ? `di ${t.label}` : 'di tutti i dispositivi';
+  if (!confirm(`Cancellare la traccia ${who}?\nI punti vengono eliminati definitivamente; resta solo l'ultima posizione.`)) return;
+  action(btn, () => del(t ? `/api/trackers/${t.id}/track` : '/api/track'),
+    r => r.deleted ? `Traccia cancellata (${r.deleted} punti)` : 'Nessun punto da cancellare')
+    .then(() => { fitDone = false; refresh(); });
 }
 
 $('btn-reps').onclick = e => action(e.target, () => post('/api/repeaters/poll'), 'Ripetitori interrogati');

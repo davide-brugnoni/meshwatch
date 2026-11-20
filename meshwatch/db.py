@@ -124,6 +124,16 @@ class DB:
             self._exec("DELETE FROM positions WHERE tracker_id=?", (tid,))
             self._exec("DELETE FROM tracker_polls WHERE tracker_id=?", (tid,))
 
+    def clear_track(self, tid=None, keep_last=True):
+        """Cancella i punti della traccia (di un dispositivo o di tutti). Con keep_last resta
+        l'ultima posizione di ciascuno, così la mappa mostra ancora dov'è."""
+        where, args = ("WHERE tracker_id=?", [tid]) if tid is not None else ("", [])
+        if keep_last:
+            keep = "rowid NOT IN (SELECT (SELECT p2.rowid FROM positions p2 WHERE p2.tracker_id=t.id " \
+                   "ORDER BY p2.ts DESC, p2.rowid DESC LIMIT 1) FROM trackers t)"
+            where = (where + " AND " if where else "WHERE ") + keep
+        return self._exec(f"DELETE FROM positions {where}", args).rowcount
+
     def add_position(self, tid, lat, lon, alt, batt_v):
         self._exec("INSERT INTO positions (ts, lat, lon, alt, batt_v, tracker_id) VALUES (?,?,?,?,?,?)",
                    (int(time.time()), lat, lon, alt, batt_v, tid))
