@@ -159,6 +159,8 @@ body.tab-chat #chat-view { display:grid; } body.tab-chat main { display:none; }
 .node-ic.oth span { width:10px; height:10px; background:#8a918f; border-radius:50%; }
 .node-ic.gw span { width:16px; height:16px; background:var(--acc); border-radius:4px; }
 .net-legend { background:rgba(23,27,30,.92); color:var(--ink); padding:7px 10px; border-radius:8px; font-size:12px; line-height:1.6; border:1px solid var(--line); }
+.net-legend select { font-size:12px; padding:1px 4px; min-height:0; }
+.net-legend .cov-note { color:var(--mute); }
 .net-legend i { display:inline-block; width:18px; height:3px; vertical-align:middle; margin-right:6px; border-radius:2px; }
 #toast.err { background:var(--warn); }
 /* leaflet scuro */
@@ -197,7 +199,7 @@ body.tab-chat #chat-view { display:grid; } body.tab-chat main { display:none; }
   #chat-back { display:inline-flex; white-space:nowrap; flex:none; }
   #chat-sub { display:none; }
   .msg { max-width:88%; }
-  .net-legend { display:none; }
+  .net-legend:not(.cov-legend) { display:none; }
 }
 /* dita invece del mouse: pulsanti più alti, testo dei campi a 16px (iOS non zooma) */
 @media (pointer: coarse) {

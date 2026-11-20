@@ -4,6 +4,7 @@ async function refresh() {
   try { state = await api('/api/state?hours=' + $('range').value); render(); } catch (e) { }
   if (state && state.unread != null) setUnread(state.unread);
   loadNetwork();
+  loadCoverage();
 }
 async function init() {
   try { me = await api('/api/me'); } catch (e) { return; }
@@ -19,6 +20,9 @@ async function init() {
     layersCtl.addOverlay(netLayer, 'Rete MeshCore');
     let on = false; try { on = localStorage.getItem('netLayer') === '1'; } catch (e) { }
     if (on) netLayer.addTo(map);
+    layersCtl.addOverlay(covLayer, 'Copertura');
+    let cOn = false; try { cOn = localStorage.getItem('covLayer') === '1'; } catch (e) { }
+    if (cOn) covLayer.addTo(map);
     layersCtl.addOverlay(routeLayer, 'Percorsi');
     let rOn = true; try { rOn = localStorage.getItem('routeLayer') !== '0'; } catch (e) { }
     if (rOn) routeLayer.addTo(map);

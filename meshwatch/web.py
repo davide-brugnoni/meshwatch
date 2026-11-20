@@ -264,6 +264,13 @@ def create_app(core, auth, web_cfg, updater=None):
     async def network(u=Depends(viewer)):
         return core.network()
 
+    @app.get("/api/coverage")
+    async def coverage(days: int = 30, tracker: int | None = None, cell: int = 250, u=Depends(viewer)):
+        if tracker is not None:
+            get_tracker(tracker)
+        import asyncio
+        return await asyncio.to_thread(core.coverage, max(1, min(days, 365)), tracker, max(50, min(cell, 5000)))
+
     @app.post("/api/network/neighbours")
     async def network_refresh(u=Depends(admin)):
         if not core.mesh.connected:

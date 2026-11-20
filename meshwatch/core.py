@@ -128,9 +128,11 @@ class Core:
         t = self.db.tracker(tid)
         if not t or not self.mesh.connected:
             return None
+        last = self.db.last_position(tid)
         res = await self.mesh.request_telemetry(t["contact"])
         ok = res is not None
-        self.db.add_tracker_poll(tid, ok, *((res.get("hops"), res.get("path")) if ok else (None, None)))
+        self.db.add_tracker_poll(tid, ok, *((res.get("hops"), res.get("path")) if ok else (None, None)),
+                                 *self._poll_place(t, res, last))
         if ok:
             if res["lat"] is not None:
                 prev = self.db.last_position(tid)
@@ -143,6 +145,18 @@ class Core:
         else:
             await self._tracker_fail(t)
         return res
+
+    COVERAGE_MAX_AGE_S = 3600   # oltre, l'ultima posizione nota non dice dove fosse il dispositivo
+
+    def _poll_place(self, t, res, last):
+        """Dove si trovava il dispositivo durante la richiesta, per la mappa della copertura:
+        (lat, lon, stimata). Senza risposta o senza fix si usa l'ultima posizione nota, se recente."""
+        if res and res.get("lat") is not None:
+            return res["lat"], res["lon"], 0
+        max_age = max(self.COVERAGE_MAX_AGE_S, 2 * self.interval_min(t) * 60)
+        if last and time.time() - last["ts"] <= max_age:
+            return last["lat"], last["lon"], 1
+        return None, None, None
 
     def _update_moving(self, t, prev, res):
         was = self.moving.get(t["id"], False)
@@ -406,6 +420,31 @@ class Core:
             return None
         return {"ts": r["ts"], "hops": r["hops"], "nodes": self.resolve_path(r["path"], contacts),
                 "gateway": self.gateway_node()}
+
+    # ---------- mappa della copertura
+    def coverage(self, days=30, tid=None, cell_m=250):
+        """Richieste raggruppate in celle di circa cell_m metri: risposte, richieste senza
+        risposta e salti medi. Le richieste senza risposta stanno nell'ultima posizione nota."""
+        polls = self.db.coverage_polls(int(time.time()) - days * 86400, tid)
+        if not polls:
+            return {"cells": [], "days": days, "cell_m": cell_m, "polls": 0}
+        mid = sum(p["lat"] for p in polls) / len(polls)
+        dlat = cell_m / 111320
+        dlon = cell_m / (111320 * max(0.1, math.cos(math.radians(mid))))
+        cells = {}
+        for p in polls:
+            k = (math.floor(p["lat"] / dlat), math.floor(p["lon"] / dlon))
+            c = cells.setdefault(k, {"ok": 0, "fail": 0, "hops": [], "last": 0})
+            c["ok" if p["ok"] else "fail"] += 1
+            if p["ok"] and p["hops"] is not None and p["hops"] >= 0:
+                c["hops"].append(p["hops"])
+            c["last"] = max(c["last"], p["ts"])
+        out = []
+        for (i, j), c in cells.items():
+            out.append({"bounds": [[i * dlat, j * dlon], [(i + 1) * dlat, (j + 1) * dlon]],
+                        "ok": c["ok"], "fail": c["fail"], "last": c["last"],
+                        "hops": round(sum(c["hops"]) / len(c["hops"]), 1) if c["hops"] else None})
+        return {"cells": out, "days": days, "cell_m": cell_m, "polls": len(polls)}
 
     # ---------- mappa della rete
     def network(self):

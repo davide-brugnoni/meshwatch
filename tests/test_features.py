@@ -167,9 +167,60 @@ def test_route():
     check(REP.startswith("b2") and REP2.startswith("c3"), "dati di prova coerenti")
 
 
+def test_coverage():
+    import sqlite3
+    # migrazione: richieste riuscite delle versioni precedenti prendono la posizione salvata con loro
+    path = os.path.join(tempfile.mkdtemp(), "vecchio.db")
+    old = sqlite3.connect(path)
+    old.executescript("""
+        CREATE TABLE positions (ts INTEGER, lat REAL, lon REAL, alt REAL, batt_v REAL, tracker_id INTEGER);
+        CREATE TABLE tracker_polls (ts INTEGER, ok INTEGER, tracker_id INTEGER);
+        INSERT INTO positions VALUES (1000, 45.5, 9.5, 0, 4, 1);
+        INSERT INTO tracker_polls VALUES (999, 1, 1);
+        INSERT INTO tracker_polls VALUES (2000, 0, 1);""")
+    old.commit()
+    old.close()
+    rows = DB(path)._all("SELECT ts, lat, lon, est FROM tracker_polls ORDER BY ts")
+    check(rows[0]["lat"] == 45.5 and rows[0]["est"] == 0 and rows[1]["lat"] is None,
+          "migrazione: copertura ricostruita dalle posizioni già salvate")
+
+    db, mesh, core, c, v, anon, tid = setup()
+    asyncio.run(core.poll_tracker(tid))                     # risponde con fix a 45.2, 9.2
+    mesh.answer = False
+    asyncio.run(core.poll_tracker(tid))                     # non risponde: ultima posizione nota
+    mesh.answer, mesh.fix = True, False
+    asyncio.run(core.poll_tracker(tid))                     # risponde senza fix
+    rows = db._all("SELECT ok, lat, est FROM tracker_polls ORDER BY rowid")
+    check([(r["ok"], r["lat"], r["est"]) for r in rows] == [(1, 45.2, 0), (0, 45.2, 1), (1, 45.2, 1)],
+          "posizione di ogni richiesta (stimata se senza risposta o senza fix)")
+    db._exec("UPDATE positions SET ts=ts-7200")
+    mesh.answer = False
+    asyncio.run(core.poll_tracker(tid))
+    check(db._one("SELECT lat FROM tracker_polls ORDER BY rowid DESC LIMIT 1")["lat"] is None,
+          "posizione troppo vecchia: richiesta esclusa dalla copertura")
+
+    db._exec("INSERT INTO tracker_polls (ts, ok, tracker_id, lat, lon, est) VALUES (?,?,?,?,?,?)",
+             (int(time.time()), 0, tid, 46.0, 10.0, 1))
+    cv = v.get("/api/coverage").json()
+    cells = sorted(cv["cells"], key=lambda x: x["bounds"][0][0])
+    check(cv["polls"] == 4 and len(cells) == 2, "richieste raggruppate in celle")
+    check(cells[0]["ok"] == 2 and cells[0]["fail"] == 1 and cells[0]["hops"] == 2.0
+          and cells[1]["ok"] == 0 and cells[1]["hops"] is None, "risposte, mancate risposte e salti medi per cella")
+    b = cells[0]["bounds"]
+    check(b[0][0] <= 45.2 < b[1][0] and b[0][1] <= 9.2 < b[1][1] and abs((b[1][0] - b[0][0]) * 111320 - 250) < 1,
+          "cella di 250 m che contiene il punto")
+    check(len(v.get("/api/coverage", params={"cell": 500000}).json()["cells"]) == 2, "dimensione della cella limitata")
+    check(v.get("/api/coverage", params={"days": 0}).json()["days"] == 1 and v.get("/api/coverage", params={"tracker": 99}).status_code == 404,
+          "parametri controllati")
+    check(anon.get("/api/coverage").status_code == 401, "copertura solo con login")
+    other = db.add_tracker(contact="Bob", label="Bob")
+    check(v.get("/api/coverage", params={"tracker": other}).json()["cells"] == [], "copertura di un solo dispositivo")
+
+
 def main():
     test_sensors()
     test_route()
+    test_coverage()
     print("Tutti i test superati.")
 
 

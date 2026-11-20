@@ -101,5 +101,37 @@ function drawRoutes(trackers) {
       .addTo(routeLayer);
   });
 }
+// mappa della copertura: dove il dispositivo risponde e dove no (solo con login)
+const covLayer = L.layerGroup();
+let covDays = 30;
+try { covDays = +localStorage.getItem('covDays') || 30; } catch (e) { }
+const covColor = r => r >= .8 ? '#3ccf8e' : r >= .5 ? '#e8c547' : r > 0 ? '#ff7a45' : '#e5484d';
+const covLegend = L.control({ position: 'bottomleft' });
+covLegend.onAdd = () => {
+  const d = L.DomUtil.create('div', 'net-legend cov-legend');
+  const sel = el('select', { title: 'Periodo della copertura' }, ...[7, 30, 90, 365].map(n => el('option', { value: n, textContent: n === 365 ? 'un anno' : `${n} giorni`, selected: n === covDays })));
+  sel.onchange = () => { covDays = +sel.value; try { localStorage.setItem('covDays', covDays); } catch (e) { } loadCoverage(); };
+  d.append(el('b', { textContent: 'Copertura ' }), sel, el('br'));
+  d.insertAdjacentHTML('beforeend', '<i style="background:#3ccf8e"></i>risponde ≥ 80%<br><i style="background:#e8c547"></i>50–80%<br>'
+    + '<i style="background:#ff7a45"></i>meno del 50%<br><i style="background:#e5484d"></i>mai<br><span class="cov-note"></span>');
+  L.DomEvent.disableClickPropagation(d);
+  return d;
+};
+map.on('overlayadd', e => { if (e.layer === covLayer) { try { localStorage.setItem('covLayer', '1'); } catch (err) { } covLegend.setPosition(isPhone() ? 'topleft' : 'bottomleft').addTo(map); loadCoverage(); } });
+map.on('overlayremove', e => { if (e.layer === covLayer) { try { localStorage.setItem('covLayer', '0'); } catch (err) { } covLegend.remove(); } });
+async function loadCoverage() {
+  if (!me || me.role === 'guest' || !map.hasLayer(covLayer)) return;
+  let cv; try { cv = await api('/api/coverage?days=' + covDays); } catch (e) { return; }
+  covLayer.clearLayers();
+  cv.cells.forEach(c => {
+    const n = c.ok + c.fail, r = c.ok / n;
+    L.rectangle(c.bounds, { color: covColor(r), weight: 1, opacity: .7, fillColor: covColor(r), fillOpacity: Math.min(.65, .25 + n * .04) })
+      .bindPopup(() => el('div', {}, el('strong', { textContent: `Risposte ${c.ok} su ${n} (${Math.round(r * 100)}%)` }), el('br'),
+        c.hops != null ? `salti medi ${c.hops}` : 'nessuna risposta qui', el('br'), `ultima richiesta ${fmtTs(c.last)}`))
+      .addTo(covLayer);
+  });
+  const note = document.querySelector('.cov-note');
+  if (note) note.textContent = cv.polls ? `${cv.polls} richieste, celle di ${cv.cell_m} m` : 'nessun dato nel periodo';
+}
 const lastMarkers = {};
 const isPhone = () => matchMedia('(max-width: 820px)').matches;

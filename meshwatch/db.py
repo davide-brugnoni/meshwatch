@@ -95,6 +95,16 @@ class DB:
             for col, typ in (("hops", "INTEGER"), ("path", "TEXT")):
                 if col not in cols:
                     self.conn.execute(f"ALTER TABLE tracker_polls ADD COLUMN {col} {typ}")
+            # mappa della copertura: dove si trovava il dispositivo a ogni richiesta
+            # (est=1: non ha risposto o non aveva il fix, è la sua ultima posizione nota)
+            if "lat" not in cols:
+                for col, typ in (("lat", "REAL"), ("lon", "REAL"), ("est", "INTEGER")):
+                    self.conn.execute(f"ALTER TABLE tracker_polls ADD COLUMN {col} {typ}")
+                # richieste riuscite delle versioni precedenti: posizione salvata nello stesso momento
+                same = ("FROM positions p WHERE p.tracker_id=tracker_polls.tracker_id "
+                        "AND p.ts BETWEEN tracker_polls.ts - 1 AND tracker_polls.ts + 1")
+                self.conn.execute(f"UPDATE tracker_polls SET lat=(SELECT p.lat {same} LIMIT 1), "
+                                  f"lon=(SELECT p.lon {same} LIMIT 1), est=0 WHERE ok=1 AND EXISTS (SELECT 1 {same})")
             self.conn.execute("CREATE INDEX IF NOT EXISTS i_polls_tr ON tracker_polls(tracker_id, ts)")
             # intervallo adattivo: 0 = disattivato
             cols = [r[1] for r in self.conn.execute("PRAGMA table_info(trackers)")]
@@ -188,9 +198,17 @@ class DB:
         self._exec("INSERT INTO positions (ts, lat, lon, alt, batt_v, tracker_id) VALUES (?,?,?,?,?,?)",
                    (int(time.time()), lat, lon, alt, batt_v, tid))
 
-    def add_tracker_poll(self, tid, ok, hops=None, path=None):
-        self._exec("INSERT INTO tracker_polls (ts, ok, tracker_id, hops, path) VALUES (?,?,?,?,?)",
-                   (int(time.time()), 1 if ok else 0, tid, hops, ",".join(path) if path else None))
+    def add_tracker_poll(self, tid, ok, hops=None, path=None, lat=None, lon=None, est=None):
+        self._exec("INSERT INTO tracker_polls (ts, ok, tracker_id, hops, path, lat, lon, est) VALUES (?,?,?,?,?,?,?,?)",
+                   (int(time.time()), 1 if ok else 0, tid, hops, ",".join(path) if path else None, lat, lon, est))
+
+    def coverage_polls(self, since, tid=None):
+        sql = "SELECT ts, ok, tracker_id, hops, lat, lon, est FROM tracker_polls WHERE ts>=? AND lat IS NOT NULL"
+        args = [since]
+        if tid is not None:
+            sql += " AND tracker_id=?"
+            args.append(tid)
+        return self._all(sql, args)
 
     def last_route(self, tid):
         """Percorso dell'ultima risposta: {ts, hops, path: [prefissi]} o None."""

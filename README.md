@@ -17,6 +17,7 @@ Gira su un Raspberry Pi con una radio MeshCore in modalità *Companion USB* (Hel
 - **Pulizia tracce**: dal cestino sulla mappa (tutti i dispositivi) o da "Cancella traccia" (uno solo) si eliminano i punti salvati; resta l'ultima posizione. Solo admin.
 - **Sensori**: tutti i valori della telemetria (temperatura, umidità, pressione, luce, tensione, …) salvati a ogni risposta, anche senza fix GPS, con grafico per sensore e **soglie di avviso** su Telegram.
 - **Percorso dei pacchetti**: per ogni risposta i ripetitori attraversati (*via Rip-Monte → Rip-Valle*), disegnati sulla mappa dal gateway al dispositivo; percorso anche per ogni contatto della rubrica.
+- **Mappa della copertura**: celle colorate dove il dispositivo risponde e dove no, con salti medi: mostra dove manca un ripetitore.
 - **Ripetitori**: login e statistiche periodiche (batteria, uptime, rumore, SNR, RSSI, pacchetti) con grafici di batteria, rumore, SNR e RSSI.
 - **Chat**: messaggi privati e canali (Public e canali privati) direttamente dalla Heltec collegata al Raspberry, dalla pagina, senza accendere un altro dispositivo. Conferma di consegna, nuovi tentativi automatici, messaggi salvati anche a pagina chiusa.
 - **Mappa della rete**: livello "Rete MeshCore" con i nodi che annunciano la posizione e i collegamenti tra ripetitori vicini colorati per SNR.
@@ -178,6 +179,22 @@ Per raggiungere un nodo il gateway usa un percorso: l'elenco dei ripetitori da a
 - MeshCore identifica i ripetitori del percorso con il primo byte della chiave pubblica: se due ripetitori lo condividono viene scelto quello sentito più di recente e il nome ha un **?**.
 - Nella rubrica del gateway ogni contatto mostra il percorso in uso.
 - L'ospite senza login non vede i percorsi.
+
+## Mappa della copertura
+
+Livello **Copertura** sulla mappa (con login). Ogni richiesta di posizione viene ricordata con il punto in cui si trovava il dispositivo; le richieste vengono raggruppate in celle di circa 250 m:
+
+| Colore | Il dispositivo ha risposto |
+|---|---|
+| verde | almeno l'80% delle volte |
+| giallo | dal 50 all'80% |
+| arancione | meno della metà delle volte |
+| rosso | mai |
+
+- Toccando una cella: risposte su richieste, salti medi, ultima richiesta. Le celle più piene sono più intense.
+- Il periodo (7 giorni, 30, 90, un anno) si sceglie nella legenda.
+- Quando il dispositivo **non risponde** non si sa dove sia: la richiesta va nella sua ultima posizione nota, se ha meno di un'ora (o di due intervalli). È una stima: le celle rosse indicano *dove il dispositivo era quando ha smesso di rispondere*, cioè il bordo della copertura.
+- Le richieste fatte prima di questa versione compaiono solo se avevano ricevuto una posizione.
 
 ## Mappe
 
