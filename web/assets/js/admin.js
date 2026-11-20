@@ -321,9 +321,6 @@ async function loadBatteryAlerts() {
   f.batt_repeat_h.value = v;
   f.quiet_on.checked = !!b.batt_quiet;
   if (b.batt_quiet) [f.q_from.value, f.q_to.value] = b.batt_quiet.split('-');
-  f.companion_batt.value = b.companion_batt;
-  f.companion_interval_min.value = b.companion_interval_min;
-  f.companion_low_battery_v.value = b.companion_low_battery_v;
 }
 $('form-batt').onsubmit = e => {
   e.preventDefault(); const f = e.target;
@@ -331,9 +328,7 @@ $('form-batt').onsubmit = e => {
     if (f.quiet_on.checked && (!f.q_from.value || !f.q_to.value || f.q_from.value === f.q_to.value))
       throw new Error('scegli due orari diversi per il silenzio');
     return put('/api/alerts/battery', { batt_repeat_h: +f.batt_repeat_h.value,
-      batt_quiet: f.quiet_on.checked ? `${f.q_from.value}-${f.q_to.value}` : '',
-      companion_batt: f.companion_batt.value, companion_interval_min: +f.companion_interval_min.value,
-      companion_low_battery_v: +f.companion_low_battery_v.value });
+      batt_quiet: f.quiet_on.checked ? `${f.q_from.value}-${f.q_to.value}` : '' });
   }, 'Impostazioni salvate').then(loadBatteryAlerts);
 };
 
@@ -401,8 +396,6 @@ function renderContacts() {
     const info = [c.type, hopsText(c.hops) + (c.route && c.route.length ? ' via ' + c.route.join(' → ') : ''), 'advert ' + (c.last_advert ? fmtAgo(c.last_advert) : 'mai'),
       c.lat != null ? `${c.lat.toFixed(4)}, ${c.lon.toFixed(4)}` : 'senza posizione', c.public_key.slice(0, 12)];
     if (c.used_by.length) info.push('usato da ' + c.used_by.join(', '));
-    if (c.batt_v != null) info.push(`batteria ${c.batt_v.toFixed(2)} V (${fmtAgo(c.batt_ts)})`);
-    else if (c.batt_asked) info.push('batteria: non risponde');
     box.append(el('div', { className: 'item' },
       el('span', { className: 'name' }, c.favorite ? el('span', { className: 'star', textContent: '★' }) : null, c.name),
       el('span', { className: 'info mono', textContent: info.join(' · ') }), acts));

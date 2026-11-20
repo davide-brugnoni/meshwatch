@@ -76,12 +76,6 @@ class DB:
                     ts INTEGER, tracker_id INTEGER, channel INTEGER, type TEXT, value REAL
                 );
                 CREATE INDEX IF NOT EXISTS i_sens ON sensor_readings(tracker_id, ts);
-                CREATE TABLE IF NOT EXISTS companion_battery (
-                    public_key TEXT PRIMARY KEY, name TEXT,
-                    ts INTEGER,             -- ultima richiesta
-                    ok_ts INTEGER,          -- ultima risposta con la batteria
-                    batt_v REAL
-                );
                 CREATE TABLE IF NOT EXISTS sensor_rules (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     tracker_id INTEGER, type TEXT, channel INTEGER,
@@ -431,16 +425,6 @@ class DB:
                 self.conn.backup(out)
         finally:
             out.close()
-
-    # ---------- batteria degli altri companion in rubrica
-    def companion_battery(self):
-        return {r["public_key"]: r for r in self._all("SELECT * FROM companion_battery")}
-
-    def set_companion_battery(self, key, name, batt_v):
-        now = int(time.time())
-        old = self._one("SELECT ok_ts, batt_v FROM companion_battery WHERE public_key=?", (key,)) or {}
-        ok_ts, v = (now, batt_v) if batt_v is not None else (old.get("ok_ts"), old.get("batt_v"))
-        self._exec("INSERT OR REPLACE INTO companion_battery VALUES (?,?,?,?,?)", (key, name, now, ok_ts, v))
 
     # ---------- impostazioni
     def get(self, key, default=None):

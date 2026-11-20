@@ -80,9 +80,6 @@ class MaintenanceIn(BaseModel):
 class BatteryAlertsIn(BaseModel):
     batt_repeat_h: int | None = Field(None, ge=0, le=168)
     batt_quiet: str | None = None
-    companion_batt: str | None = Field(None, pattern=r"^(off|fav|all)$")
-    companion_interval_min: int | None = Field(None, ge=30, le=1440)
-    companion_low_battery_v: float | None = Field(None, ge=0, le=5)
 
 
 class TileCacheIn(BaseModel):
@@ -531,11 +528,8 @@ def create_app(core, auth, web_cfg, updater=None, tiles=None):
         need_radio()
         out = []
         contacts = core.mesh.contacts()
-        batt = db.companion_battery()
         for c in contacts:
-            b = batt.get(c["public_key"]) or {}
-            out.append({**c, "used_by": contact_uses(c["name"]), "batt_v": b.get("batt_v"), "batt_ts": b.get("ok_ts"),
-                        "batt_asked": b.get("ts"),
+            out.append({**c, "used_by": contact_uses(c["name"]),
                         "route": [n["name"] or n["hash"] for n in core.resolve_path(c.get("path"), contacts)]})
         si = core.mesh.self_info()
         return {"contacts": out, "pending": core.mesh.pending_contacts(),
@@ -704,15 +698,11 @@ def create_app(core, auth, web_cfg, updater=None, tiles=None):
             if not HOURS_RE.match(q) or (q and q[:5] == q[6:]):
                 raise HTTPException(400, "fascia di silenzio non valida (es. 22:00-07:00)")
             db.set("batt_quiet", q)
-        for k in ("batt_repeat_h", "companion_batt", "companion_interval_min", "companion_low_battery_v"):
-            if getattr(body, k) is not None:
-                db.set(k, getattr(body, k))
+        if body.batt_repeat_h is not None:
+            db.set("batt_repeat_h", body.batt_repeat_h)
         st = core.battery_alert_settings()
-        who = {"off": "no", "fav": "solo preferiti", "all": "tutti"}[st["companion_batt"]]
         audit(u, "avvisi batteria", (f"ripeti ogni {st['batt_repeat_h']} ore" if st["batt_repeat_h"] else "una volta sola")
-              + (f", silenzio {st['batt_quiet']}" if st["batt_quiet"] else "")
-              + f", companion {who}" + (f" ogni {st['companion_interval_min']} min sotto {st['companion_low_battery_v']} V"
-                                        if st["companion_batt"] != "off" else ""))
+              + (f", silenzio {st['batt_quiet']}" if st["batt_quiet"] else ""))
         return {"ok": True}
 
     # ---------- cache delle mappe

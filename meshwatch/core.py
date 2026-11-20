@@ -121,15 +121,7 @@ class Core:
             repeat = max(0, int(self.db.get("batt_repeat_h", 0) or 0))
         except ValueError:
             repeat = 0
-        def num(key, default, cast):
-            try:
-                return cast(self.db.get(key, default))
-            except (TypeError, ValueError):
-                return default
-        return {"batt_repeat_h": repeat, "batt_quiet": self.db.get("batt_quiet", "") or "",
-                "companion_batt": self.db.get("companion_batt", "all"),
-                "companion_interval_min": num("companion_interval_min", 120, int),
-                "companion_low_battery_v": num("companion_low_battery_v", 3.5, float)}
+        return {"batt_repeat_h": repeat, "batt_quiet": self.db.get("batt_quiet", "") or ""}
 
     async def _battery_alert(self, key, v, lim, text):
         """Batteria sotto la soglia: avvisa subito, poi di nuovo ogni batt_repeat_h ore. Durante
@@ -592,46 +584,6 @@ class Core:
             except Exception as e:
                 log.exception("Errore poll ripetitori: %s", e)
             await asyncio.sleep(int(self.cfg.get("repeater_interval_min", 60)) * 60)
-
-    # ---------- batteria degli altri companion in rubrica
-    def watched_companions(self):
-        """Companion della rubrica da controllare (tutti o solo i preferiti), esclusi quelli
-        già seguiti come dispositivi: la loro batteria arriva già con la posizione."""
-        mode = self.battery_alert_settings()["companion_batt"]
-        if mode == "off":
-            return []
-        trackers = {t["contact"].lower() for t in self.db.trackers()}
-        return [c for c in self.mesh.contacts() if c["type"] == "companion" and c.get("public_key")
-                and c["name"].lower() not in trackers and (mode == "all" or c["favorite"])]
-
-    async def poll_companion(self, c):
-        """Chiede la telemetria a un companion e controlla la batteria. Ritorna i volt o None.
-        Se non risponde (fuori portata, o non condivide la telemetria) non avvisa."""
-        res = await self.mesh.request_telemetry(c["name"], attempts=1)
-        v = res.get("batt_v") if res else None
-        self.db.set_companion_battery(c["public_key"], c["name"], v)
-        if v:
-            lim = self.battery_alert_settings()["companion_low_battery_v"]
-            if lim:
-                await self._battery_alert(("c", c["public_key"]), v, lim,
-                                          f"🔋 Batteria bassa sul companion {c['name']}: {v:.2f} V")
-        return v
-
-    async def companion_loop(self, tick=60):
-        """Controlla a turno la batteria dei companion, uno alla volta, ognuno ogni
-        companion_interval_min minuti."""
-        await asyncio.sleep(90)
-        while True:
-            try:
-                if self.mesh.connected:
-                    every = max(30, self.battery_alert_settings()["companion_interval_min"]) * 60
-                    seen = self.db.companion_battery()
-                    for c in self.watched_companions():
-                        if time.time() - (seen.get(c["public_key"], {}).get("ts") or 0) >= every:
-                            await self.poll_companion(c)
-            except Exception as e:
-                log.exception("Errore batteria companion: %s", e)
-            await asyncio.sleep(tick)
 
     async def run_purge(self, user="automatico"):
         from . import maintenance
