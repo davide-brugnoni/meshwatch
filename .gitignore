@@ -1,0 +1,12 @@
+# configurazione e dati locali (contengono token e password)
+config.yaml
+meshwatch-config.yaml
+*.db
+*.db-journal
+*.log
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc

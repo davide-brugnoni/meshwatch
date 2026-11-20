@@ -1,0 +1,5 @@
+meshcore>=2.3
+python-telegram-bot>=21
+fastapi>=0.110
+uvicorn>=0.29
+PyYAML>=6

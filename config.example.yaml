@@ -1,0 +1,53 @@
+# MeshWatch — configurazione
+# Copia questo file in config.yaml e modificalo.
+
+# Porta seriale della Heltec (firmware MeshCore "Companion USB").
+# "auto" la trova da sola. Se hai più dispositivi USB, metti il percorso
+# esatto che trovi con: ls /dev/serial/by-id/
+serial_port: auto
+baudrate: 115200
+
+# ---------------------------------------------------------------------------
+# Dispositivi da seguire, ripetitori e utenti si gestiscono dalla pagina web
+# (scheda Gestione). Le due sezioni qui sotto servono solo al PRIMO avvio:
+# vengono importate una volta, poi le modifiche si fanno dalla pagina.
+# Puoi anche lasciarle vuote e aggiungere tutto dalla pagina.
+# ---------------------------------------------------------------------------
+
+# Dispositivo da seguire (es. un SenseCAP T1000-E).
+# "name" deve essere identico al nome del contatto MeshCore.
+tracker:
+  name: "Tracker-1"
+  interval_min: 30          # ogni quanto chiedere la posizione
+  active_hours: "05:00-21:00"   # fuori da questa fascia non interroga (vuoto = sempre)
+  offline_alert_min: 90     # avviso se non risponde da più di X minuti
+  low_battery_v: 3.5        # avviso batteria bassa (volt)
+
+# Ripetitori da monitorare (password admin o guest del ripetitore).
+# Ogni quanto interrogarli e la soglia batteria restano invece qui.
+repeaters:
+  - name: "Ripetitore-Nord"
+    password: "cambiami"
+  - name: "Ripetitore-Casa"
+    password: "cambiami"
+repeater_interval_min: 60
+repeater_low_battery_v: 3.4
+
+telegram:
+  token: "123456:ABC-il-token-di-BotFather"
+  # Solo queste chat possono usare il bot e ricevono gli avvisi.
+  # Il tuo ID lo scopri scrivendo /start al bot: te lo risponde lui.
+  allowed_chat_ids: []
+  # Chi può usare /terminale (comandi ai ripetitori). Vuoto = tutte le chat autorizzate.
+  admin_chat_ids: []
+
+web:
+  # "lan": pagina raggiungibile solo in casa (http://IP-raspberry:8080)
+  # "public": dietro Cloudflare Tunnel (vedi README) — login obbligatorio
+  mode: lan
+  host: 0.0.0.0             # in modalità public metti 127.0.0.1
+  port: 8080
+  # Gli utenti si creano dalla pagina: Gestione → Utenti della pagina.
+  # Finché non ce ne sono, in modalità lan la pagina è aperta a chi è in casa.
+
+database: meshwatch.db

@@ -1,0 +1,5 @@
+# script per Windows con fine riga CRLF, script Linux con LF
+*.bat text eol=crlf
+*.sh  text eol=lf
+*.ps1 text eol=lf
+*.py  text eol=lf
