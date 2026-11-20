@@ -41,8 +41,35 @@ class Mesh:
         self.baudrate = baudrate
         self.mc = None
         self.lock = asyncio.Lock()   # una richiesta radio alla volta
+        self.connecting = False
 
     async def connect(self):
+        """Si collega alla radio; riprova finché non ci riesce."""
+        self.connecting = True
+        try:
+            await self._connect()
+        finally:
+            self.connecting = False
+
+    async def reconnect(self):
+        """Chiude la connessione e la rifà da capo, cercando di nuovo la porta USB
+        (scollegando e ricollegando la radio la porta può cambiare, es. ttyUSB0 → ttyUSB1)."""
+        if self.connecting:
+            return
+        self.connecting = True
+        try:
+            async with self.lock:
+                old, self.mc = self.mc, None
+            if old:
+                try:
+                    await asyncio.wait_for(old.disconnect(), 10)
+                except Exception as e:
+                    log.warning("Chiusura della vecchia connessione: %s", e)
+            await self._connect()
+        finally:
+            self.connecting = False
+
+    async def _connect(self):
         while True:
             try:
                 port = self.port

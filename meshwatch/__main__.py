@@ -27,7 +27,7 @@ async def run(cfg):
     auth = Auth(db)
     if web_cfg.get("mode") == "public" and not auth.enabled:
         sys.exit("web.mode è 'public' ma non ci sono utenti: crea prima un utente admin dalla pagina "
-                 "in modalità lan (Gestione → Utenti), poi passa a public.")
+                 "in modalità lan (al primo accesso a Gestione chiede la password admin), poi passa a public.")
 
     tg = cfg.get("telegram") or {}
     if tg.get("token") and "BotFather" not in tg["token"]:
@@ -47,7 +47,10 @@ async def run(cfg):
         await asyncio.gather(core.tracker_loop(), core.repeater_loop())
 
     serve = asyncio.create_task(server.serve())
-    others = [asyncio.create_task(radio()), asyncio.create_task(updater.confirm_later())]
+    others = [asyncio.create_task(radio()), asyncio.create_task(updater.confirm_later()),
+              asyncio.create_task(core.maintenance_loop()), asyncio.create_task(core.radio_watchdog())]
+    if (cfg.get("update") or {}).get("notify", True):
+        others.append(asyncio.create_task(core.update_watch(updater)))
     restart = asyncio.create_task(restart_event.wait())
     await asyncio.wait([serve, restart], return_when=asyncio.FIRST_COMPLETED)
     if restart.done():
@@ -74,6 +77,7 @@ def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
     cfg = yaml.safe_load(Path(a.config).read_text(encoding="utf-8"))
+    cfg["_config_path"] = str(Path(a.config).resolve())   # per il backup
     asyncio.run(run(cfg))
 
 

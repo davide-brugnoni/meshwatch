@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import math
 import time
 from datetime import datetime
 
@@ -26,6 +27,20 @@ def in_active_hours(spec):
         return True
 
 
+# Intervallo adattivo: se tra due posizioni il dispositivo si è spostato più di
+# MOVE_M metri è "in movimento" e viene interrogato più spesso.
+MOVE_M = 150
+
+
+def distance_m(a, b):
+    """Distanza in metri tra due punti {lat, lon} (formula dell'emisenoverso)."""
+    r = 6371000
+    p1, p2 = math.radians(a["lat"]), math.radians(b["lat"])
+    dp, dl = p2 - p1, math.radians(b["lon"] - a["lon"])
+    h = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(h))
+
+
 def maps_link(lat, lon):
     return f"https://www.google.com/maps?q={lat:.6f},{lon:.6f}"
 
@@ -41,7 +56,16 @@ class Core:
         self.wakeup = asyncio.Event()
         self.next_due = {}           # tracker_id -> timestamp prossima richiesta
         self.alerts = {}             # chiave -> set di avvisi attivi
+        self.moving = {}             # tracker_id -> True se all'ultima posizione si stava spostando
+        self.file_senders = []       # funzioni async(data, filename, caption) per i backup (Telegram)
         db.seed_from_config(cfg)
+
+    # ---------- registro attività (pagina e Telegram)
+    def audit(self, user, action, detail="", ip=""):
+        try:
+            self.db.add_audit(user, action, detail, ip)
+        except Exception as e:
+            log.error("Registro attività: %s", e)
 
     # ---------- avvisi
     async def notify(self, text):
@@ -75,11 +99,30 @@ class Core:
         self.db.add_tracker_poll(tid, ok)
         if ok:
             if res["lat"] is not None:
+                prev = self.db.last_position(tid)
                 self.db.add_position(tid, res["lat"], res["lon"], res["alt"], res["batt_v"])
+                self._update_moving(t, prev, res)
             await self._tracker_ok(t, res)
         else:
             await self._tracker_fail(t)
         return res
+
+    def _update_moving(self, t, prev, res):
+        was = self.moving.get(t["id"], False)
+        now = bool(prev) and distance_m(prev, res) > MOVE_M
+        self.moving[t["id"]] = now
+        if now and not was and t.get("moving_interval_min"):
+            # appena partito: la prossima richiesta arriva prima
+            due = time.time() + t["moving_interval_min"] * 60
+            if self.next_due.get(t["id"], due + 1) > due:
+                self.next_due[t["id"]] = due
+
+    def interval_min(self, t):
+        """Intervallo in uso: quello "in movimento" se attivo e il dispositivo si sposta."""
+        fast = t.get("moving_interval_min") or 0
+        if fast and self.moving.get(t["id"]):
+            return max(5, min(fast, t["interval_min"]))
+        return max(5, t["interval_min"])
 
     async def _tracker_ok(self, t, res):
         f = self._flags(("t", t["id"]))
@@ -162,6 +205,7 @@ class Core:
             raise RuntimeError("radio gateway non collegata")
         reply = await self.mesh.cli(name, self.repeater_password(name), cmd)
         self.db.add_cli(user, name, cmd, reply)
+        self.audit(user, "terminale", f"{name}: {cmd}")
         log.info("CLI %s @%s: %s -> %s", user, name, cmd, reply)
         return reply
 
@@ -175,13 +219,15 @@ class Core:
                 due = self.next_due.get(tid, 0)
                 if now < due:
                     continue
-                self.next_due[tid] = now + max(5, t["interval_min"]) * 60
+                self.next_due[tid] = now + self.interval_min(t) * 60
                 if t["paused"] or not in_active_hours(t["active_hours"]):
                     continue
                 try:
                     await self.poll_tracker(tid)
                 except Exception as e:
                     log.exception("Errore poll %s: %s", t["label"], e)
+                # la richiesta può aver cambiato lo stato "in movimento"
+                self.next_due[tid] = now + self.interval_min(t) * 60
             self.wakeup.clear()
             try:
                 await asyncio.wait_for(self.wakeup.wait(), timeout=30)
@@ -197,11 +243,99 @@ class Core:
                 log.exception("Errore poll ripetitori: %s", e)
             await asyncio.sleep(int(self.cfg.get("repeater_interval_min", 60)) * 60)
 
+    async def run_purge(self, user="automatico"):
+        from . import maintenance
+        days = maintenance.settings(self.db)["retention_days"]
+        n = await asyncio.to_thread(maintenance.purge, self.db, days)
+        self.db.set("last_purge", int(time.time()))
+        self.db.set("last_purge_deleted", n)
+        if n:
+            self.audit(user, "pulizia dati", f"{n} righe più vecchie di {days} giorni")
+        return n
+
+    async def send_backup(self, user="automatico"):
+        """Invia il backup con Telegram. Ritorna False se Telegram non è configurato."""
+        if not self.file_senders:
+            return False
+        from . import maintenance
+        data, name = await asyncio.to_thread(maintenance.make_backup, self.db, self.cfg.get("_config_path"))
+        for send in self.file_senders:
+            await send(data, name, "💾 Backup di MeshWatch (dati e config). Contiene password: conservalo con cura.")
+        self.db.set("last_backup", int(time.time()))
+        self.audit(user, "backup inviato su Telegram", name)
+        return True
+
+    # ---------- radio: avviso e riconnessione se si scollega
+    RADIO_ALERT_S = 120       # avviso dopo 2 minuti senza radio
+    RADIO_RECONNECT_S = 180   # poi riconnessione completa (ritrova la porta USB)
+
+    async def radio_watchdog(self, tick=20):
+        down_since = alerted = None
+        last_try = 0
+        while True:
+            await asyncio.sleep(tick)
+            now = time.time()
+            if self.mesh.connected:
+                if down_since:
+                    mins = max(1, round((now - down_since) / 60))
+                    log.info("Radio di nuovo collegata dopo %d min", mins)
+                    if alerted:
+                        self.audit("sistema", "radio ricollegata", f"dopo {mins} min")
+                        await self.notify(f"📻 Radio gateway di nuovo collegata (era scollegata da {mins} min).")
+                down_since = alerted = None
+                continue
+            down_since = down_since or now
+            if not alerted and now - down_since >= self.RADIO_ALERT_S:
+                alerted = True
+                self.audit("sistema", "radio scollegata")
+                await self.notify("📻 Radio gateway scollegata: niente posizioni né ripetitori finché non torna. "
+                                  "Provo a ricollegarla da solo; se non torna controlla il cavo USB e l'alimentazione.")
+            if (now - down_since >= self.RADIO_RECONNECT_S and not self.mesh.connecting
+                    and now - last_try >= self.RADIO_RECONNECT_S):
+                last_try = now
+                log.warning("Radio scollegata da %d s: riconnessione completa", now - down_since)
+                asyncio.create_task(self.mesh.reconnect())
+
+    # ---------- nuove versioni del programma
+    async def update_watch(self, updater, every=12 * 3600, first_delay=600):
+        """Controlla GitHub ogni 12 ore e avvisa una volta per ogni nuova versione."""
+        await asyncio.sleep(first_delay)
+        while True:
+            try:
+                st = await updater.check()
+                latest = st.get("latest") or {}
+                if st.get("available") and latest.get("sha") and latest["sha"] != self.db.get("update_notified"):
+                    self.db.set("update_notified", latest["sha"])
+                    how = ("Per installarla: pagina → Gestione → Aggiornamento programma → Aggiorna ora."
+                           if not st.get("problems") else "Dalla pagina non si può aggiornare: vedi Gestione → Aggiornamento programma.")
+                    await self.notify(f"🆕 Nuova versione di MeshWatch disponibile:\n{latest.get('message', '')}\n{how}")
+            except Exception as e:
+                log.info("Controllo aggiornamenti non riuscito: %s", e)
+            await asyncio.sleep(every)
+
+    async def maintenance_loop(self):
+        """Una volta al giorno pulisce i dati vecchi; ogni settimana invia il backup (se attivo)."""
+        from . import maintenance
+        await asyncio.sleep(300)
+        while True:
+            try:
+                st = maintenance.settings(self.db)
+                now = time.time()
+                if now - (st["last_purge"] or 0) > 86400:
+                    await self.run_purge()
+                if st["backup_telegram"] and now - (st["last_backup"] or 0) > maintenance.BACKUP_EVERY_DAYS * 86400:
+                    await self.send_backup()
+            except Exception as e:
+                log.exception("Errore manutenzione: %s", e)
+            await asyncio.sleep(3600)
+
     # ---------- dati per interfacce
     def tracker_state(self, t, since):
         return {
             **t,
             "paused": bool(t["paused"]),
+            "moving": self.moving.get(t["id"], False),
+            "current_interval_min": self.interval_min(t),
             "last_ok": self.db.last_tracker_ok(t["id"]),
             "last_position": self.db.last_position(t["id"]),
             "track": self.db.positions_since(t["id"], since),

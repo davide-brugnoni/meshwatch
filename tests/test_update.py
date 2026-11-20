@@ -128,6 +128,8 @@ def main():
     from tests.test_smoke import FakeMesh
     db = DB(str(tmp / "t.db"))
     c = TestClient(create_app(Core({}, db, FakeMesh()), Auth(db), {"mode": "lan"}, Updater({}, app_dir=app)))
+    check(c.get("/api/update").status_code == 401, "aggiornamento protetto da password")
+    c.post("/api/setup", json={"username": "admin", "password": "segreto1"})
     r = c.get("/api/update").json()
     check(r["version"] and r["problems"], "API stato aggiornamento")
     check(c.post("/api/update/apply").status_code == 400, "API rifiuta se non si può aggiornare")

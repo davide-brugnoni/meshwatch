@@ -47,8 +47,10 @@ web:
   mode: lan
   host: 0.0.0.0             # in modalità public metti 127.0.0.1
   port: 8080
-  # Gli utenti si creano dalla pagina: Gestione → Utenti della pagina.
-  # Finché non ce ne sono, in modalità lan la pagina è aperta a chi è in casa.
+  # La Gestione chiede sempre la password admin: si imposta al primo accesso
+  # a Gestione. Altri utenti (admin o viewer) si creano dalla pagina.
+  # Mappa visibile senza login (sola lettura). Vuoto = sì in lan, no in public.
+  # public_map: true
 
 database: meshwatch.db
 
@@ -57,3 +59,4 @@ database: meshwatch.db
 # update:
 #   repo: davide-brugnoni/meshwatch
 #   branch: main
+#   notify: true    # avviso su Telegram quando esce una nuova versione (controllo ogni 12 ore)

@@ -11,15 +11,19 @@ Gira su un Raspberry Pi con una radio MeshCore in modalità *Companion USB* (Hel
 ## Cosa fa
 
 - **Tracciamento GPS**: a intervalli regolari chiede la telemetria ai dispositivi scelti e salva la traccia. Più dispositivi, ognuno con il suo colore, intervallo, fascia oraria e soglie di avviso.
+- **Intervallo adattivo**: facoltativo, per dispositivo. Se tra due posizioni si è spostato più di 150 m viene interrogato più spesso; quando si ferma torna all'intervallo normale.
 - **Pulizia tracce**: dal cestino sulla mappa (tutti i dispositivi) o da "Cancella traccia" (uno solo) si eliminano i punti salvati; resta l'ultima posizione. Solo admin.
-- **Ripetitori**: login e statistiche periodiche (batteria, uptime, rumore, SNR, RSSI, pacchetti) con grafico della batteria.
+- **Ripetitori**: login e statistiche periodiche (batteria, uptime, rumore, SNR, RSSI, pacchetti) con grafici di batteria, rumore, SNR e RSSI.
 - **Terminale**: comandi CLI ai ripetitori dalla pagina o da Telegram, con conferma per i comandi che modificano o riavviano e registro di tutti i comandi inviati.
 - **Gateway**: stato e configurazione della radio collegata (nome, potenza, posizione, parametri radio), advert, riavvio.
 - **Sistema**: temperatura, memoria, disco, **avviso di tensione bassa**, riavvio e spegnimento del Raspberry.
-- **Telegram**: posizione con pin e link Google Maps, ultima posizione, traccia, stato dei nodi, avvisi (dispositivo che non risponde, batteria bassa, ripetitore muto).
+- **Radio**: se la radio si scollega arriva un avviso su Telegram e dopo 3 minuti il programma la ricollega da solo, ritrovando la porta USB anche se è cambiata.
+- **Manutenzione e backup**: pulizia automatica dei dati più vecchi di N giorni (default 180); backup di database e config scaricabile dalla pagina o inviato ogni settimana su Telegram.
+- **Registro attività**: login, tentativi falliti e ogni azione di gestione, dalla pagina e da Telegram.
+- **Telegram**: posizione con pin e link Google Maps, ultima posizione, traccia, stato dei nodi, avvisi (dispositivo che non risponde, batteria bassa, ripetitore muto, radio scollegata, nuova versione disponibile).
 - **Da telefono**: pagina pensata anche per lo smartphone (barra in basso Mappa · Nodi · Gestione).
-- **Aggiornamento dalla pagina**: scarica l'ultima versione da GitHub e riavvia, senza togliere la SD; se la nuova versione non parte torna da sola alla precedente.
-- **Utenti**: ruoli *admin* (gestisce tutto) e *viewer* (vede e chiede la posizione), predisposto per l'accesso da Internet tramite Cloudflare Tunnel.
+- **Aggiornamento dalla pagina**: scarica l'ultima versione da GitHub e riavvia, senza togliere la SD; se la nuova versione non parte torna da sola alla precedente. Quando ne esce una nuova arriva un avviso.
+- **Accesso**: la mappa è libera in casa (sola lettura), la Gestione chiede sempre la password admin. Ruoli *admin* (gestisce tutto) e *viewer* (vede e chiede la posizione). Predisposto per l'accesso da Internet tramite Cloudflare Tunnel.
 
 | Gestione | Sistema e gateway |
 |---|---|
@@ -43,6 +47,7 @@ Nella cartella [`sd-kit/`](sd-kit/) c'è tutto per creare una scheda che si inst
 1. Scarica DietPi per Raspberry Pi (ARMv8 64-bit per Pi 3/4/5, ARMv7 per Pi 2) e scrivilo sulla SD con balenaEtcher.
 2. Doppio clic su `sd-kit/PREPARA-SD.bat`: chiede nome, password e WiFi, copia MeshWatch sulla SD e apre il config.
 3. Inserisci la SD nel Raspberry con la radio collegata e accendi: in 20–30 minuti è pronto su `http://meshwatch.local:8080`.
+4. Apri **Gestione**: la prima volta chiede di impostare la password admin.
 
 Accesso SSH con l'utente `meshwatch` (root disabilitato via SSH). Per aggiornare: dalla pagina (vedi [Aggiornamenti](#aggiornamenti)); in alternativa SD nel PC e `sd-kit/AGGIORNA-SD.bat`. Config e dati restano.
 
@@ -70,6 +75,17 @@ Copia `config.example.yaml` in `config.yaml` (con il kit SD il file è `meshwatc
 - `telegram.token`: crealo con @BotFather. `allowed_chat_ids`: chi può usare il bot e riceve gli avvisi; `admin_chat_ids`: chi può usare il terminale. Il tuo ID te lo dà @userinfobot.
 - Le sezioni `tracker` e `repeaters` vengono importate solo al primo avvio: poi dispositivi, ripetitori e utenti si gestiscono dalla pagina (scheda **Gestione**).
 
+### Chi vede cosa
+
+| | Mappa e stato | Chiedere la posizione | Gestione |
+|---|---|---|---|
+| senza login (in casa) | sì | no | no |
+| utente *viewer* | sì | sì | no |
+| utente *admin* | sì | sì | sì |
+
+- **Primo accesso**: finché non c'è un admin, la pagina mostra la mappa e aprendo **Gestione** chiede di creare la password admin (almeno 8 caratteri). Chi aggiorna da una versione precedente senza utenti trova la stessa richiesta.
+- **Mappa libera**: `web.public_map` nel config. Di default è `true` in modalità `lan` e `false` in modalità `public`. Con `false` serve il login anche per la mappa.
+
 ### Comandi Telegram
 
 | Comando | Cosa fa |
@@ -93,6 +109,31 @@ echo 'meshwatch-svc ALL=(root) NOPASSWD: /usr/bin/systemctl reboot, /usr/bin/sys
 
 (con `install.sh` l'utente del servizio è il tuo utente invece di `meshwatch-svc`: lo script lo configura da solo).
 
+## Manutenzione e backup
+
+In **Gestione → Manutenzione e backup**:
+
+- **Conserva i dati per N giorni** (default 180, `0` = per sempre). Una volta al giorno vengono cancellati posizioni, statistiche dei ripetitori, comandi del terminale e registro più vecchi. Restano sempre l'ultima posizione di ogni dispositivo e l'ultimo stato di ogni ripetitore.
+- **Scarica backup**: uno zip con `meshwatch.db`, `config.yaml` e le istruzioni di ripristino (`LEGGIMI.txt`).
+- **Backup settimanale su Telegram**: va attivato. Arriva solo alle chat in `admin_chat_ids` (o, se vuoto, a quelle in `allowed_chat_ids`).
+
+Il backup contiene password (token Telegram, ripetitori) e posizioni: conservalo con cura.
+
+**Ripristino**: ferma il servizio, rimetti i due file al loro posto e riavvia.
+
+- Con il kit SD: `meshwatch.db` in `/var/lib/meshwatch/` (poi `sudo chown meshwatch-svc: /var/lib/meshwatch/meshwatch.db`) e `config.yaml` come `/boot/firmware/meshwatch-config.yaml`, perché viene ricopiato da lì a ogni avvio.
+- Con `install.sh`: entrambi nella cartella del programma.
+
+
+
+```bash
+sudo systemctl stop meshwatch
+```
+
+```bash
+sudo systemctl start meshwatch
+```
+
 ## Aggiornamenti
 
 Dalla pagina: **Gestione → Aggiornamento programma → Controlla aggiornamenti → Aggiorna ora**. Il Raspberry deve raggiungere `api.github.com` e `codeload.github.com`.
@@ -106,6 +147,8 @@ Cosa succede:
 5. se la nuova versione non resta accesa 90 secondi per 3 avvii di fila, `tools/guard.sh` (eseguito da systemd prima di ogni avvio) rimette la precedente e la pagina lo segnala.
 
 `config.yaml`, database, utenti e venv non vengono toccati. Repository e ramo si possono cambiare con la sezione `update:` del config.
+
+Ogni 12 ore il programma controlla se c'è una nuova versione: se sì manda un avviso su Telegram (una volta per versione) e mostra un pallino su **Gestione**. Si disattiva con `update.notify: false`.
 
 **Schede preparate prima della versione 1.1** (una volta sola): il programma era di proprietà di root e il servizio non poteva aggiornarsi. Con il Raspberry acceso e in rete, doppio clic su `sd-kit/ABILITA-AGGIORNAMENTI.bat` da Windows, oppure via SSH:
 
@@ -121,12 +164,12 @@ L'aggiornamento da SD (`AGGIORNA-SD.bat`) resta possibile: lascia sulla SD il fi
 
 ## Accesso da Internet
 
-1. Crea un utente admin dalla pagina (Gestione → Utenti): da quel momento la pagina chiede il login.
+1. Imposta la password admin dalla pagina (al primo accesso a Gestione).
 2. Nel config: `web.mode: public` e `web.host: 127.0.0.1`.
 3. Cloudflare Zero Trust → *Tunnels* → crea un tunnel, installa `cloudflared` sul Raspberry con il comando proposto, *Public hostname* `mesh.tuodominio.it` → `http://localhost:8080`.
 4. Consigliato: *Access → Applications* con policy per email, come secondo lucchetto.
 
-In modalità `public` il login è obbligatorio, i cookie viaggiano solo su HTTPS e dopo 8 tentativi errati l'IP viene bloccato per 15 minuti. La pagina mostra la posizione di persone in tempo reale: non esporla mai senza login.
+In modalità `public` il login è obbligatorio (anche per la mappa, salvo `public_map: true`), i cookie viaggiano solo su HTTPS e dopo 8 tentativi errati l'IP viene bloccato per 15 minuti (il blocco resta anche se il servizio si riavvia). Accessi e tentativi falliti finiscono nel **Registro attività**. La pagina mostra la posizione di persone in tempo reale: non esporla senza login. Per far vedere la mappa a qualcuno da fuori, meglio creargli un utente *viewer* che usare `public_map: true`.
 
 ## Limiti
 
@@ -147,6 +190,7 @@ meshwatch/            pacchetto Python
   auth.py             login e sessioni
   system.py           stato del Raspberry, riavvio/spegnimento
   updater.py          aggiornamento dalla pagina (GitHub), con ripristino
+  maintenance.py      pulizia dei dati vecchi e backup
 web/index.html        interfaccia (Leaflet incluso in web/vendor)
 tools/                guard.sh (ripristino), configura-servizio.sh, abilita-aggiornamenti.sh
 sd-kit/               preparazione e aggiornamento della SD DietPi da Windows

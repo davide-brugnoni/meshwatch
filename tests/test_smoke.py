@@ -20,7 +20,13 @@ from meshwatch.web import create_app  # noqa: E402
 
 class FakeMesh:
     connected = True
+    connecting = False
     n = 0
+    reconnects = 0
+
+    async def reconnect(self):
+        self.reconnects += 1
+        self.connected = True
 
     async def request_telemetry(self, name):
         self.n += 1
@@ -69,17 +75,38 @@ def main():
     check(not db.repeaters(), "import non ripetuto ai riavvii")
 
     c = TestClient(create_app(core, Auth(db), {"mode": "lan"}))
-    check(c.get("/api/me").json()["role"] == "admin", "senza utenti la pagina in lan è aperta")
+    me = c.get("/api/me").json()
+    check(me["role"] == "guest" and me["setup"], "senza utenti: mappa libera, gestione da impostare")
+    check(c.get("/api/state").status_code == 200, "mappa libera in lan")
+    check(c.get("/api/admin").status_code == 401 and c.post("/api/update/apply").status_code == 401
+          and c.post("/api/system/reboot").status_code == 401, "gestione chiusa anche senza utenti")
+    check(c.post("/api/trackers/1/poll").status_code == 401, "l'ospite non chiede la posizione")
+    check(c.post("/api/users", json={"username": "x1", "password": "segreto12", "role": "admin"}).status_code == 401,
+          "senza login non si creano utenti")
+    check(c.post("/api/setup", json={"username": "admin1", "password": "corta"}).status_code == 422,
+          "password admin di almeno 8 caratteri")
+    check(c.post("/api/setup", json={"username": "admin1", "password": "segreto1"}).json()["ok"], "primo avvio: crea admin")
+    check(TestClient(create_app(core, Auth(db), {"mode": "lan"})).post(
+        "/api/setup", json={"username": "evil", "password": "segreto99"}).status_code == 403, "setup una volta sola")
+    check(c.get("/api/me").json()["role"] == "admin", "dopo il setup si è già dentro come admin")
     check(c.post("/api/trackers/1/poll").json()["ok"], "richiesta posizione")
     check(c.post("/api/trackers", json={"contact": "X", "active_hours": "25:00-1"}).status_code == 400,
           "validazione fascia oraria")
     check(c.post("/api/repeaters", json={"name": "Ripetitore-1", "password": "pw"}).json()["ok"], "aggiunta ripetitore")
     check(c.post("/api/cli", json={"node": "Ripetitore-1", "cmd": "reboot"}).json().get("needs_confirm"),
           "conferma per comandi pericolosi")
-    check(c.post("/api/users", json={"username": "fam", "password": "123456", "role": "viewer"}).status_code == 400,
-          "il primo utente deve essere admin")
-    c.post("/api/users", json={"username": "admin1", "password": "segreto1", "role": "admin"})
-    check(c.get("/api/state").status_code == 401, "dopo il primo utente serve il login")
+    anon = TestClient(create_app(core, Auth(db), {"mode": "lan"}))
+    st = anon.get("/api/state")
+    check(st.status_code == 200 and st.json()["contacts"] == [], "mappa libera senza login, senza rubrica")
+    check(anon.get("/api/admin").status_code == 401, "gestione con login")
+    closed = TestClient(create_app(core, Auth(db), {"mode": "lan", "public_map": False}))
+    check(closed.get("/api/state").status_code == 401 and closed.get("/api/me").json()["role"] is None,
+          "public_map: false chiude la mappa")
+    pub = TestClient(create_app(core, Auth(db), {"mode": "public"}))
+    check(pub.get("/api/state").status_code == 401, "in modalità public la mappa chiede il login")
+    check(pub.post("/api/setup", json={"username": "x2", "password": "segreto12"}).status_code == 403,
+          "niente setup in modalità public")
+    c.post("/api/logout")
     c.post("/api/login", json={"username": "admin1", "password": "segreto1"})
     check(c.get("/api/state").status_code == 200, "login")
     c.post("/api/users", json={"username": "fam", "password": "123456", "role": "viewer"})
@@ -101,7 +128,109 @@ def main():
           and db.last_position(1) == last, "cancella tutte le tracce")
     v = TestClient(create_app(core, Auth(db), {"mode": "lan"}))
     v.post("/api/login", json={"username": "fam", "password": "123456"})
+    check(v.post("/api/trackers/1/poll").json()["ok"] and v.get("/api/admin").status_code == 403,
+          "il viewer chiede la posizione ma non gestisce")
     check(v.delete("/api/track").status_code == 403, "un viewer non cancella le tracce")
+
+    # sicurezza: blocco dei tentativi persistente e registro attività
+    for _ in range(8):
+        anon.post("/api/login", json={"username": "admin1", "password": "sbagliata"})
+    check(anon.post("/api/login", json={"username": "admin1", "password": "segreto1"}).status_code == 429,
+          "dopo 8 errori l'IP è bloccato")
+    restarted = TestClient(create_app(core, Auth(db), {"mode": "lan"}))
+    check(restarted.post("/api/login", json={"username": "admin1", "password": "segreto1"}).status_code == 429,
+          "il blocco resta dopo un riavvio")
+    db.clear_login_failures("testclient")
+    log_rows = c.get("/api/audit").json()
+    acts = [r["action"] for r in log_rows]
+    check("IP bloccato per 15 minuti" in acts and "login fallito" in acts and "login" in acts
+          and "password admin impostata (primo accesso)" in acts and "tracce cancellate" in acts,
+          "registro attività")
+    check(anon.get("/api/audit").status_code == 401 and v.get("/api/audit").status_code == 403,
+          "registro solo per admin")
+
+    # manutenzione e backup
+    import io, zipfile
+    old = int(time.time()) - 400 * 86400
+    db._exec("INSERT INTO positions (ts, lat, lon, alt, batt_v, tracker_id) VALUES (?,?,?,?,?,?)", (old, 1, 1, 0, 0, tid2))
+    db._exec("INSERT INTO repeater_status (ts, name, ok) VALUES (?,?,?)", (old, "Ripetitore-1", 1))
+    db.add_repeater_status("Ripetitore-1", True, {"bat": 4000})
+    db._exec("INSERT INTO audit VALUES (?,?,?,?,?)", (old, "x", "", "vecchio", ""))
+    last2 = db.last_position(tid2)
+    check(c.get("/api/maintenance").json()["retention_days"] == 180, "conservazione di default 180 giorni")
+    check(c.put("/api/maintenance", json={"retention_days": 3}).status_code == 400, "minimo 7 giorni")
+    check(c.put("/api/maintenance", json={"backup_telegram": True}).status_code == 400, "backup Telegram senza bot")
+    n = c.post("/api/maintenance/purge").json()["deleted"]
+    check(n == 3 and db.last_position(tid2) == last2 and db.repeater_latest("Ripetitore-1")[0],
+          "pulizia dei dati vecchi, restano ultima posizione e ultimo stato")
+    tid3 = db.add_tracker(contact="T3", label="T3", paused=0)
+    db._exec("INSERT INTO positions (ts, lat, lon, alt, batt_v, tracker_id) VALUES (?,?,?,?,?,?)", (old, 3, 3, 0, 0, tid3))
+    c.post("/api/maintenance/purge")
+    check(db.last_position(tid3) is not None, "resta l'ultima posizione anche se vecchia")
+    c.put("/api/maintenance", json={"retention_days": 0})
+    check(c.post("/api/maintenance/purge").status_code == 400, "0 = per sempre, niente pulizia")
+    r = c.get("/api/backup")
+    z = zipfile.ZipFile(io.BytesIO(r.content))
+    check(r.status_code == 200 and "meshwatch.db" in z.namelist() and "LEGGIMI.txt" in z.namelist(), "backup scaricabile")
+    check(anon.get("/api/backup").status_code == 401 and v.get("/api/backup").status_code == 403, "backup solo admin")
+    sent = []
+    async def fake_send(data, name, caption):
+        sent.append(name)
+    core.file_senders.append(fake_send)
+    check(c.post("/api/backup/telegram").json()["ok"] and sent and db.get("last_backup"), "backup su Telegram")
+    core.file_senders.clear()
+    db.delete_tracker(tid3)
+
+    # intervallo adattivo
+    from meshwatch.core import distance_m
+    check(abs(distance_m({"lat": 45.0, "lon": 9.0}, {"lat": 45.001, "lon": 9.0}) - 111) < 2, "distanza in metri")
+    db.update_tracker(1, interval_min=60, moving_interval_min=10)
+    t1 = db.tracker(1)
+    check(core.interval_min(t1) == 60, "fermo: intervallo normale")
+    core._update_moving(t1, {"lat": 45.0, "lon": 9.0}, {"lat": 45.01, "lon": 9.0})
+    check(core.interval_min(t1) == 10 and core.next_due[1] <= time.time() + 600, "in movimento: intervallo veloce")
+    core._update_moving(t1, {"lat": 45.01, "lon": 9.0}, {"lat": 45.0101, "lon": 9.0})
+    check(core.interval_min(t1) == 60, "di nuovo fermo")
+    db.update_tracker(1, moving_interval_min=0)
+    core._update_moving(t1, {"lat": 45.0, "lon": 9.0}, {"lat": 45.01, "lon": 9.0})
+    check(core.interval_min(db.tracker(1)) == 60, "intervallo adattivo disattivato")
+    core.moving.clear()
+
+    # radio: avviso, riconnessione, ritorno
+    notes = []
+    async def collect(text):
+        notes.append(text)
+    async def watchdog():
+        core.notifiers.append(collect)
+        core.RADIO_ALERT_S, core.RADIO_RECONNECT_S = 0.05, 0.1
+        core.mesh.connected = False
+        task = asyncio.create_task(core.radio_watchdog(tick=0.02))
+        await asyncio.sleep(0.4)
+        task.cancel()
+        core.notifiers.remove(collect)
+    asyncio.run(watchdog())
+    check(core.mesh.reconnects == 1 and core.mesh.connected, "radio scollegata: riconnessione completa")
+    check(len(notes) == 2 and "scollegata" in notes[0] and "di nuovo collegata" in notes[1], "avvisi radio")
+
+    # avviso di nuova versione: una volta sola per versione
+    class FakeUpdater:
+        sha = "a1"
+        async def check(self):
+            return {"available": True, "problems": [], "latest": {"sha": self.sha, "message": "Novità"}}
+    upd_notes = []
+    async def collect_upd(text):
+        upd_notes.append(text)
+    async def upd_watch():
+        core.notifiers.append(collect_upd)
+        fu = FakeUpdater()
+        task = asyncio.create_task(core.update_watch(fu, every=0.02, first_delay=0))
+        await asyncio.sleep(0.1)
+        fu.sha = "b2"
+        await asyncio.sleep(0.1)
+        task.cancel()
+        core.notifiers.remove(collect_upd)
+    asyncio.run(upd_watch())
+    check(len(upd_notes) == 2 and "Novità" in upd_notes[0], "avviso nuova versione, una volta per versione")
 
     async def sched():
         core.next_due.clear()

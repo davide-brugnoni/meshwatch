@@ -72,6 +72,7 @@ class Bot:
         a.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.term_text))
         a.add_error_handler(self.on_error)
         core.notifiers.append(self.broadcast)
+        core.file_senders.append(self.send_file)
 
     @staticmethod
     def _request(read_timeout=10):
@@ -106,6 +107,19 @@ class Bot:
                 except (NetworkError, TimedOut) as e:
                     log.warning("Avviso non inviato (tentativo %d): %s", attempt + 1, e)
                     await asyncio.sleep(min(60, 10 * (attempt + 1)))
+
+    async def send_file(self, data, filename, caption=""):
+        """Backup: solo alle chat admin (contiene password)."""
+        from telegram import InputFile
+        for chat in self.admins:
+            for attempt in range(4):
+                try:
+                    await self.app.bot.send_document(chat, InputFile(data, filename=filename), caption=caption,
+                                                     read_timeout=60, write_timeout=60)
+                    break
+                except (NetworkError, TimedOut) as e:
+                    log.warning("Backup non inviato (tentativo %d): %s", attempt + 1, e)
+                    await asyncio.sleep(30 * (attempt + 1))
 
     def ok(self, update: Update):
         if not (update.effective_chat and update.effective_chat.id in self.allowed):
@@ -152,14 +166,17 @@ class Bot:
             await self.track(chat, t)
         elif action == "pause":
             self.core.db.update_tracker(t["id"], paused=1)
+            self.core.audit(f"telegram:{chat.id}", "pausa tracciamento", t["label"])
             await chat.send_message(f"⏸ Tracciamento di {t['label']} sospeso.")
         elif action == "resume":
             self.core.db.update_tracker(t["id"], paused=0)
             self.core.schedule_now(t["id"])
+            self.core.audit(f"telegram:{chat.id}", "ripresa tracciamento", t["label"])
             await chat.send_message(f"▶️ Tracciamento di {t['label']} riattivato.")
         elif action == "interval":
             m = max(5, min(int(arg), 720))
             self.core.db.update_tracker(t["id"], interval_min=m)
+            self.core.audit(f"telegram:{chat.id}", "intervallo", f"{t['label']}: {m} min")
             self.core.next_due[t["id"]] = time.time() + m * 60
             await chat.send_message(f"{t['label']}: posizione ogni {m} minuti.")
 
@@ -270,6 +287,7 @@ class Bot:
     async def advert(self, update: Update, ctx):
         if self.ok(update):
             await self.core.mesh.send_advert()
+            self.core.audit(f"telegram:{update.effective_chat.id}", "advert gateway")
             await update.message.reply_text("Advert inviato.")
 
     # ---------- pulsanti

@@ -7,6 +7,7 @@ COLORS = ["#2fb38a", "#ff7a45", "#5aa9ff", "#e8c547", "#c77dff", "#ff5c8a"]
 
 class DB:
     def __init__(self, path):
+        self.path = path
         self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.lock = threading.Lock()
@@ -42,6 +43,13 @@ class DB:
                 CREATE TABLE IF NOT EXISTS users (
                     username TEXT PRIMARY KEY, password_hash TEXT NOT NULL, role TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS login_failures (
+                    ip TEXT PRIMARY KEY, count INTEGER, first_ts INTEGER
+                );
+                CREATE TABLE IF NOT EXISTS audit (
+                    ts INTEGER, user TEXT, ip TEXT, action TEXT, detail TEXT
+                );
+                CREATE INDEX IF NOT EXISTS i_audit_ts ON audit(ts);
                 CREATE INDEX IF NOT EXISTS i_pos_ts ON positions(ts);
                 CREATE INDEX IF NOT EXISTS i_rep ON repeater_status(name, ts);
                 """
@@ -52,6 +60,10 @@ class DB:
                 if "tracker_id" not in cols:
                     self.conn.execute(f"ALTER TABLE {table} ADD COLUMN tracker_id INTEGER")
             self.conn.execute("CREATE INDEX IF NOT EXISTS i_pos_tr ON positions(tracker_id, ts)")
+            # intervallo adattivo: 0 = disattivato
+            cols = [r[1] for r in self.conn.execute("PRAGMA table_info(trackers)")]
+            if "moving_interval_min" not in cols:
+                self.conn.execute("ALTER TABLE trackers ADD COLUMN moving_interval_min INTEGER DEFAULT 0")
             self.conn.commit()
 
     def _exec(self, sql, args=()):
@@ -95,7 +107,7 @@ class DB:
 
     # ---------- tracker
     TRACKER_FIELDS = ("contact", "label", "interval_min", "active_hours", "offline_alert_min",
-                      "low_battery_v", "paused", "color")
+                      "low_battery_v", "paused", "color", "moving_interval_min")
 
     def trackers(self):
         return self._all("SELECT * FROM trackers ORDER BY id")
@@ -181,7 +193,7 @@ class DB:
 
     def repeater_history(self, name, since):
         return self._all(
-            "SELECT ts, bat_mv, noise, snr FROM repeater_status WHERE name=? AND ok=1 AND ts>=? ORDER BY ts",
+            "SELECT ts, bat_mv, noise, snr, rssi FROM repeater_status WHERE name=? AND ok=1 AND ts>=? ORDER BY ts",
             (name, since))
 
     # ---------- utenti
@@ -202,6 +214,28 @@ class DB:
     def delete_user(self, username):
         self._exec("DELETE FROM users WHERE username=?", (username,))
 
+    # ---------- tentativi di login falliti (restano anche dopo un riavvio)
+    def login_failures(self, ip):
+        r = self._one("SELECT count, first_ts FROM login_failures WHERE ip=?", (ip,))
+        return (r["count"], r["first_ts"]) if r else (0, None)
+
+    def set_login_failures(self, ip, count, first_ts):
+        self._exec("INSERT OR REPLACE INTO login_failures VALUES (?,?,?)", (ip, count, first_ts))
+
+    def clear_login_failures(self, ip=None):
+        if ip is None:
+            self._exec("DELETE FROM login_failures WHERE first_ts < ?", (int(time.time()) - 86400,))
+        else:
+            self._exec("DELETE FROM login_failures WHERE ip=?", (ip,))
+
+    # ---------- registro attività
+    def add_audit(self, user, action, detail="", ip=""):
+        self._exec("INSERT INTO audit VALUES (?,?,?,?,?)",
+                   (int(time.time()), user or "", ip or "", action, (detail or "")[:300]))
+
+    def audit(self, limit=200):
+        return self._all("SELECT * FROM audit ORDER BY rowid DESC LIMIT ?", (limit,))
+
     # ---------- terminale
     def add_cli(self, user, node, cmd, reply):
         self._exec("INSERT INTO cli_log VALUES (?,?,?,?,?)", (int(time.time()), user, node, cmd, reply))
@@ -209,6 +243,16 @@ class DB:
     def cli_history(self, node, limit=50):
         rows = self._all("SELECT * FROM cli_log WHERE node=? ORDER BY rowid DESC LIMIT ?", (node, limit))
         return list(reversed(rows))
+
+    def backup_to(self, dest):
+        """Copia coerente del database (API di backup di SQLite)."""
+        import sqlite3 as _sq
+        out = _sq.connect(dest)
+        try:
+            with self.lock:
+                self.conn.backup(out)
+        finally:
+            out.close()
 
     # ---------- impostazioni
     def get(self, key, default=None):
