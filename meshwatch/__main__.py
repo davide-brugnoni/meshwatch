@@ -45,7 +45,7 @@ async def run(cfg):
 
     async def radio():
         await mesh.connect()
-        await asyncio.gather(core.tracker_loop(), core.repeater_loop())
+        await asyncio.gather(core.tracker_loop(), core.repeater_loop(), core.companion_loop())
 
     serve = asyncio.create_task(server.serve())
     others = [asyncio.create_task(radio()), asyncio.create_task(updater.confirm_later()),

@@ -31,10 +31,11 @@ class SensorMesh(ChatMesh):
         self.answer = True
         self.route = (2, ["b2", "c3"])
 
-    async def request_telemetry(self, name):
-        if not self.answer:
+    async def request_telemetry(self, name, attempts=2):
+        self.asked = getattr(self, "asked", []) + [name]
+        if not self.answer or name in getattr(self, "silent", ()):
             return None
-        lpp = [{"channel": 1, "type": "voltage", "value": 4.02},
+        lpp = [{"channel": 1, "type": "voltage", "value": getattr(self, "volts", {}).get(name, 4.02)},
                {"channel": 2, "type": "temperature", "value": self.temp},
                {"channel": 2, "type": "humidity", "value": 55},
                {"channel": 3, "type": "accelerometer", "value": {"acc_x": 0.1, "acc_y": 0.0, "acc_z": 1.0}}]
@@ -129,6 +130,70 @@ def test_sensors():
     check(db._one("SELECT COUNT(*) AS n FROM sensor_readings")["n"] == n_before - 6, "pulizia delle letture vecchie")
     db.delete_tracker(tid)
     check(not db.sensor_rules(tid) and not db.sensor_latest(tid), "eliminando il dispositivo spariscono letture e soglie")
+
+
+def test_battery_alerts():
+    db, mesh, core, c, v, anon, tid = setup()
+    notes = []
+
+    async def collect(text):
+        notes.append(text)
+    core.notifiers.append(collect)
+    alert = lambda volt: asyncio.run(core._battery_alert(("t", tid), volt, 3.5, f"batt {volt}"))
+
+    check(c.get("/api/alerts/battery").json() == {"batt_repeat_h": 0, "batt_quiet": "", "companion_batt": "all",
+                                                   "companion_interval_min": 120, "companion_low_battery_v": 3.5},
+          "avvisi batteria: valori iniziali")
+    check(v.get("/api/alerts/battery").status_code == 403, "impostazioni avvisi batteria solo per l'admin")
+    alert(3.3); alert(3.2)
+    check(len(notes) == 1, "di default un avviso solo finché la batteria resta bassa")
+    alert(3.55); alert(3.3)
+    check(len(notes) == 1, "risalita sotto i 0,1 V di margine: nessun nuovo avviso")
+    alert(3.7); alert(3.3)
+    check(len(notes) == 2, "batteria risalita e di nuovo bassa: nuovo avviso")
+
+    check(c.put("/api/alerts/battery", json={"batt_repeat_h": 3}).json()["ok"], "ripetizione ogni 3 ore salvata")
+    alert(3.3)
+    check(len(notes) == 2, "prima delle 3 ore non si ripete")
+    core.batt_sent[("t", tid)] -= 3 * 3600 + 1
+    alert(3.3)
+    check(len(notes) == 3, "dopo 3 ore l'avviso si ripete")
+
+    for bad in ("25:00-07:00", "22:00", "07:00-07:00"):
+        check(c.put("/api/alerts/battery", json={"batt_quiet": bad}).status_code == 400, f"fascia non valida rifiutata ({bad})")
+    a, b = time.strftime("%H:%M", time.localtime(time.time() - 3600)), time.strftime("%H:%M", time.localtime(time.time() + 3600))
+    check(c.put("/api/alerts/battery", json={"batt_quiet": f"{a}-{b}"}).json()["ok"], "fascia di silenzio salvata")
+    core.batt_sent.clear()
+    alert(3.3)
+    check(len(notes) == 3, "durante il silenzio nessun avviso")
+    c.put("/api/alerts/battery", json={"batt_quiet": ""})
+    alert(3.3)
+    check(len(notes) == 4, "finito il silenzio l'avviso arriva alla lettura successiva")
+    check("avvisi batteria" in [x["action"] for x in c.get("/api/audit").json()], "avvisi batteria nel registro attività")
+
+    # altri companion in rubrica (Alice è già seguita come dispositivo)
+    from tests.test_chat import contact as mk
+    bruno, carla = "f6" * 32, "a7" * 32
+    mesh.raw[bruno] = mk(bruno, "Bruno", 1)
+    mesh.raw[carla] = mk(carla, "Carla", 1, flags=1)
+    check([x["name"] for x in core.watched_companions()] == ["Bruno", "Carla"],
+          "companion controllati: tutti tranne quelli già seguiti e i ripetitori")
+    c.put("/api/alerts/battery", json={"companion_batt": "fav"})
+    check([x["name"] for x in core.watched_companions()] == ["Carla"], "solo i preferiti")
+    c.put("/api/alerts/battery", json={"companion_batt": "all"})
+    check(c.put("/api/alerts/battery", json={"companion_batt": "boh"}).status_code == 422
+          and c.put("/api/alerts/battery", json={"companion_interval_min": 5}).status_code == 422, "valori non validi rifiutati")
+    mesh.volts, mesh.silent, mesh.asked = {"Bruno": 3.3}, {"Carla"}, []
+    n = len(notes)
+    for x in core.watched_companions():
+        asyncio.run(core.poll_companion(x))
+    check(len(notes) == n + 1 and "Bruno" in notes[-1], "avviso batteria bassa di un companion")
+    lst = {x["name"]: x for x in c.get("/api/contacts").json()["contacts"]}
+    check(lst["Bruno"]["batt_v"] == 3.3 and lst["Carla"]["batt_v"] is None and lst["Carla"]["batt_asked"],
+          "batteria dei companion nella rubrica (anche chi non risponde)")
+    mesh.silent = {"Bruno"}
+    asyncio.run(core.poll_companion(core.watched_companions()[0]))
+    check(c.get("/api/contacts").json()["contacts"][1]["batt_v"] == 3.3, "senza risposta resta l'ultima lettura")
 
 
 def test_route():
@@ -429,6 +494,7 @@ def test_bot():
 
 def main():
     test_sensors()
+    test_battery_alerts()
     test_route()
     test_coverage()
     test_events()

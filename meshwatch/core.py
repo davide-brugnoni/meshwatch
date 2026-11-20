@@ -88,6 +88,7 @@ class Core:
         self.wakeup = asyncio.Event()
         self.next_due = {}           # tracker_id -> timestamp prossima richiesta
         self.alerts = {}             # chiave -> set di avvisi attivi
+        self.batt_sent = {}          # chiave -> ultimo avviso di batteria bassa inviato
         self.moving = {}             # tracker_id -> True se all'ultima posizione si stava spostando
         self.file_senders = []       # funzioni async(data, filename, caption) per i backup (Telegram)
         self.tasks = set()           # invii della chat in corso
@@ -112,6 +113,41 @@ class Core:
                 await n(text)
             except Exception as e:
                 log.error("Notifica fallita: %s", e)
+
+    def battery_alert_settings(self):
+        """Avvisi di batteria bassa: ogni quante ore ripeterli (0 = una volta sola, finché la
+        batteria non risale) e fascia oraria in cui stare zitti ("22:00-07:00", vuoto = mai)."""
+        try:
+            repeat = max(0, int(self.db.get("batt_repeat_h", 0) or 0))
+        except ValueError:
+            repeat = 0
+        def num(key, default, cast):
+            try:
+                return cast(self.db.get(key, default))
+            except (TypeError, ValueError):
+                return default
+        return {"batt_repeat_h": repeat, "batt_quiet": self.db.get("batt_quiet", "") or "",
+                "companion_batt": self.db.get("companion_batt", "all"),
+                "companion_interval_min": num("companion_interval_min", 120, int),
+                "companion_low_battery_v": num("companion_low_battery_v", 3.5, float)}
+
+    async def _battery_alert(self, key, v, lim, text):
+        """Batteria sotto la soglia: avvisa subito, poi di nuovo ogni batt_repeat_h ore. Durante
+        la fascia di silenzio non manda nulla: se la batteria è ancora bassa l'avviso arriva
+        alla prima lettura dopo la fine della fascia. Risale di 0,1 V sopra la soglia: si riparte."""
+        if v >= lim + 0.1:
+            self.batt_sent.pop(key, None)
+            return
+        if v >= lim:
+            return
+        st = self.battery_alert_settings()
+        if st["batt_quiet"] and in_active_hours(st["batt_quiet"]):
+            return
+        last = self.batt_sent.get(key)
+        if last is not None and (not st["batt_repeat_h"] or time.time() - last < st["batt_repeat_h"] * 3600):
+            return
+        self.batt_sent[key] = time.time()
+        await self.notify(text)
 
     def _flags(self, key):
         return self.alerts.setdefault(key, set())
@@ -196,11 +232,8 @@ class Core:
             await self.notify(msg)
         lim = t["low_battery_v"]
         if lim and res["batt_v"] is not None:
-            if res["batt_v"] < lim and "batt" not in f:
-                f.add("batt")
-                await self.notify(f"🔋 Batteria bassa su {t['label']}: {res['batt_v']:.2f} V")
-            elif res["batt_v"] >= lim + 0.1:
-                f.discard("batt")
+            await self._battery_alert(("t", t["id"]), res["batt_v"], lim,
+                                      f"🔋 Batteria bassa su {t['label']}: {res['batt_v']:.2f} V")
 
     async def _sensor_alerts(self, t, sensors):
         """Soglie impostate dalla pagina: un avviso quando il valore supera la soglia, uno
@@ -335,11 +368,7 @@ class Core:
         lim = self.cfg.get("repeater_low_battery_v")
         v = (st.get("bat") or 0) / 1000
         if lim and v:
-            if v < lim and "batt" not in f:
-                f.add("batt")
-                await self.notify(f"🔋 Batteria bassa sul ripetitore {name}: {v:.2f} V")
-            elif v >= lim + 0.1:
-                f.discard("batt")
+            await self._battery_alert(("r", name), v, lim, f"🔋 Batteria bassa sul ripetitore {name}: {v:.2f} V")
 
     # ---------- terminale
     async def run_cli(self, name, cmd, user):
@@ -563,6 +592,46 @@ class Core:
             except Exception as e:
                 log.exception("Errore poll ripetitori: %s", e)
             await asyncio.sleep(int(self.cfg.get("repeater_interval_min", 60)) * 60)
+
+    # ---------- batteria degli altri companion in rubrica
+    def watched_companions(self):
+        """Companion della rubrica da controllare (tutti o solo i preferiti), esclusi quelli
+        già seguiti come dispositivi: la loro batteria arriva già con la posizione."""
+        mode = self.battery_alert_settings()["companion_batt"]
+        if mode == "off":
+            return []
+        trackers = {t["contact"].lower() for t in self.db.trackers()}
+        return [c for c in self.mesh.contacts() if c["type"] == "companion" and c.get("public_key")
+                and c["name"].lower() not in trackers and (mode == "all" or c["favorite"])]
+
+    async def poll_companion(self, c):
+        """Chiede la telemetria a un companion e controlla la batteria. Ritorna i volt o None.
+        Se non risponde (fuori portata, o non condivide la telemetria) non avvisa."""
+        res = await self.mesh.request_telemetry(c["name"], attempts=1)
+        v = res.get("batt_v") if res else None
+        self.db.set_companion_battery(c["public_key"], c["name"], v)
+        if v:
+            lim = self.battery_alert_settings()["companion_low_battery_v"]
+            if lim:
+                await self._battery_alert(("c", c["public_key"]), v, lim,
+                                          f"🔋 Batteria bassa sul companion {c['name']}: {v:.2f} V")
+        return v
+
+    async def companion_loop(self, tick=60):
+        """Controlla a turno la batteria dei companion, uno alla volta, ognuno ogni
+        companion_interval_min minuti."""
+        await asyncio.sleep(90)
+        while True:
+            try:
+                if self.mesh.connected:
+                    every = max(30, self.battery_alert_settings()["companion_interval_min"]) * 60
+                    seen = self.db.companion_battery()
+                    for c in self.watched_companions():
+                        if time.time() - (seen.get(c["public_key"], {}).get("ts") or 0) >= every:
+                            await self.poll_companion(c)
+            except Exception as e:
+                log.exception("Errore batteria companion: %s", e)
+            await asyncio.sleep(tick)
 
     async def run_purge(self, user="automatico"):
         from . import maintenance

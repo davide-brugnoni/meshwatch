@@ -119,6 +119,36 @@
   </section>
 
   <section class="card">
+    <h2>Avvisi batteria bassa</h2>
+    <form class="edit" id="form-batt">
+      <label>Ripeti l'avviso ogni
+        <select name="batt_repeat_h">
+          <option value="0">mai (una volta sola)</option>
+          <option value="1">1 ora</option><option value="2">2 ore</option><option value="3">3 ore</option>
+          <option value="6">6 ore</option><option value="12">12 ore</option><option value="24">24 ore</option>
+          <option value="48">2 giorni</option><option value="168">1 settimana</option>
+        </select>
+      </label>
+      <label>Silenzio dalle alle
+        <span class="hours"><input type="time" name="q_from" value="22:00"> – <input type="time" name="q_to" value="07:00"></span>
+        <span class="hours" style="text-transform:none"><input type="checkbox" name="quiet_on"> silenzia in questa fascia</span>
+      </label>
+      <label>Altri companion in rubrica
+        <select name="companion_batt">
+          <option value="all">controlla tutti</option><option value="fav">solo i preferiti</option><option value="off">non controllare</option>
+        </select>
+      </label>
+      <label>Controlla i companion ogni (min) <input type="number" name="companion_interval_min" min="30" max="1440" step="10"></label>
+      <label>Avviso companion sotto (V) <input type="number" name="companion_low_battery_v" min="0" max="5" step="0.05"></label>
+      <div class="formacts"><button class="primary">Salva</button></div>
+    </form>
+    <p class="note">Vale per i dispositivi e per i ripetitori. Il primo avviso arriva appena la batteria scende sotto la soglia; poi, se è ancora bassa, si ripete con l'intervallo scelto.
+      Durante il silenzio non arriva niente: se la batteria è ancora bassa, l'avviso arriva alla prima lettura dopo la fine della fascia. Quando la batteria risale, si riparte da capo.<br>
+      Gli altri companion della rubrica (quelli che non segui come dispositivi) vengono interrogati uno alla volta per leggere la batteria, che compare anche nella Rubrica.
+      Rispondono solo se condividono la telemetria con il gateway (nell'app MeshCore del companion: telemetria consentita a tutti, o ai preferiti con il gateway tra i preferiti). Se non rispondono non arriva nessun avviso.</p>
+  </section>
+
+  <section class="card">
     <h2>Manutenzione e backup</h2>
     <div id="mnt-info" class="grid mono" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))"><p class="muted">Caricamento…</p></div>
     <form class="edit" id="form-mnt">
