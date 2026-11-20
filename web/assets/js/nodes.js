@@ -41,10 +41,43 @@ function spark(pts, color, pad, label) {
 }
 const cell = (label, value) => el('div', {}, el('span', { textContent: label }), value);
 
+// sensori del dispositivo (telemetria): ultimi valori e grafico del sensore scelto
+const fmtSensor = (s, v) => (+v).toFixed(s.dec) + (s.unit ? ' ' + s.unit : '');
+const sensorPick = {};
+try { Object.assign(sensorPick, JSON.parse(localStorage.getItem('sensorPick') || '{}')); } catch (e) { }
+function sensorBlock(t) {
+  const list = (t.sensors || []).filter(s => !(s.type === 'voltage' && s.channel === 1));   // la batteria è già sopra
+  if (!list.length) return null;
+  const dup = type => list.filter(x => x.type === type).length > 1;
+  const name = s => s.label + (dup(s.type) ? ` (${s.channel})` : '');
+  let cur = list.find(s => s.key === sensorPick[t.id]) || list[0];
+  const box = el('div', { className: 'sensors' });
+  const draw = () => {
+    const pts = (t.sensor_history[cur.key] || []);
+    const vals = pts.map(p => p[1]);
+    const tabs = el('div', { className: 'metric-tabs' }, ...list.map(s => {
+      const b = el('button', { className: s.key === cur.key ? 'on' : '', textContent: name(s) });
+      b.onclick = () => { cur = s; sensorPick[t.id] = s.key; try { localStorage.setItem('sensorPick', JSON.stringify(sensorPick)); } catch (e) { } draw(); };
+      return b;
+    }));
+    const chart = pts.length < 2 ? el('p', { className: 'muted', style: 'margin:6px 0 0;font-size:12.5px', textContent: `${name(cur)}: pochi dati nel periodo` })
+      : el('div', {}, spark(pts, '#e8c547', cur.dec ? Math.pow(10, -cur.dec) * 5 : 1, name(cur)),
+        el('div', { className: 'spark-range' }, el('span', { textContent: `min ${fmtSensor(cur, Math.min(...vals))}` }),
+          el('span', { textContent: `max ${fmtSensor(cur, Math.max(...vals))}` })));
+    box.replaceChildren(
+      el('div', { className: 'grid mono' }, ...list.map(s => cell(name(s), el('b', { textContent: fmtSensor(s, s.value), title: fmtTs(s.ts), style: 'font-weight:500' })))),
+      tabs, chart);
+  };
+  draw();
+  return box;
+}
+
 function trackerCard(t) {
   const p = t.last_position;
   const meta = [];
-  if (p && p.batt_v != null) meta.push(`batteria ${p.batt_v.toFixed(2)} V`);
+  const bs = (t.sensors || []).find(s => s.type === 'voltage' && s.channel === 1);
+  if (bs && (!p || bs.ts >= p.ts)) meta.push(`batteria ${bs.value.toFixed(2)} V`);
+  else if (p && p.batt_v != null) meta.push(`batteria ${p.batt_v.toFixed(2)} V`);
   if (p && p.alt != null) meta.push(`quota ${Math.round(p.alt)} m`);
   meta.push(`ultima risposta ${fmtTs(t.last_ok)}`);
   meta.push(t.paused ? 'IN PAUSA' : (t.moving && t.current_interval_min < t.interval_min ? `in movimento, ogni ${t.current_interval_min} min` : `ogni ${t.interval_min} min`)
@@ -69,7 +102,7 @@ function trackerCard(t) {
     el('div', { className: 'rep-head' }, el('span', { className: 'rep-name' }, swatch(t.color), t.label), el('span', { className: 'muted', textContent: t.contact !== t.label ? t.contact : '' })),
     el('p', { className: 'big', textContent: p ? fmtTs(p.ts) : 'Nessuna posizione' }),
     el('p', { className: 'muted', style: 'margin:0', textContent: meta.join(' · ') }),
-    row, admRow);
+    sensorBlock(t), row, admRow);
 }
 
 function render() {

@@ -29,12 +29,13 @@ async function loadAdmin() {
   if (!adm.trackers.length) tl.append(el('p', { className: 'muted', textContent: 'Nessun dispositivo.' }));
   adm.trackers.forEach(t => {
     const edit = el('button', { className: 'small', textContent: 'Modifica' }); edit.onclick = () => trackerForm(t);
+    const rules = el('button', { className: 'small', textContent: 'Soglie' }); rules.onclick = () => rulesForm(t);
     const rm = el('button', { className: 'small danger', textContent: 'Elimina' });
     rm.onclick = () => { if (confirm(`Eliminare ${t.label}? Verrà cancellato anche lo storico delle posizioni.`)) action(rm, () => del(`/api/trackers/${t.id}`), 'Dispositivo eliminato'); };
     tl.append(el('div', { className: 'item' },
       el('span', { className: 'name' }, swatch(t.color), t.label),
       el('span', { className: 'info', textContent: `contatto ${t.contact} · ogni ${t.interval_min} min${t.moving_interval_min ? ` (${t.moving_interval_min} in movimento)` : ''} · ${t.active_hours || 'sempre'} · avviso dopo ${t.offline_alert_min} min · batteria < ${t.low_battery_v} V${t.paused ? ' · IN PAUSA' : ''}` }),
-      el('span', { className: 'acts' }, edit, rm)));
+      el('span', { className: 'acts' }, edit, rules, rm)));
   });
   // ripetitori
   const rl = $('adm-reps'); rl.replaceChildren();
@@ -99,6 +100,31 @@ function trackerForm(t) {
       active_hours: f.always.checked ? '' : `${f.h_from.value}-${f.h_to.value}`,
       offline_alert_min: +f.offline_alert_min.value, low_battery_v: +f.low_battery_v.value };
     return t ? put(`/api/trackers/${t.id}`, body) : post('/api/trackers', body);
+  });
+}
+// soglie dei sensori di un dispositivo: avvisi su Telegram
+async function rulesForm(t) {
+  const f = $('form-rules');
+  let d; try { d = await api(`/api/trackers/${t.id}/rules`); } catch (e) { if (e.message !== 'login') toast('Errore: ' + e.message, true); return; }
+  $('rules-title').textContent = `Soglie dei sensori · ${t.label}`;
+  const key = s => `${s.type}:${s.channel}`;
+  const fmt = (r, v) => (+v).toFixed(r.dec) + (r.unit ? ' ' + r.unit : '');
+  f.sensor.replaceChildren(...(d.sensors.length ? d.sensors.map(s => el('option', { value: key(s), textContent: `${s.label} (canale ${s.channel})` }))
+    : [el('option', { value: '', textContent: 'Nessun sensore ricevuto finora' })]));
+  f.sensor.disabled = f.value.disabled = !d.sensors.length;
+  $('rules-list').replaceChildren(...(d.rules.length ? d.rules.map(r => {
+    const rm = el('button', { className: 'small danger', textContent: 'Rimuovi' });
+    rm.onclick = () => action(rm, () => del(`/api/trackers/${t.id}/rules/${r.id}`), 'Soglia rimossa').then(() => rulesForm(t));
+    return el('div', { className: 'item' }, el('span', { className: 'info', textContent: `${r.label} (canale ${r.channel}) ${r.op === '<' ? 'sotto' : 'sopra'} ${fmt(r, r.value)}` }),
+      el('span', { className: 'acts' }, rm));
+  }) : [el('p', { className: 'muted', style: 'margin:0', textContent: 'Nessuna soglia impostata.' })]));
+  openForm(f, async () => {
+    const s = d.sensors.find(x => key(x) === f.sensor.value);
+    if (!s) throw new Error('nessun sensore da controllare');
+    await post(`/api/trackers/${t.id}/rules`, { type: s.type, channel: s.channel, op: f.op.value, value: +f.value.value });
+    f.value.value = ''; toast('Soglia aggiunta');
+    setTimeout(() => rulesForm(t), 0);
+    return null;   // il modulo resta aperto, con la nuova soglia in elenco
   });
 }
 function repForm(r) {

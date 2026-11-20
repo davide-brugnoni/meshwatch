@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from .auth import hash_password
 from . import maintenance, system
-from .core import is_dangerous
+from .core import fmt_sensor, is_dangerous, sensor_info
 from .updater import UpdateError
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
@@ -44,6 +44,13 @@ class TrackerIn(BaseModel):
     low_battery_v: float | None = Field(None, ge=0, le=5)
     paused: bool | None = None
     moving_interval_min: int | None = Field(None, ge=0, le=720)
+
+
+class SensorRuleIn(BaseModel):
+    type: str = Field(..., min_length=1, max_length=40)
+    channel: int = Field(..., ge=0, le=255)
+    op: str = Field(..., pattern=r"^[<>]$")
+    value: float
 
 
 class RepeaterIn(BaseModel):
@@ -323,6 +330,35 @@ def create_app(core, auth, web_cfg, updater=None):
         n = db.clear_track(None, keep_last)
         audit(u, "tracce cancellate", f"tutti i dispositivi: {n} punti")
         return {"ok": True, "deleted": n}
+
+    # ---------- soglie dei sensori
+    @app.get("/api/trackers/{tid}/rules")
+    async def sensor_rules(tid: int, u=Depends(admin)):
+        get_tracker(tid)
+        rules = [{**r, **sensor_info(r["type"], r["channel"])} for r in db.sensor_rules(tid)]
+        sensors = [{"type": x["type"], "channel": x["channel"], **sensor_info(x["type"], x["channel"])}
+                   for x in db.sensor_latest(tid)]
+        return {"rules": rules, "sensors": sensors}
+
+    @app.post("/api/trackers/{tid}/rules")
+    async def add_sensor_rule(tid: int, body: SensorRuleIn, u=Depends(admin)):
+        t = get_tracker(tid)
+        if len(db.sensor_rules(tid)) >= 20:
+            raise HTTPException(400, "massimo 20 soglie per dispositivo")
+        rid = db.add_sensor_rule(tid, body.type, body.channel, body.op, body.value)
+        audit(u, "soglia sensore aggiunta", f"{t['label']}: {sensor_info(body.type, body.channel)['label']} "
+              f"{body.op} {fmt_sensor(body.type, body.channel, body.value)}")
+        return {"ok": True, "id": rid}
+
+    @app.delete("/api/trackers/{tid}/rules/{rid}")
+    async def delete_sensor_rule(tid: int, rid: int, u=Depends(admin)):
+        t = get_tracker(tid)
+        if not any(r["id"] == rid for r in db.sensor_rules(tid)):
+            raise HTTPException(404, "soglia non trovata")
+        db.delete_sensor_rule(rid)
+        core.alerts.get(("t", tid), set()).discard(f"rule{rid}")
+        audit(u, "soglia sensore rimossa", t["label"])
+        return {"ok": True}
 
     # ---------- ripetitori
     @app.post("/api/repeaters/poll")

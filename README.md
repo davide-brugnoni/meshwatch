@@ -15,6 +15,7 @@ Gira su un Raspberry Pi con una radio MeshCore in modalità *Companion USB* (Hel
 - **Tracciamento GPS**: a intervalli regolari chiede la telemetria ai dispositivi scelti e salva la traccia. Più dispositivi, ognuno con il suo colore, intervallo, fascia oraria e soglie di avviso.
 - **Intervallo adattivo**: facoltativo, per dispositivo. Se tra due posizioni si è spostato più di 150 m viene interrogato più spesso; quando si ferma torna all'intervallo normale.
 - **Pulizia tracce**: dal cestino sulla mappa (tutti i dispositivi) o da "Cancella traccia" (uno solo) si eliminano i punti salvati; resta l'ultima posizione. Solo admin.
+- **Sensori**: tutti i valori della telemetria (temperatura, umidità, pressione, luce, tensione, …) salvati a ogni risposta, anche senza fix GPS, con grafico per sensore e **soglie di avviso** su Telegram.
 - **Ripetitori**: login e statistiche periodiche (batteria, uptime, rumore, SNR, RSSI, pacchetti) con grafici di batteria, rumore, SNR e RSSI.
 - **Chat**: messaggi privati e canali (Public e canali privati) direttamente dalla Heltec collegata al Raspberry, dalla pagina, senza accendere un altro dispositivo. Conferma di consegna, nuovi tentativi automatici, messaggi salvati anche a pagina chiusa.
 - **Mappa della rete**: livello "Rete MeshCore" con i nodi che annunciano la posizione e i collegamenti tra ripetitori vicini colorati per SNR.
@@ -152,6 +153,15 @@ Scheda **Chat** (barra in alto o in basso sul telefono). Serve il login: la usan
 - **Ricezione**: i messaggi arrivano anche a pagina chiusa e restano nel database (vengono cancellati con la pulizia dei dati vecchi). Il numero sulla scheda Chat indica i non letti. Le risposte del terminale dei ripetitori non finiscono in chat.
 - Su Telegram i messaggi **non** vengono inoltrati. Nel registro attività finisce chi ha scritto e a chi, non il testo.
 
+## Sensori
+
+Ogni risposta alla telemetria porta, oltre alla posizione, i valori dei sensori del dispositivo in formato Cayenne LPP (per esempio il T1000-E manda temperatura e luce; un nodo sensore può mandare umidità, pressione, tensioni, …). MeshWatch li salva tutti, anche quando il GPS non ha il fix.
+
+- Nella scheda del dispositivo compaiono gli ultimi valori e il grafico del sensore scelto per il periodo selezionato. La tensione sul canale 1 è la batteria del dispositivo.
+- **Soglie** (solo admin): Gestione → Dispositivi tracciati → **Soglie**. Si sceglie un sensore già ricevuto almeno una volta, *sopra* o *sotto* e il valore. Arriva un avviso su Telegram quando il valore esce dalla soglia e uno quando torna nella norma. Massimo 20 soglie per dispositivo.
+- Per seguire un nodo che ha solo sensori (senza GPS) si aggiunge come un dispositivo normale: la mappa non mostra posizioni, la scheda mostra i sensori.
+- Le letture vengono cancellate con la pulizia dei dati vecchi.
+
 ## Mappa della rete e rubrica
 
 - Sulla mappa, dal selettore dei livelli, attiva **Rete MeshCore** (serve il login): rombi gialli i ripetitori, cerchi blu i companion, quadrato verde il gateway. Le linee uniscono i ripetitori che si sentono tra loro: verde SNR ≥ 5 dB, giallo 0–5, arancione sotto 0. La linea tratteggiata indica un ripetitore che il gateway sente direttamente. Compaiono solo i nodi che annunciano la posizione.
@@ -197,7 +207,7 @@ pip install httpx pyflakes
 ```
 
 ```bash
-python tests/test_smoke.py && python tests/test_chat.py && python tests/test_update.py && python tests/check_page.py
+python tests/test_smoke.py && python tests/test_chat.py && python tests/test_update.py && python tests/test_features.py && python tests/check_page.py
 ``` Repository e ramo si possono cambiare con la sezione `update:` del config.
 
 Ogni 12 ore il programma controlla se c'è una nuova versione: se sì manda un avviso su Telegram (una volta per versione) e mostra un pallino su **Gestione**. Si disattiva con `update.notify: false`.

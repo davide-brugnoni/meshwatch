@@ -72,19 +72,31 @@ def text_bytes(text):
 
 
 def parse_lpp(lpp):
-    """Estrae posizione e batteria dalla telemetria Cayenne LPP."""
-    out = {"lat": None, "lon": None, "alt": None, "batt_v": None}
+    """Estrae posizione, batteria e sensori dalla telemetria Cayenne LPP.
+    sensors: [{channel, type, value}] con tutti i valori numerici tranne il GPS; i valori
+    composti (es. accelerometro {acc_x, acc_y, acc_z}) diventano un sensore per campo."""
+    out = {"lat": None, "lon": None, "alt": None, "batt_v": None, "sensors": []}
     for item in lpp or []:
         t = item.get("type")
         v = item.get("value")
+        ch = item.get("channel", 0)
         if t == "gps":
             if isinstance(v, dict):
                 out["lat"], out["lon"], out["alt"] = v.get("latitude"), v.get("longitude"), v.get("altitude")
             elif isinstance(v, (list, tuple)) and len(v) >= 2:
                 out["lat"], out["lon"] = v[0], v[1]
                 out["alt"] = v[2] if len(v) > 2 else None
-        elif t == "voltage" and out["batt_v"] is None and item.get("channel") == 1:
+            continue
+        if t == "voltage" and out["batt_v"] is None and ch == 1:
             out["batt_v"] = v
+        if isinstance(v, bool):
+            v = int(v)
+        if isinstance(v, (int, float)) and t:
+            out["sensors"].append({"channel": ch, "type": t, "value": float(v)})
+        elif isinstance(v, dict) and t:
+            for k, x in v.items():
+                if isinstance(x, (int, float)) and not isinstance(x, bool):
+                    out["sensors"].append({"channel": ch, "type": f"{t}.{k}", "value": float(x)})
     if out["lat"] == 0 and out["lon"] == 0:   # GPS senza fix
         out["lat"] = out["lon"] = None
     return out

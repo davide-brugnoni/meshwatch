@@ -62,7 +62,8 @@ def check(cond, msg):
 def main():
     lpp = parse_lpp([{"channel": 1, "type": "voltage", "value": 3.91},
                      {"channel": 1, "type": "gps", "value": {"latitude": 45.0, "longitude": 9.0, "altitude": 520}}])
-    check(lpp == {"lat": 45.0, "lon": 9.0, "alt": 520, "batt_v": 3.91}, "parse telemetria LPP")
+    check(lpp == {"lat": 45.0, "lon": 9.0, "alt": 520, "batt_v": 3.91,
+                  "sensors": [{"channel": 1, "type": "voltage", "value": 3.91}]}, "parse telemetria LPP")
     check(is_dangerous("reboot") and is_dangerous("set tx 20") and not is_dangerous("ver"), "comandi pericolosi")
 
     tmp = tempfile.mkdtemp()

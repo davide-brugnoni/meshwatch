@@ -46,6 +46,9 @@ jobs:
       - name: Test aggiornamento dalla pagina
         run: python tests/test_update.py
 
+      - name: Test sensori, percorsi, copertura, tempo reale e bot
+        run: python tests/test_features.py
+
   pagina-e-script:
     runs-on: ubuntu-latest
     steps:

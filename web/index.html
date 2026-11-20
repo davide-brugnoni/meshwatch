@@ -194,6 +194,15 @@
       <label>Avviso batteria sotto (V) <input type="number" name="low_battery_v" min="0" max="5" step="0.05" value="3.5"></label>
       <div class="formacts"><button class="primary">Salva</button><button type="button" class="cancel">Annulla</button></div>
     </form>
+    <form class="edit" id="form-rules" hidden>
+      <div class="formacts"><strong id="rules-title">Soglie dei sensori</strong></div>
+      <div class="list formacts" id="rules-list" style="flex-direction:column"></div>
+      <label>Sensore <select name="sensor"></select></label>
+      <label>Avvisa quando è <select name="op"><option value="&gt;">sopra</option><option value="&lt;">sotto</option></select></label>
+      <label>Soglia <input type="number" name="value" step="any" required></label>
+      <div class="formacts"><button class="primary">Aggiungi soglia</button><button type="button" class="cancel">Chiudi</button></div>
+      <p class="note formacts" style="margin:0">Avviso su Telegram quando il valore supera la soglia e quando torna nella norma. Compaiono i sensori che il dispositivo ha già mandato almeno una volta.</p>
+    </form>
     <p class="note">Il dispositivo deve permettere al gateway di leggere la sua telemetria (nell'app MeshCore: gateway tra i preferiti, telemetria posizione "solo preferiti").</p>
   </section>
 

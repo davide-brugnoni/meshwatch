@@ -41,6 +41,36 @@ def distance_m(a, b):
     return 2 * r * math.asin(math.sqrt(h))
 
 
+# Sensori Cayenne LPP: nome e unità per pagina, avvisi e Telegram
+SENSORS = {
+    "temperature": ("Temperatura", "°C", 1), "humidity": ("Umidità", "%", 0), "barometer": ("Pressione", "hPa", 0),
+    "voltage": ("Tensione", "V", 2), "current": ("Corrente", "A", 3), "illuminance": ("Luce", "lux", 0),
+    "percentage": ("Percentuale", "%", 0), "altitude": ("Quota", "m", 0), "power": ("Potenza", "W", 1),
+    "energy": ("Energia", "kWh", 2), "distance": ("Distanza", "m", 2), "direction": ("Direzione", "°", 0),
+    "concentration": ("Concentrazione", "ppm", 0), "load": ("Carico", "kg", 2), "frequency": ("Frequenza", "Hz", 0),
+    "presence": ("Presenza", "", 0), "digital input": ("Ingresso digitale", "", 0),
+    "digital output": ("Uscita digitale", "", 0), "analog input": ("Ingresso analogico", "", 2),
+    "analog output": ("Uscita analogica", "", 2), "generic sensor": ("Sensore", "", 2), "switch": ("Interruttore", "", 0),
+    "time": ("Ora", "s", 0), "accelerometer": ("Accelerometro", "g", 2), "gyrometer": ("Giroscopio", "°/s", 1),
+}
+
+
+def sensor_info(type, channel):
+    """{label, unit, dec} di un sensore. La tensione sul canale 1 è la batteria del dispositivo."""
+    base, _, field = type.partition(".")
+    label, unit, dec = SENSORS.get(base, (base.capitalize(), "", 2))
+    if base == "voltage" and channel == 1:
+        label = "Batteria"
+    if field:
+        label += " " + field.replace("acc_", "").upper()
+    return {"label": label, "unit": unit, "dec": dec}
+
+
+def fmt_sensor(type, channel, value):
+    i = sensor_info(type, channel)
+    return f"{value:.{i['dec']}f}" + (f" {i['unit']}" if i["unit"] else "")
+
+
 def maps_link(lat, lon):
     return f"https://www.google.com/maps?q={lat:.6f},{lon:.6f}"
 
@@ -106,7 +136,10 @@ class Core:
                 prev = self.db.last_position(tid)
                 self.db.add_position(tid, res["lat"], res["lon"], res["alt"], res["batt_v"])
                 self._update_moving(t, prev, res)
+            if res.get("sensors"):
+                self.db.add_sensor_readings(tid, res["sensors"])
             await self._tracker_ok(t, res)
+            await self._sensor_alerts(t, res.get("sensors") or [])
         else:
             await self._tracker_fail(t)
         return res
@@ -143,6 +176,35 @@ class Core:
                 await self.notify(f"🔋 Batteria bassa su {t['label']}: {res['batt_v']:.2f} V")
             elif res["batt_v"] >= lim + 0.1:
                 f.discard("batt")
+
+    async def _sensor_alerts(self, t, sensors):
+        """Soglie impostate dalla pagina: un avviso quando il valore supera la soglia, uno
+        quando rientra. Senza lettura del sensore lo stato resta com'era."""
+        f = self._flags(("t", t["id"]))
+        values = {(x["type"], x["channel"]): x["value"] for x in sensors}
+        for r in self.db.sensor_rules(t["id"]):
+            v = values.get((r["type"], r["channel"]))
+            if v is None:
+                continue
+            key = f"rule{r['id']}"
+            out = v < r["value"] if r["op"] == "<" else v > r["value"]
+            what = sensor_info(r["type"], r["channel"])["label"].lower()
+            limit = f"{'sotto' if r['op'] == '<' else 'sopra'} {fmt_sensor(r['type'], r['channel'], r['value'])}"
+            if out and key not in f:
+                f.add(key)
+                await self.notify(f"🌡️ {t['label']}: {what} {fmt_sensor(r['type'], r['channel'], v)} ({limit})")
+            elif not out and key in f:
+                f.discard(key)
+                await self.notify(f"✅ {t['label']}: {what} di nuovo nella norma ({fmt_sensor(r['type'], r['channel'], v)})")
+
+    def sensors_state(self, tid, since):
+        """Ultimi valori dei sensori e storico per i grafici."""
+        latest = [{**x, **sensor_info(x["type"], x["channel"]), "key": f"{x['type']}:{x['channel']}"}
+                  for x in self.db.sensor_latest(tid)]
+        history = {}
+        for h in self.db.sensor_history(tid, since):
+            history.setdefault(f"{h['type']}:{h['channel']}", []).append([h["ts"], h["value"]])
+        return latest, history
 
     async def _tracker_fail(self, t):
         f = self._flags(("t", t["id"]))
@@ -477,7 +539,10 @@ class Core:
 
     # ---------- dati per interfacce
     def tracker_state(self, t, since):
+        sensors, history = self.sensors_state(t["id"], since)
         return {
+            "sensors": sensors,
+            "sensor_history": history,
             **t,
             "paused": bool(t["paused"]),
             "moving": self.moving.get(t["id"], False),
