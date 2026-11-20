@@ -49,6 +49,26 @@ class DB:
                 CREATE TABLE IF NOT EXISTS audit (
                     ts INTEGER, user TEXT, ip TEXT, action TEXT, detail TEXT
                 );
+                CREATE TABLE IF NOT EXISTS messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts INTEGER,
+                    dir TEXT,               -- 'in' ricevuto, 'out' inviato
+                    kind TEXT,              -- 'dm' privato, 'chan' canale
+                    peer TEXT,              -- prefisso chiave (12 hex) o numero del canale
+                    peer_name TEXT,
+                    sender TEXT,            -- nei canali: chi ha scritto
+                    text TEXT,
+                    status TEXT,            -- out: queued, sending, sent, delivered, failed
+                    user TEXT,              -- chi l'ha inviato dalla pagina
+                    snr REAL, path_len INTEGER, sender_ts INTEGER,
+                    attempts INTEGER, trip_ms INTEGER,
+                    read INTEGER DEFAULT 0
+                );
+                CREATE INDEX IF NOT EXISTS i_msg_peer ON messages(kind, peer, id);
+                CREATE TABLE IF NOT EXISTS neighbours (
+                    ts INTEGER, repeater TEXT, prefix TEXT, snr REAL, secs_ago INTEGER
+                );
+                CREATE INDEX IF NOT EXISTS i_nb ON neighbours(repeater);
                 CREATE INDEX IF NOT EXISTS i_audit_ts ON audit(ts);
                 CREATE INDEX IF NOT EXISTS i_pos_ts ON positions(ts);
                 CREATE INDEX IF NOT EXISTS i_rep ON repeater_status(name, ts);
@@ -176,6 +196,7 @@ class DB:
 
     def delete_repeater(self, name):
         self._exec("DELETE FROM repeaters WHERE name=?", (name,))
+        self._exec("DELETE FROM neighbours WHERE repeater=?", (name,))
 
     def add_repeater_status(self, name, ok, s=None):
         s = s or {}
@@ -243,6 +264,78 @@ class DB:
     def cli_history(self, node, limit=50):
         rows = self._all("SELECT * FROM cli_log WHERE node=? ORDER BY rowid DESC LIMIT ?", (node, limit))
         return list(reversed(rows))
+
+    # ---------- chat
+    MSG_FIELDS = ("ts", "dir", "kind", "peer", "peer_name", "sender", "text", "status", "user",
+                  "snr", "path_len", "sender_ts", "attempts", "trip_ms", "read")
+
+    def add_message(self, **f):
+        f.setdefault("ts", int(time.time()))
+        keys = [k for k in self.MSG_FIELDS if k in f]
+        return self._exec(f"INSERT INTO messages ({','.join(keys)}) VALUES ({','.join('?' * len(keys))})",
+                          [f[k] for k in keys]).lastrowid
+
+    def update_message(self, mid, **f):
+        keys = [k for k in self.MSG_FIELDS if k in f]
+        if keys:
+            self._exec(f"UPDATE messages SET {','.join(k + '=?' for k in keys)} WHERE id=?",
+                       [f[k] for k in keys] + [mid])
+
+    def message(self, mid):
+        return self._one("SELECT * FROM messages WHERE id=?", (mid,))
+
+    def is_duplicate_message(self, kind, peer, text, sender_ts):
+        """Lo stesso messaggio può arrivare due volte (ripetuto da più ripetitori)."""
+        if not sender_ts:
+            return False
+        return self._one("SELECT id FROM messages WHERE dir='in' AND kind=? AND peer=? AND text=? AND sender_ts=?",
+                         (kind, peer, text, sender_ts)) is not None
+
+    def messages(self, kind, peer, before=None, limit=100):
+        sql, args = "SELECT * FROM messages WHERE kind=? AND peer=?", [kind, peer]
+        if before:
+            sql += " AND id<?"
+            args.append(before)
+        rows = self._all(sql + " ORDER BY id DESC LIMIT ?", args + [limit])
+        return list(reversed(rows))
+
+    def messages_after(self, after):
+        return self._all("SELECT * FROM messages WHERE id>? ORDER BY id", (after,))
+
+    def conversations(self):
+        """Una riga per conversazione: ultimo messaggio e non letti."""
+        return self._all(
+            "SELECT m.kind, m.peer, m.peer_name, m.text, m.ts, m.dir, m.sender, m.status, m.id AS last_id, "
+            "(SELECT COUNT(*) FROM messages u WHERE u.kind=m.kind AND u.peer=m.peer AND u.dir='in' AND u.read=0) AS unread "
+            "FROM messages m WHERE m.id IN (SELECT MAX(id) FROM messages GROUP BY kind, peer) ORDER BY m.id DESC")
+
+    def mark_read(self, kind, peer):
+        self._exec("UPDATE messages SET read=1 WHERE kind=? AND peer=? AND dir='in' AND read=0", (kind, peer))
+
+    def unread_count(self):
+        return self._one("SELECT COUNT(*) AS n FROM messages WHERE dir='in' AND read=0")["n"]
+
+    def sent_since(self, ts):
+        return self._one("SELECT COUNT(*) AS n FROM messages WHERE dir='out' AND ts>=?", (ts,))["n"]
+
+    def delete_conversation(self, kind, peer):
+        return self._exec("DELETE FROM messages WHERE kind=? AND peer=?", (kind, peer)).rowcount
+
+    # ---------- vicini dei ripetitori (mappa della rete): resta solo l'ultima lettura
+    def set_neighbours(self, repeater, items):
+        now = int(time.time())
+        with self.lock:
+            self.conn.execute("DELETE FROM neighbours WHERE repeater=?", (repeater,))
+            self.conn.executemany("INSERT INTO neighbours VALUES (?,?,?,?,?)",
+                                  [(now, repeater, n["prefix"], n.get("snr"), n.get("secs_ago")) for n in items])
+            self.conn.commit()
+
+    def neighbours(self):
+        return self._all("SELECT * FROM neighbours ORDER BY repeater")
+
+    def neighbours_ts(self, repeater):
+        r = self._one("SELECT MAX(ts) AS ts FROM neighbours WHERE repeater=?", (repeater,))
+        return r["ts"] if r else None
 
     def backup_to(self, dest):
         """Copia coerente del database (API di backup di SQLite)."""

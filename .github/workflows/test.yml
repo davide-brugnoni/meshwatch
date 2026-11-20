@@ -1,0 +1,66 @@
+# Test automatici a ogni push e pull request: se qualcosa si rompe, lo vedi qui
+# prima che l'aggiornamento arrivi al Raspberry.
+name: Test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 = DietPi / Raspberry Pi OS Bookworm, 3.13 = versione recente
+        python: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: Librerie
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt httpx pyflakes
+
+      - name: Il codice compila
+        run: python -m compileall -q meshwatch tests
+
+      - name: Controllo errori (pyflakes)
+        run: python -m pyflakes meshwatch tests
+
+      - name: Test di base
+        run: python tests/test_smoke.py
+
+      - name: Test chat, rubrica e mappa della rete
+        run: python tests/test_chat.py
+
+      - name: Test aggiornamento dalla pagina
+        run: python tests/test_update.py
+
+  pagina-e-script:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: JavaScript della pagina senza errori di sintassi
+        run: |
+          python3 - <<'PY'
+          import re
+          html = open("web/index.html", encoding="utf-8").read()
+          scripts = re.findall(r"<script>(.*?)</script>", html, re.S)
+          assert scripts, "nessuno script nella pagina"
+          open("/tmp/app.js", "w", encoding="utf-8").write("\n".join(scripts))
+          PY
+          node --check /tmp/app.js
+
+      - name: Script di shell senza errori di sintassi
+        run: for f in install.sh tools/*.sh sd-kit/*.sh; do bash -n "$f" && echo "ok $f"; done

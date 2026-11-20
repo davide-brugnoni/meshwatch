@@ -69,6 +69,25 @@ class MaintenanceIn(BaseModel):
     backup_telegram: bool | None = None
 
 
+class ChatIn(BaseModel):
+    kind: str = Field(..., pattern=r"^(dm|chan)$")
+    peer: str = Field(..., min_length=1, max_length=64)
+    text: str = Field(..., min_length=1, max_length=400)
+
+
+class ChatReadIn(BaseModel):
+    kind: str = Field(..., pattern=r"^(dm|chan)$")
+    peer: str = Field(..., min_length=1, max_length=64)
+
+
+class FavoriteIn(BaseModel):
+    on: bool
+
+
+class ContactSettingsIn(BaseModel):
+    manual_add: bool
+
+
 class UserIn(BaseModel):
     username: str | None = Field(None, pattern=r"^[A-Za-z0-9_.-]{2,32}$")
     password: str | None = Field(None, min_length=6, max_length=128)
@@ -181,7 +200,67 @@ def create_app(core, auth, web_cfg, updater=None):
         s = core.state(max(1, min(hours, 24 * 30)))
         if u["role"] == "guest":
             s["contacts"] = []   # l'ospite vede la mappa, non la rubrica della radio
+        else:
+            s["unread"] = db.unread_count()
         return s
+
+    # ---------- chat (solo utenti con login: admin e viewer)
+    @app.get("/api/chat")
+    async def chat_list(u=Depends(viewer)):
+        return {"conversations": db.conversations(), "targets": core.chat_targets(),
+                "unread": db.unread_count(), "radio_connected": core.mesh.connected,
+                "limits": {"dm": core.max_text_bytes("dm"), "chan": core.max_text_bytes("chan")},
+                "last_id": (db._one("SELECT MAX(id) AS n FROM messages") or {}).get("n") or 0}
+
+    @app.get("/api/chat/messages")
+    async def chat_messages(kind: str, peer: str, before: int | None = None, u=Depends(viewer)):
+        return db.messages(kind, peer, before)
+
+    @app.get("/api/chat/updates")
+    async def chat_updates(after: int = 0, u=Depends(viewer)):
+        """Messaggi nuovi e cambi di stato degli invii recenti."""
+        new = db.messages_after(after)
+        recent = db._all("SELECT id, status, attempts, trip_ms FROM messages WHERE dir='out' AND ts>? ",
+                         (int(time.time()) - 600,))
+        return {"messages": new, "status": recent, "unread": db.unread_count()}
+
+    @app.post("/api/chat")
+    async def chat_send(body: ChatIn, u=Depends(viewer)):
+        try:
+            mid = core.send_chat(body.kind, body.peer, body.text, u["username"])
+        except OverflowError as e:
+            raise HTTPException(429, str(e))
+        except RuntimeError as e:
+            raise HTTPException(503, str(e))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return {"ok": True, "message": db.message(mid)}
+
+    @app.post("/api/chat/read")
+    async def chat_read(body: ChatReadIn, u=Depends(viewer)):
+        db.mark_read(body.kind, body.peer)
+        return {"ok": True}
+
+    @app.delete("/api/chat")
+    async def chat_delete(kind: str, peer: str, u=Depends(admin)):
+        n = db.delete_conversation(kind, peer)
+        audit(u, "conversazione cancellata", f"{kind} {peer}: {n} messaggi")
+        return {"ok": True, "deleted": n}
+
+    # ---------- mappa della rete
+    @app.get("/api/network")
+    async def network(u=Depends(viewer)):
+        return core.network()
+
+    @app.post("/api/network/neighbours")
+    async def network_refresh(u=Depends(admin)):
+        if not core.mesh.connected:
+            raise HTTPException(503, "radio gateway non collegata")
+        res = {}
+        for r in db.repeaters():
+            res[r["name"]] = await core.poll_neighbours(r["name"], force=True) is not None
+        audit(u, "vicini dei ripetitori aggiornati")
+        return {"ok": True, "result": res}
 
     # ---------- tracker
     @app.post("/api/trackers/{tid}/poll")
@@ -350,6 +429,84 @@ def create_app(core, auth, web_cfg, updater=None):
         if errors:
             raise HTTPException(500, "non applicato: " + ", ".join(errors))
         return {"ok": True, "radio_changed": radio is not None}
+
+    # ---------- rubrica del gateway
+    def need_radio():
+        if not core.mesh.connected:
+            raise HTTPException(503, "radio gateway non collegata")
+
+    def get_contact(key):
+        need_radio()
+        c = core.mesh.contact_by_key(key)
+        if not c:
+            raise HTTPException(404, "contatto non trovato")
+        return c
+
+    def contact_uses(name):
+        uses = [f"dispositivo {t['label']}" for t in db.trackers() if t["contact"].lower() == name.lower()]
+        uses += [f"ripetitore {r['name']}" for r in db.repeaters() if r["name"].lower() == name.lower()]
+        return uses
+
+    @app.get("/api/contacts")
+    async def contacts_list(u=Depends(admin)):
+        need_radio()
+        out = []
+        for c in core.mesh.contacts():
+            out.append({**c, "used_by": contact_uses(c["name"])})
+        si = core.mesh.self_info()
+        return {"contacts": out, "pending": core.mesh.pending_contacts(),
+                "manual_add": bool(si.get("manual_add_contacts"))}
+
+    @app.post("/api/contacts/refresh")
+    async def contacts_refresh(u=Depends(admin)):
+        need_radio()
+        await core.mesh.refresh_contacts()
+        return {"ok": True}
+
+    async def contact_action(u, label, c, coro):
+        try:
+            await coro
+        except (RuntimeError, ValueError) as e:
+            raise HTTPException(400, str(e))
+        audit(u, label, c.get("adv_name") or c.get("name", ""))
+        return {"ok": True}
+
+    @app.post("/api/contacts/{key}/reset_path")
+    async def contact_reset_path(key: str, u=Depends(admin)):
+        c = get_contact(key)
+        return await contact_action(u, "percorso contatto azzerato", c, core.mesh.reset_contact_path(c))
+
+    @app.post("/api/contacts/{key}/favorite")
+    async def contact_favorite(key: str, body: FavoriteIn, u=Depends(admin)):
+        c = get_contact(key)
+        return await contact_action(u, "contatto preferito" if body.on else "contatto non più preferito",
+                                    c, core.mesh.set_favorite(c, body.on))
+
+    @app.delete("/api/contacts/{key}")
+    async def contact_remove(key: str, force: bool = False, u=Depends(admin)):
+        c = get_contact(key)
+        uses = contact_uses(c.get("adv_name", ""))
+        if uses and not force:
+            raise HTTPException(409, "usato da: " + ", ".join(uses))
+        return await contact_action(u, "contatto rimosso dal gateway", c, core.mesh.remove_contact(c))
+
+    @app.post("/api/contacts/pending/{key}")
+    async def contact_add_pending(key: str, u=Depends(admin)):
+        need_radio()
+        c = next((x for x in core.mesh.pending_contacts() if x["public_key"] == key), None)
+        if not c:
+            raise HTTPException(404, "nodo non più in attesa")
+        return await contact_action(u, "contatto aggiunto al gateway", c, core.mesh.add_pending(key))
+
+    @app.put("/api/contacts/settings")
+    async def contact_settings(body: ContactSettingsIn, u=Depends(admin)):
+        need_radio()
+        try:
+            await core.mesh.set_manual_add(body.manual_add)
+        except RuntimeError as e:
+            raise HTTPException(400, str(e))
+        audit(u, "aggiunta contatti", "manuale" if body.manual_add else "automatica")
+        return {"ok": True}
 
     @app.post("/api/radio/reconnect")
     async def radio_reconnect(u=Depends(admin)):

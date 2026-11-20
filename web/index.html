@@ -115,6 +115,57 @@
   #mnav button svg { width:22px; height:22px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
   #mnav button.on { color:var(--acc); }
   .upd-log { font-size:14px; margin:8px 0 0; color:var(--ink); }
+  /* chat */
+  #chat-view { display:none; flex:1; min-height:0; grid-template-columns: 320px 1fr; }
+  body.tab-chat #chat-view { display:grid; } body.tab-chat main { display:none; }
+  #chat-side { border-right:1px solid var(--line); display:flex; flex-direction:column; min-height:0; }
+  #chat-new { padding:12px; border-bottom:1px solid var(--line); display:flex; gap:6px; }
+  #chat-new select { flex:1; min-width:0; }
+  #chat-convs { overflow-y:auto; flex:1; -webkit-overflow-scrolling:touch; }
+  .conv { display:flex; flex-direction:column; gap:2px; padding:10px 14px; border-bottom:1px solid var(--line); cursor:pointer; }
+  .conv.on { background:var(--card); box-shadow: inset 3px 0 0 var(--acc); }
+  .conv-top { display:flex; justify-content:space-between; gap:8px; align-items:baseline; }
+  .conv-name { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .conv-last { color:var(--mute); font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .conv .when { color:var(--mute); font-size:12px; flex:none; }
+  .count { display:inline-block; min-width:18px; height:18px; padding:0 5px; border-radius:9px; background:var(--acc); color:#06130e;
+           font-size:11.5px; font-weight:700; line-height:18px; text-align:center; margin-left:6px; }
+  #mnav .count { position:absolute; margin:0; transform:translate(12px, -14px); }
+  #chat-main { display:flex; flex-direction:column; min-height:0; min-width:0; }
+  #chat-head { display:flex; align-items:center; gap:10px; padding:10px 14px; border-bottom:1px solid var(--line); background:var(--card); }
+  #chat-head > button { flex:none; }
+  #chat-sub { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #chat-head .t { font-weight:600; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #chat-back { display:none; }
+  #chat-msgs { flex:1; overflow-y:auto; padding:14px; display:flex; flex-direction:column; gap:8px; -webkit-overflow-scrolling:touch; }
+  .msg { max-width:min(78%, 560px); padding:8px 11px; border-radius:12px; background:var(--card); border:1px solid var(--line); align-self:flex-start;
+         white-space:pre-wrap; word-break:break-word; }
+  .msg.out { align-self:flex-end; background:#163b2f; border-color:#1f5241; }
+  .msg .from { font-size:12.5px; color:var(--acc); font-weight:600; display:block; }
+  .msg .meta { display:block; font-size:11.5px; color:var(--mute); margin-top:3px; text-align:right; }
+  .msg .meta.bad { color:var(--warn); }
+  .msg .meta button { font-size:11.5px; padding:1px 7px; min-height:0; margin-left:6px; }
+  .day { align-self:center; font-size:12px; color:var(--mute); padding:2px 10px; border:1px solid var(--line); border-radius:10px; }
+  #chat-form { display:flex; gap:6px; padding:10px 12px; border-top:1px solid var(--line); background:var(--card); align-items:flex-end;
+               padding-bottom:max(10px, env(safe-area-inset-bottom)); }
+  #chat-text { flex:1; min-width:0; resize:none; font:inherit; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:var(--field); color:var(--ink); max-height:120px; }
+  #chat-len { font-size:12px; color:var(--mute); font-family:var(--mono); align-self:center; min-width:52px; text-align:right; }
+  #chat-len.bad { color:var(--warn); }
+  #chat-empty { margin:auto; color:var(--mute); text-align:center; padding:20px; max-width:380px; }
+  /* rubrica */
+  .ctc-tools { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .ctc-tools input[type=search] { flex:1; min-width:160px; }
+  .star { color:#e8c547; margin-right:4px; }
+  /* mappa della rete */
+  .node-ic { display:flex; align-items:center; justify-content:center; }
+  .node-ic span { display:block; border:2px solid #0b0e10; box-shadow:0 0 0 1px rgba(255,255,255,.5); }
+  .node-ic.rep span { width:13px; height:13px; background:#e8c547; transform:rotate(45deg); }
+  .node-ic.cmp span { width:11px; height:11px; background:#5aa9ff; border-radius:50%; }
+  .node-ic.room span { width:12px; height:12px; background:#c77dff; border-radius:3px; }
+  .node-ic.oth span { width:10px; height:10px; background:#8a918f; border-radius:50%; }
+  .node-ic.gw span { width:16px; height:16px; background:var(--acc); border-radius:4px; }
+  .net-legend { background:rgba(23,27,30,.92); color:var(--ink); padding:7px 10px; border-radius:8px; font-size:12px; line-height:1.6; border:1px solid var(--line); }
+  .net-legend i { display:inline-block; width:18px; height:3px; vertical-align:middle; margin-right:6px; border-radius:2px; }
   #toast.err { background:var(--warn); }
   /* leaflet scuro */
   .leaflet-bar a, .leaflet-control-layers { background:var(--card); color:var(--ink); border-color:var(--line) !important; }
@@ -146,6 +197,13 @@
     .chips { flex-wrap:nowrap; overflow-x:auto; padding-bottom:4px; scrollbar-width:none; }
     .chips button { flex:none; }
     .leaflet-control-layers-expanded { max-width:60vw; }
+    #chat-view { grid-template-columns: 1fr; }
+    #chat-main { display:none; } body.chat-open #chat-main { display:flex; } body.chat-open #chat-side { display:none; }
+    #chat-side { border-right:none; }
+    #chat-back { display:inline-flex; white-space:nowrap; flex:none; }
+    #chat-sub { display:none; }
+    .msg { max-width:88%; }
+    .net-legend { display:none; }
   }
   /* dita invece del mouse: pulsanti più alti, testo dei campi a 16px (iOS non zooma) */
   @media (pointer: coarse) {
@@ -153,7 +211,7 @@
     button.small { min-height:36px; padding:6px 11px; font-size:13.5px; }
     .chips button { min-height:36px; }
     #mnav button { min-height:54px; }
-    input, select, .term-in input, form.edit label input, form.edit label select { font-size:16px; min-height:40px; }
+    input, select, .term-in input, form.edit label input, form.edit label select, #chat-text { font-size:16px; min-height:40px; }
     input[type=checkbox] { min-height:0; width:22px; height:22px; }
     .btn { display:inline-flex; align-items:center; }
     .leaflet-touch .leaflet-bar a { width:36px; height:36px; line-height:36px; }
@@ -166,6 +224,7 @@
   <span class="status" id="radio"><span class="dot"></span>…</span>
   <nav class="tabs">
     <button id="tab-map" class="on">Mappa</button>
+    <button id="tab-chat" class="guest-hide">Chat</button>
     <button id="tab-admin">Gestione</button>
   </nav>
   <span class="spacer"></span>
@@ -218,6 +277,30 @@
     </section>
   </aside>
 </main>
+
+<div id="chat-view">
+  <div id="chat-side">
+    <div id="chat-new">
+      <select id="chat-target" title="Nuova conversazione"></select>
+      <button id="chat-open" class="primary">Scrivi</button>
+    </div>
+    <div id="chat-convs"></div>
+  </div>
+  <div id="chat-main">
+    <div id="chat-head">
+      <button id="chat-back" class="small" aria-label="Indietro">‹ Chat</button>
+      <span class="t" id="chat-title">Chat</span>
+      <span class="muted" id="chat-sub"></span>
+      <button id="chat-del" class="small danger" hidden>Cancella</button>
+    </div>
+    <div id="chat-msgs"><p id="chat-empty">Scegli una conversazione o scrivi a un contatto.<br>I messaggi partono dalla radio collegata al Raspberry: chi li riceve vede come mittente il nome del gateway.</p></div>
+    <form id="chat-form" hidden>
+      <textarea id="chat-text" rows="1" placeholder="Messaggio" autocomplete="off"></textarea>
+      <span id="chat-len"></span>
+      <button class="primary" id="chat-send">Invia</button>
+    </form>
+  </div>
+</div>
 
 <div id="admin-scroll"><div id="view-admin">
   <section class="card">
@@ -287,6 +370,24 @@
     <p class="note warn">Frequenza, bandwidth, SF e CR devono essere identici a quelli della tua rete: se li sbagli il gateway non sente più nessun nodo.</p>
   </section>
   <section class="card">
+    <h2>Rubrica del gateway</h2>
+    <div class="ctc-tools">
+      <input type="search" id="ctc-filter" placeholder="Cerca per nome o chiave">
+      <select id="ctc-type"><option value="">tutti i tipi</option><option>companion</option><option>ripetitore</option><option>room server</option><option>sensore</option></select>
+      <button id="ctc-refresh">Rileggi dalla radio</button>
+      <button id="ctc-nb">Aggiorna mappa della rete</button>
+    </div>
+    <label class="hours note" style="text-transform:none"><input type="checkbox" id="ctc-manual"> aggiunta manuale dei nuovi nodi (se attiva, i nodi sentiti restano in attesa finché non li aggiungi)</label>
+    <div id="ctc-pending-box" hidden>
+      <h2 style="margin-top:14px">In attesa di essere aggiunti</h2>
+      <div class="list" id="ctc-pending"></div>
+    </div>
+    <div class="list" id="ctc-list" style="margin-top:8px"><p class="muted">Caricamento…</p></div>
+    <p class="note">Preferito: per i dispositivi da seguire, il gateway deve essere tra i preferiti <em>del dispositivo</em>; qui imposti i preferiti del gateway.
+      "Azzera percorso" fa ripartire la ricerca del percorso (utile se un nodo non risponde più dopo che è cambiato un ripetitore). La rubrica della Heltec ha un limite di contatti: rimuovi quelli che non servono.</p>
+  </section>
+
+  <section class="card">
     <h2>Dispositivi tracciati</h2>
     <div class="list" id="adm-trackers"></div>
     <div class="row"><button class="primary" id="add-tracker">+ Aggiungi dispositivo</button></div>
@@ -343,6 +444,7 @@
 <nav id="mnav">
   <button data-t="map" class="on"><svg viewBox="0 0 24 24"><path d="M9 4 3 6.5v13.5l6-2.5 6 2.5 6-2.5V4l-6 2.5z"/><path d="M9 4v13.5M15 6.5V20"/></svg>Mappa</button>
   <button data-t="list"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"/><path d="M8.5 15.5a5 5 0 0 1 0-7M15.5 8.5a5 5 0 0 1 0 7M5.6 18.4a9 9 0 0 1 0-12.8M18.4 5.6a9 9 0 0 1 0 12.8"/></svg>Nodi</button>
+  <button data-t="chat" class="guest-hide"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg>Chat</button>
   <button data-t="admin"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.9 4.9 7 7M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1 7 17M17 7l2.1-2.1"/></svg>Gestione</button>
 </nav>
 
@@ -377,11 +479,35 @@ let me = null, state = null, adm = null, fitDone = false;
 
 // ---------- mappa
 const map = L.map('map').setView([42.5, 12.5], 6);
-const topo = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: 17, attribution: '© OpenTopoMap' });
-const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: '© Esri' });
-topo.addTo(map);
-L.control.layers({ 'Topografica': topo, 'Satellite': sat }).addTo(map);
+// mappe di base, tutte gratuite e senza chiave; la scelta resta salvata nel browser
+const OSM = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+const CARTO = OSM + ' © <a href="https://carto.com/attributions">CARTO</a>';
+const esriImg = () => L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: '© Esri, Maxar, Earthstar Geographics' });
+const BASES = {
+  'Chiara (CARTO Voyager)': L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 20, subdomains: 'abcd', attribution: CARTO }),
+  'Scura (CARTO Dark Matter)': L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 20, subdomains: 'abcd', attribution: CARTO }),
+  'OpenStreetMap': L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: OSM, referrerPolicy: 'origin' }),
+  'Escursionismo (CyclOSM)': L.tileLayer('https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', { maxZoom: 20, attribution: OSM + ' · CyclOSM', referrerPolicy: 'origin' }),
+  'Topografica (OpenTopoMap)': L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: 17, attribution: OSM + ' · © OpenTopoMap (CC-BY-SA)' }),
+  'Satellite (Esri)': esriImg(),
+  'Satellite con nomi': L.layerGroup([esriImg(), L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 })]),
+};
+let baseName = 'Chiara (CARTO Voyager)';
+try { if (BASES[localStorage.getItem('baseLayer')]) baseName = localStorage.getItem('baseLayer'); } catch (e) { }
+BASES[baseName].addTo(map);
 const trackLayer = L.layerGroup().addTo(map);
+const netLayer = L.layerGroup();   // mappa della rete MeshCore (solo con login)
+const layersCtl = L.control.layers(BASES, {}).addTo(map);
+map.on('baselayerchange', e => { try { localStorage.setItem('baseLayer', e.name); } catch (err) { } });
+map.on('overlayadd', e => { if (e.layer === netLayer) { try { localStorage.setItem('netLayer', '1'); } catch (err) { } loadNetwork(); netLegend.addTo(map); } });
+map.on('overlayremove', e => { if (e.layer === netLayer) { try { localStorage.setItem('netLayer', '0'); } catch (err) { } netLegend.remove(); } });
+const netLegend = L.control({ position: 'bottomleft' });
+netLegend.onAdd = () => {
+  const d = L.DomUtil.create('div', 'net-legend');
+  d.innerHTML = '<b>Rete MeshCore</b><br><i style="background:#3ccf8e"></i>SNR ≥ 5 dB<br><i style="background:#e8c547"></i>SNR 0–5 dB<br>'
+    + '<i style="background:#ff7a45"></i>SNR &lt; 0 dB<br><i style="background:#8a918f;height:0;border-top:2px dashed #8a918f"></i>sentito dal gateway';
+  return d;
+};
 // pulsante "pulisci tracce" sulla mappa (solo admin)
 L.Control.Clear = L.Control.extend({
   options: { position: 'topleft' },
@@ -396,6 +522,33 @@ L.Control.Clear = L.Control.extend({
   }
 });
 new L.Control.Clear().addTo(map);
+
+// ---------- mappa della rete: nodi con posizione e collegamenti tra vicini
+const snrColor = v => v == null ? '#8a918f' : v >= 5 ? '#3ccf8e' : v >= 0 ? '#e8c547' : '#ff7a45';
+const NODE_CLS = { 'ripetitore': 'rep', 'companion': 'cmp', 'room server': 'room' };
+const hopsText = h => h == null || h < 0 ? 'percorso sconosciuto (flood)' : h === 0 ? 'sentito direttamente' : `${h} salt${h === 1 ? 'o' : 'i'}`;
+async function loadNetwork() {
+  if (!me || me.role === 'guest' || !map.hasLayer(netLayer)) return;
+  let n; try { n = await api('/api/network'); } catch (e) { return; }
+  netLayer.clearLayers();
+  n.links.forEach(l => {
+    const direct = l.kind === 'direct';
+    L.polyline([l.from, l.to], { color: direct ? '#8a918f' : snrColor(l.snr), weight: direct ? 2 : 3, opacity: .85, dashArray: direct ? '5 6' : null })
+      .bindPopup(() => el('div', {}, el('strong', { textContent: `${l.a} ↔ ${l.b}` }), el('br'),
+        direct ? 'sentito direttamente dal gateway' : `SNR ${l.snr != null ? (+l.snr).toFixed(1) + ' dB' : '—'} · sentito ${l.secs_ago != null ? fmtAgo(Date.now() / 1000 - l.secs_ago) : '—'}`))
+      .addTo(netLayer);
+  });
+  const icon = cls => L.divIcon({ className: 'node-ic ' + cls, html: '<span></span>', iconSize: [18, 18] });
+  n.nodes.forEach(c => {
+    L.marker([c.lat, c.lon], { icon: icon(NODE_CLS[c.type] || 'oth'), title: c.name })
+      .bindPopup(() => el('div', {}, el('strong', { textContent: c.name }), el('br'), `${c.type} · ${hopsText(c.hops)}`, el('br'),
+        `ultimo advert ${c.last_advert ? fmtTs(c.last_advert) : '—'}`))
+      .addTo(netLayer);
+  });
+  if (n.gateway) L.marker([n.gateway.lat, n.gateway.lon], { icon: icon('gw'), title: n.gateway.name, zIndexOffset: 500 })
+    .bindPopup(() => el('div', {}, el('strong', { textContent: n.gateway.name || 'Gateway' }), el('br'), 'gateway (radio collegata al Raspberry)'))
+    .addTo(netLayer);
+}
 const lastMarkers = {};
 const isPhone = () => matchMedia('(max-width: 820px)').matches;
 
@@ -472,14 +625,21 @@ $('logout').onclick = async () => { await fetch('/api/logout', { method: 'POST' 
 // 'map' e 'list' su computer sono la stessa vista (mappa + colonna); sul telefono sono separate
 function setTab(t) {
   if (t === 'admin' && (!me || me.role !== 'admin')) { showLogin(); return; }
-  history.replaceState(null, '', t === 'admin' ? '#gestione' : t === 'list' ? '#nodi' : '#');
+  if (t === 'chat' && (!me || !['admin', 'viewer'].includes(me.role))) { showLogin(); return; }
+  history.replaceState(null, '', t === 'admin' ? '#gestione' : t === 'list' ? '#nodi' : t === 'chat' ? '#chat' : '#');
   document.body.classList.toggle('tab-admin', t === 'admin');
   document.body.classList.toggle('tab-list', t === 'list');
-  $('tab-map').classList.toggle('on', t !== 'admin'); $('tab-admin').classList.toggle('on', t === 'admin');
+  document.body.classList.toggle('tab-chat', t === 'chat');
+  $('tab-map').classList.toggle('on', t === 'map' || t === 'list'); $('tab-admin').classList.toggle('on', t === 'admin');
+  $('tab-chat').classList.toggle('on', t === 'chat');
   document.querySelectorAll('#mnav button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
-  if (t === 'admin') { loadAdmin(); loadGateway(); loadSystem(); loadUpdate(); loadMaintenance(); } else setTimeout(() => map.invalidateSize(), 50);
+  if (t === 'admin') { loadAdmin(); loadGateway(); loadSystem(); loadUpdate(); loadMaintenance(); loadContacts(); }
+  else if (t === 'chat') loadChat();
+  else setTimeout(() => map.invalidateSize(), 50);
+  chatPollSoon();
 }
 $('tab-map').onclick = () => setTab('map');
+$('tab-chat').onclick = () => setTab('chat');
 $('tab-admin').onclick = () => setTab('admin');
 document.querySelectorAll('#mnav button').forEach(b => b.onclick = () => setTab(b.dataset.t));
 function focusTracker(t) {
@@ -977,9 +1137,245 @@ $('add-tracker').onclick = () => trackerForm(null);
 $('add-rep').onclick = () => repForm(null);
 $('add-user').onclick = () => userForm(null);
 
+// ---------- chat
+// I messaggi arrivano alla radio anche a pagina chiusa e restano nel database del Raspberry.
+// La pagina chiede le novità ogni 4 secondi quando la chat è aperta, ogni 30 altrimenti.
+const chat = { list: null, cur: null, lastId: 0, msgs: new Map(), timer: null };
+const enc = new TextEncoder();
+const STATUS = {
+  queued: ['in coda (la radio sta finendo un\'altra richiesta)', false], sending: ['invio…', false],
+  sent: ['inviato, in attesa di conferma', false], delivered: ['✓✓ consegnato', false],
+  failed: ['✗ nessuna conferma di consegna', true],
+};
+const convKey = (kind, peer) => kind + ':' + peer;
+const isChatOpen = () => document.body.classList.contains('tab-chat');
+const canChat = () => me && ['admin', 'viewer'].includes(me.role);
+function fmtTime(ts) { return new Date(ts * 1000).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }); }
+function fmtDay(ts) { return new Date(ts * 1000).toLocaleDateString('it-IT', { weekday: 'short', day: '2-digit', month: 'long' }); }
+
+function setUnread(n) {
+  [$('tab-chat'), document.querySelector('#mnav [data-t=chat]')].forEach(b => {
+    if (!b) return;
+    b.querySelectorAll('.count').forEach(x => x.remove());
+    if (n > 0) b.append(el('span', { className: 'count', textContent: n > 99 ? '99+' : String(n) }));
+  });
+  document.title = n > 0 ? `(${n}) MeshWatch` : 'MeshWatch';
+}
+
+async function loadChat() {
+  await loadChatList();
+  if (chat.cur) openConv(chat.cur.kind, chat.cur.peer, chat.cur.name, true);
+}
+
+function renderConvs() {
+  const L_ = chat.list; if (!L_) return;
+  const sel = $('chat-target'), keep = sel.value;
+  const chans = L_.targets.filter(t => t.kind === 'chan'), people = L_.targets.filter(t => t.kind === 'dm');
+  const og = (label, arr) => { const g = el('optgroup', { label }); arr.forEach(t => g.append(el('option', { value: convKey(t.kind, t.peer), textContent: t.name + (t.type === 'room server' ? ' (room server)' : '') }))); return g; };
+  sel.replaceChildren(el('option', { value: '', textContent: L_.targets.length ? 'Nuova conversazione…' : 'Nessun contatto o canale' }),
+    ...(chans.length ? [og('Canali', chans)] : []), ...(people.length ? [og('Contatti', people)] : []));
+  sel.value = keep;
+  const box = $('chat-convs'); box.replaceChildren();
+  if (!L_.conversations.length) box.append(el('p', { className: 'muted', style: 'padding:14px;margin:0', textContent: 'Ancora nessun messaggio.' }));
+  L_.conversations.forEach(c => {
+    const last = (c.dir === 'out' ? 'Tu: ' : c.sender ? c.sender + ': ' : '') + c.text;
+    const item = el('div', { className: 'conv' + (chat.cur && convKey(chat.cur.kind, chat.cur.peer) === convKey(c.kind, c.peer) ? ' on' : '') },
+      el('div', { className: 'conv-top' }, el('span', { className: 'conv-name' }, (c.kind === 'chan' ? '# ' : '') + (c.peer_name || c.peer),
+        c.unread ? el('span', { className: 'count', textContent: String(c.unread) }) : null), el('span', { className: 'when', textContent: fmtAgo(c.ts) })),
+      el('span', { className: 'conv-last', textContent: last }));
+    item.onclick = () => openConv(c.kind, c.peer, c.peer_name || c.peer);
+    box.append(item);
+  });
+}
+
+function limitFor(kind) { return chat.list ? chat.list.limits[kind] : 150; }
+function updateLen() {
+  if (!chat.cur) return;
+  const n = enc.encode($('chat-text').value).length, max = limitFor(chat.cur.kind);
+  $('chat-len').textContent = `${n}/${max}`;
+  $('chat-len').className = n > max ? 'bad' : '';
+  $('chat-send').disabled = !n || n > max;
+  const t = $('chat-text'); t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 120) + 'px';
+}
+
+async function openConv(kind, peer, name, keepScroll) {
+  chat.cur = { kind, peer, name };
+  document.body.classList.add('chat-open');
+  $('chat-title').textContent = (kind === 'chan' ? '# ' : '') + name;
+  $('chat-sub').textContent = kind === 'chan' ? 'canale: lo leggono tutti quelli che lo hanno' : 'messaggio privato';
+  $('chat-form').hidden = false; $('chat-del').hidden = !(me && me.role === 'admin');
+  let rows; try { rows = await api(`/api/chat/messages?kind=${kind}&peer=${encodeURIComponent(peer)}`); } catch (e) { return; }
+  if (!chat.cur || chat.cur.peer !== peer || chat.cur.kind !== kind) return;
+  chat.msgs = new Map(rows.map(m => [m.id, m]));
+  renderMsgs(!keepScroll);
+  updateLen();
+  if (rows.some(m => m.dir === 'in' && !m.read)) { await post('/api/chat/read', { kind, peer }).catch(() => { }); loadChatList(); }
+  renderConvs();
+  if (!isPhone()) $('chat-text').focus();
+}
+
+function msgEl(m) {
+  const st = m.dir === 'out' ? STATUS[m.status] || [m.status, false] : null;
+  const meta = [fmtTime(m.ts)];
+  if (m.dir === 'in') {
+    if (m.snr != null) meta.push(`SNR ${(+m.snr).toFixed(1)}`);
+    if (m.path_len != null && m.path_len !== 255) meta.push(hopsText(m.path_len));
+  } else {
+    if (chat.cur.kind === 'chan' && m.status === 'sent') meta.push('✓ trasmesso');
+    else meta.push(st[0] + (m.attempts > 1 && m.status !== 'failed' ? ` (tentativo ${m.attempts})` : ''));
+    if (me && me.username !== m.user && m.user) meta.push(m.user);
+  }
+  const metaEl = el('span', { className: 'meta' + (st && st[1] ? ' bad' : ''), textContent: meta.join(' · ') });
+  if (m.dir === 'out' && m.status === 'failed') {
+    const again = el('button', { textContent: 'Riprova' });
+    again.onclick = () => sendChat(m.text, again);
+    metaEl.append(again);
+  }
+  return el('div', { className: 'msg ' + m.dir }, m.dir === 'in' && m.sender ? el('span', { className: 'from', textContent: m.sender }) : null, m.text, metaEl);
+}
+
+function renderMsgs(scroll) {
+  const box = $('chat-msgs');
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+  box.replaceChildren();
+  const list = [...chat.msgs.values()].sort((a, b) => a.id - b.id);
+  if (!list.length) box.append(el('p', { id: 'chat-empty', textContent: chat.cur.kind === 'chan'
+    ? 'Nessun messaggio su questo canale. Quello che scrivi lo ricevono tutti i nodi che hanno il canale.'
+    : `Nessun messaggio con ${chat.cur.name}. Chi riceve vede come mittente il nome del gateway.` }));
+  let day = null;
+  list.forEach(m => {
+    const d = fmtDay(m.ts);
+    if (d !== day) { box.append(el('div', { className: 'day', textContent: d })); day = d; }
+    box.append(msgEl(m));
+  });
+  if (scroll || atBottom) box.scrollTop = box.scrollHeight;
+}
+
+async function loadChatList() {
+  try { chat.list = await api('/api/chat'); } catch (e) { return; }
+  chat.lastId = Math.max(chat.lastId, chat.list.last_id || 0);
+  setUnread(chat.list.unread); renderConvs();
+}
+
+async function chatPoll() {
+  clearTimeout(chat.timer);
+  if (!canChat()) return;
+  try {
+    if (!chat.list) await loadChatList();   // parte dall'ultimo messaggio, non da tutto lo storico
+    const u = await api('/api/chat/updates?after=' + chat.lastId);
+    let changed = false, newIn = false;
+    u.messages.forEach(m => {
+      chat.lastId = Math.max(chat.lastId, m.id);
+      if (chat.cur && m.kind === chat.cur.kind && m.peer === chat.cur.peer) { chat.msgs.set(m.id, m); changed = true; if (m.dir === 'in') newIn = true; }
+    });
+    u.status.forEach(x => { const m = chat.msgs.get(x.id); if (m && (m.status !== x.status || m.attempts !== x.attempts)) { Object.assign(m, x); changed = true; } });
+    if (changed && isChatOpen()) renderMsgs(false);
+    if (newIn && isChatOpen() && !document.hidden) await post('/api/chat/read', { kind: chat.cur.kind, peer: chat.cur.peer }).catch(() => { });
+    if (u.messages.length && isChatOpen()) await loadChatList();   // ricalcola anche i non letti
+    else setUnread(u.unread);
+  } catch (e) { }
+  chat.timer = setTimeout(chatPoll, isChatOpen() && !document.hidden ? 4000 : 30000);
+}
+function chatPollSoon() { if (canChat()) { clearTimeout(chat.timer); chat.timer = setTimeout(chatPoll, 300); } }
+
+async function sendChat(text, btn) {
+  if (!chat.cur) return;
+  text = text.trim(); if (!text) return;
+  if (btn) btn.disabled = true;
+  try {
+    const r = await post('/api/chat', { kind: chat.cur.kind, peer: chat.cur.peer, text });
+    chat.msgs.set(r.message.id, r.message);
+    chat.lastId = Math.max(chat.lastId, r.message.id);
+    renderMsgs(true);
+    if (btn === $('chat-send')) { $('chat-text').value = ''; updateLen(); }
+    loadChatList(); chatPollSoon();
+  } catch (e) { if (e.message !== 'login') toast('Errore: ' + e.message, true); }
+  finally { if (btn) btn.disabled = false; if (btn === $('chat-send')) updateLen(); }
+}
+$('chat-form').onsubmit = e => { e.preventDefault(); sendChat($('chat-text').value, $('chat-send')); };
+$('chat-text').oninput = updateLen;
+$('chat-text').onkeydown = e => {   // Invio manda, Maiusc+Invio non serve: i messaggi MeshCore sono su una riga
+  if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); if (!$('chat-send').disabled) $('chat-form').requestSubmit(); }
+};
+$('chat-open').onclick = () => {
+  const v = $('chat-target').value; if (!v) return;
+  const t = chat.list.targets.find(x => convKey(x.kind, x.peer) === v);
+  if (t) openConv(t.kind, t.peer, t.name);
+  $('chat-target').value = '';
+};
+$('chat-back').onclick = () => { document.body.classList.remove('chat-open'); chat.cur = null; renderConvs(); };
+$('chat-del').onclick = e => {
+  if (!chat.cur || !confirm(`Cancellare tutti i messaggi con ${chat.cur.name} dal Raspberry?`)) return;
+  action(e.target, () => del(`/api/chat?kind=${chat.cur.kind}&peer=${encodeURIComponent(chat.cur.peer)}`), 'Conversazione cancellata')
+    .then(() => { chat.msgs.clear(); renderMsgs(true); loadChatList(); });
+};
+function writeTo(c) {   // dalla rubrica: apre la chat con quel contatto
+  setTab('chat');
+  const go = () => openConv('dm', c.public_key.slice(0, 12), c.name);
+  chat.list ? go() : setTimeout(go, 400);
+}
+
+// ---------- rubrica del gateway
+let ctc = null;
+async function loadContacts() {
+  try { ctc = await api('/api/contacts'); }
+  catch (e) { if (e.message !== 'login') $('ctc-list').replaceChildren(el('p', { className: 'muted', textContent: 'Rubrica non disponibile: ' + e.message })); return; }
+  $('ctc-manual').checked = ctc.manual_add;
+  renderContacts();
+}
+function renderContacts() {
+  if (!ctc) return;
+  const q = $('ctc-filter').value.trim().toLowerCase(), type = $('ctc-type').value;
+  const list = ctc.contacts.filter(c => (!type || c.type === type) && (!q || c.name.toLowerCase().includes(q) || c.public_key.startsWith(q)))
+    .sort((a, b) => (b.favorite - a.favorite) || (b.last_advert || 0) - (a.last_advert || 0));
+  const box = $('ctc-list'); box.replaceChildren();
+  if (!list.length) box.append(el('p', { className: 'muted', textContent: ctc.contacts.length ? 'Nessun contatto corrisponde alla ricerca.' : 'La rubrica del gateway è vuota.' }));
+  list.forEach(c => {
+    const enc_ = encodeURIComponent(c.public_key);
+    const fav = el('button', { className: 'small', textContent: c.favorite ? '★ Preferito' : '☆ Preferito', title: c.favorite ? 'Togli dai preferiti' : 'Aggiungi ai preferiti' });
+    fav.onclick = () => action(fav, () => post(`/api/contacts/${enc_}/favorite`, { on: !c.favorite }), c.favorite ? 'Tolto dai preferiti' : 'Aggiunto ai preferiti').then(loadContacts);
+    const path = el('button', { className: 'small', textContent: 'Azzera percorso' });
+    path.onclick = () => action(path, () => post(`/api/contacts/${enc_}/reset_path`), 'Percorso azzerato: il prossimo invio cerca la strada in flood').then(loadContacts);
+    const rm = el('button', { className: 'small danger', textContent: 'Rimuovi' });
+    rm.onclick = async () => {
+      const warn = c.used_by.length ? `\nATTENZIONE: è usato da ${c.used_by.join(', ')}: smetterà di funzionare finché il nodo non viene riaggiunto.` : '';
+      if (!confirm(`Rimuovere ${c.name} dalla rubrica del gateway?${warn}\nSe il nodo manda un nuovo advert può tornare in rubrica.`)) return;
+      action(rm, () => del(`/api/contacts/${enc_}` + (c.used_by.length ? '?force=true' : '')), 'Contatto rimosso').then(loadContacts);
+    };
+    const acts = el('span', { className: 'acts' }, fav, path);
+    if (['companion', 'room server'].includes(c.type)) { const w = el('button', { className: 'small', textContent: 'Scrivi' }); w.onclick = () => writeTo(c); acts.append(w); }
+    acts.append(rm);
+    const info = [c.type, hopsText(c.hops), 'advert ' + (c.last_advert ? fmtAgo(c.last_advert) : 'mai'),
+      c.lat != null ? `${c.lat.toFixed(4)}, ${c.lon.toFixed(4)}` : 'senza posizione', c.public_key.slice(0, 12)];
+    if (c.used_by.length) info.push('usato da ' + c.used_by.join(', '));
+    box.append(el('div', { className: 'item' },
+      el('span', { className: 'name' }, c.favorite ? el('span', { className: 'star', textContent: '★' }) : null, c.name),
+      el('span', { className: 'info mono', textContent: info.join(' · ') }), acts));
+  });
+  const pend = ctc.pending || [];
+  $('ctc-pending-box').hidden = !pend.length;
+  $('ctc-pending').replaceChildren(...pend.map(c => {
+    const add = el('button', { className: 'small primary', textContent: 'Aggiungi' });
+    add.onclick = () => action(add, () => post('/api/contacts/pending/' + encodeURIComponent(c.public_key)), `${c.name} aggiunto`).then(loadContacts);
+    return el('div', { className: 'item' }, el('span', { className: 'name', textContent: c.name }),
+      el('span', { className: 'info mono', textContent: `${c.type} · ${c.public_key.slice(0, 12)}` }), el('span', { className: 'acts' }, add));
+  }));
+}
+$('ctc-filter').oninput = renderContacts;
+$('ctc-type').onchange = renderContacts;
+$('ctc-refresh').onclick = e => action(e.target, () => post('/api/contacts/refresh'), 'Rubrica riletta').then(loadContacts);
+$('ctc-nb').onclick = e => action(e.target, () => post('/api/network/neighbours'),
+  r => { const v = Object.values(r.result); return v.length ? `Vicini letti da ${v.filter(Boolean).length} ripetitori su ${v.length}` : 'Nessun ripetitore configurato'; }).then(loadNetwork);
+$('ctc-manual').onchange = e => {
+  const on = e.target.checked;
+  action(null, () => put('/api/contacts/settings', { manual_add: on }), on ? 'Aggiunta manuale attiva' : 'Aggiunta automatica attiva').then(loadContacts);
+};
+
 // ---------- avvio
 async function refresh() {
   try { state = await api('/api/state?hours=' + $('range').value); render(); } catch (e) { }
+  if (state && state.unread != null) setUnread(state.unread);
+  loadNetwork();
 }
 async function init() {
   try { me = await api('/api/me'); } catch (e) { return; }
@@ -991,13 +1387,20 @@ async function init() {
   $('login-btn').style.display = guest ? '' : 'none';
   $('login-btn').textContent = me.setup ? 'Imposta password' : 'Accedi';
   $('whoami').textContent = guest ? '' : me.username;
+  if (!guest) {
+    layersCtl.addOverlay(netLayer, 'Rete MeshCore');
+    let on = false; try { on = localStorage.getItem('netLayer') === '1'; } catch (e) { }
+    if (on) netLayer.addTo(map);
+  }
   await refresh();
   if (me.role === 'admin' && location.hash === '#gestione') setTab('admin');
+  else if (location.hash === '#chat' && !guest) setTab('chat');
   else if (location.hash === '#nodi' && isPhone()) setTab('list');
+  chatPollSoon();
   setInterval(refresh, 60000);
   if (me.role === 'admin') updateBadge();
   // sul telefono, quando si torna alla pagina (app in primo piano), aggiorna subito
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) { refresh(); chatPollSoon(); } });
 }
 init();
 </script>

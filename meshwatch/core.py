@@ -58,7 +58,11 @@ class Core:
         self.alerts = {}             # chiave -> set di avvisi attivi
         self.moving = {}             # tracker_id -> True se all'ultima posizione si stava spostando
         self.file_senders = []       # funzioni async(data, filename, caption) per i backup (Telegram)
+        self.tasks = set()           # invii della chat in corso
         db.seed_from_config(cfg)
+        mesh.on_message = self.on_message
+        # invii rimasti a metà quando il programma si è fermato
+        db._exec("UPDATE messages SET status='failed' WHERE dir='out' AND status IN ('queued','sending','sent')")
 
     # ---------- registro attività (pagina e Telegram)
     def audit(self, user, action, detail="", ip=""):
@@ -162,11 +166,32 @@ class Core:
             raise ValueError(f"'{name}' non è tra i ripetitori configurati")
         return r["password"]
 
+    NEIGHBOURS_EVERY_S = 6 * 3600   # i vicini cambiano poco: non serve occupare la radio ogni ora
+
     async def poll_repeater(self, name):
         st = await self.mesh.request_status(name, self.repeater_password(name))
         self.db.add_repeater_status(name, st is not None, st)
         await self._repeater_alerts(name, st)
+        if st is not None:
+            await self.poll_neighbours(name)
         return st
+
+    async def poll_neighbours(self, name, force=False):
+        """Vicini del ripetitore per la mappa della rete (al massimo ogni 6 ore)."""
+        last = self.db.neighbours_ts(name)
+        if not force and last and time.time() - last < self.NEIGHBOURS_EVERY_S:
+            return None
+        req = getattr(self.mesh, "request_neighbours", None)
+        if not req:
+            return None
+        try:
+            items = await req(name, self.repeater_password(name))
+        except Exception as e:
+            log.info("Vicini di %s non letti: %s", name, e)
+            return None
+        if items is not None:
+            self.db.set_neighbours(name, items)
+        return items
 
     async def poll_repeaters(self):
         results = {}
@@ -208,6 +233,127 @@ class Core:
         self.audit(user, "terminale", f"{name}: {cmd}")
         log.info("CLI %s @%s: %s -> %s", user, name, cmd, reply)
         return reply
+
+    # ---------- chat
+    MSG_RATE_PER_MIN = 10   # rispetto del duty cycle: niente raffiche di messaggi
+
+    async def on_message(self, m):
+        """Messaggio ricevuto dalla mesh: va nel database (anche a pagina chiusa)."""
+        if self.db.is_duplicate_message(m["kind"], m["peer"], m["text"], m.get("sender_ts")):
+            return
+        self.db.add_message(dir="in", kind=m["kind"], peer=m["peer"], peer_name=m.get("peer_name"),
+                            sender=m.get("sender"), text=m["text"], snr=m.get("snr"),
+                            path_len=m.get("path_len"), sender_ts=m.get("sender_ts"), status="received")
+        log.info("Messaggio ricevuto (%s %s)", m["kind"], m.get("peer_name"))
+
+    def max_text_bytes(self, kind):
+        from .mesh import MAX_MSG_BYTES
+        if kind == "chan":
+            name = (self.mesh.self_info() if hasattr(self.mesh, "self_info") else {}).get("name") or ""
+            return MAX_MSG_BYTES - len(name.encode("utf-8")) - 2   # "Nome: " fa parte del testo
+        return MAX_MSG_BYTES
+
+    def send_chat(self, kind, peer, text, user):
+        """Mette il messaggio in coda e ritorna subito l'id: l'invio (e l'attesa della
+        conferma) avviene in background, la pagina segue lo stato."""
+        from .mesh import text_bytes
+        text = (text or "").strip()
+        if not text:
+            raise ValueError("messaggio vuoto")
+        if "\n" in text or "\r" in text:
+            text = " ".join(text.split())
+        limit = self.max_text_bytes(kind)
+        if text_bytes(text) > limit:
+            raise ValueError(f"messaggio troppo lungo: massimo {limit} byte")
+        if not self.mesh.connected:
+            raise RuntimeError("radio gateway non collegata")
+        if self.db.sent_since(int(time.time()) - 60) >= self.MSG_RATE_PER_MIN:
+            raise OverflowError(f"massimo {self.MSG_RATE_PER_MIN} messaggi al minuto: aspetta un momento")
+        if kind == "dm":
+            c = self.mesh.contact_by_key(peer)
+            if not c:
+                raise ValueError("contatto non trovato nella rubrica del gateway")
+            peer, name = c["public_key"][:12], c.get("adv_name", peer)
+        elif kind == "chan":
+            if not str(peer).isdigit():
+                raise ValueError("canale non valido")
+            idx = int(peer)
+            if idx not in [ch["idx"] for ch in self.mesh.channels]:
+                raise ValueError("canale non configurato nella radio")
+            peer, name = str(idx), self.mesh.channel_name(idx)
+        else:
+            raise ValueError("tipo di conversazione non valido")
+        mid = self.db.add_message(dir="out", kind=kind, peer=peer, peer_name=name, text=text,
+                                  status="queued", user=user, read=1)
+        self.audit(user, "messaggio inviato", f"{'canale ' if kind == 'chan' else 'a '}{name} ({text_bytes(text)} byte)")
+        task = asyncio.create_task(self._send_chat(mid, kind, peer, text))
+        self.tasks.add(task)
+        task.add_done_callback(self.tasks.discard)
+        return mid
+
+    async def _send_chat(self, mid, kind, peer, text):
+        async def on_status(st, attempt=None, trip_ms=None):
+            f = {"status": st}
+            if attempt:
+                f["attempts"] = attempt
+            if trip_ms is not None:
+                f["trip_ms"] = trip_ms
+            self.db.update_message(mid, **f)
+        try:
+            if kind == "dm":
+                await self.mesh.send_text(peer, text, on_status)
+            else:
+                self.db.update_message(mid, status="sending")
+                ok = await self.mesh.send_channel(int(peer), text)
+                self.db.update_message(mid, status="sent" if ok else "failed")
+        except Exception as e:
+            log.error("Invio messaggio %s: %s", mid, e)
+            self.db.update_message(mid, status="failed")
+
+    def chat_targets(self):
+        """Con chi si può scrivere: canali della radio e contatti companion/room server."""
+        chans = [{"kind": "chan", "peer": str(c["idx"]), "name": c["name"]} for c in self.mesh.channels]
+        people = [{"kind": "dm", "peer": c["public_key"][:12], "name": c["name"], "type": c["type"]}
+                  for c in self.mesh.contacts() if c["type"] in ("companion", "room server") and c.get("public_key")]
+        return chans + people
+
+    # ---------- mappa della rete
+    def network(self):
+        """Nodi con posizione, gateway e collegamenti (vicini dei ripetitori e nodi sentiti
+        direttamente dal gateway)."""
+        contacts = self.mesh.contacts()
+        si = self.mesh.self_info() if hasattr(self.mesh, "self_info") else {}
+        gw = None
+        if si.get("adv_lat") or si.get("adv_lon"):
+            gw = {"name": si.get("name"), "lat": si.get("adv_lat"), "lon": si.get("adv_lon"),
+                  "public_key": si.get("public_key", "")}
+
+        def find(prefix):
+            prefix = (prefix or "").lower()
+            if not prefix:
+                return None
+            if gw and gw["public_key"].lower().startswith(prefix):
+                return gw
+            return next((c for c in contacts if c["public_key"].lower().startswith(prefix)), None)
+
+        links, seen = [], set()
+        for n in self.db.neighbours():
+            a = next((c for c in contacts if c["name"] == n["repeater"]), None)
+            b = find(n["prefix"])
+            if not a or not b or a["lat"] is None or b.get("lat") is None:
+                continue
+            key = tuple(sorted((a["public_key"], b["public_key"])))
+            if key in seen:
+                continue
+            seen.add(key)
+            links.append({"a": a["name"], "b": b["name"], "from": [a["lat"], a["lon"]], "to": [b["lat"], b["lon"]],
+                          "snr": n["snr"], "secs_ago": n["secs_ago"], "ts": n["ts"], "kind": "neighbour"})
+        if gw:
+            for c in contacts:
+                if c["hops"] == 0 and c["lat"] is not None and c["type"] == "ripetitore":
+                    links.append({"a": gw["name"], "b": c["name"], "from": [gw["lat"], gw["lon"]],
+                                  "to": [c["lat"], c["lon"]], "kind": "direct"})
+        return {"gateway": gw, "nodes": [c for c in contacts if c["lat"] is not None], "links": links}
 
     # ---------- cicli periodici
     async def tracker_loop(self):
