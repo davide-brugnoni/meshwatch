@@ -167,10 +167,10 @@ function render() {
   fillTermNodes();
 }
 
-// cancella i punti della traccia (di un dispositivo o di tutti); resta l'ultima posizione
+// cancella la traccia (di un dispositivo o di tutti): dalla mappa sparisce tutto
 function clearTracks(t, btn) {
   const who = t ? `di ${t.label}` : 'di tutti i dispositivi';
-  if (!confirm(`Cancellare la traccia ${who}?\nI punti vengono eliminati definitivamente; resta solo l'ultima posizione.`)) return;
+  if (!confirm(`Cancellare la traccia ${who}?\nTutte le posizioni, compresa l'ultima, vengono eliminate definitivamente.`)) return;
   action(btn, () => del(t ? `/api/trackers/${t.id}/track` : '/api/track'),
     r => r.deleted ? `Traccia cancellata (${r.deleted} punti)` : 'Nessun punto da cancellare')
     .then(() => { fitDone = false; refresh(); });

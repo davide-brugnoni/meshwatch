@@ -120,13 +120,19 @@ def main():
     tid2 = db.add_tracker(contact="T2", label="T2", paused=0)
     db.add_position(tid2, 44.0, 8.0, None, None)
     db.add_position(tid2, 44.1, 8.0, None, None)
+    tid3 = db.add_tracker(contact="T3", label="T3 senza posizioni", paused=0)
     n_before = len(db.positions_since(1, 0))
     last = db.last_position(1)
-    r = c.delete("/api/trackers/1/track").json()
+    r = c.delete("/api/trackers/1/track?keep_last=true").json()
     check(r["deleted"] == n_before - 1 and db.positions_since(1, 0) == [last]
-          and len(db.positions_since(tid2, 0)) == 2, "cancella traccia di un dispositivo, resta l'ultima posizione")
-    check(c.delete("/api/track").json()["deleted"] == 1 and len(db.positions_since(tid2, 0)) == 1
-          and db.last_position(1) == last, "cancella tutte le tracce")
+          and len(db.positions_since(tid2, 0)) == 2,
+          "cancella traccia tenendo l'ultima posizione (anche con un dispositivo senza posizioni)")
+    db._exec("INSERT INTO tracker_polls (ts, ok, tracker_id, lat, lon) VALUES (?,?,?,?,?)", (int(time.time()), 1, 1, 44.0, 8.0))
+    r = c.delete("/api/trackers/1/track").json()
+    check(r["deleted"] == 1 and db.last_position(1) is None and len(db.positions_since(tid2, 0)) == 2
+          and not db.coverage_polls(0, 1), "cancella traccia: sparisce tutto, anche l'ultima posizione e la copertura")
+    check(c.delete("/api/track").json()["deleted"] == 2 and db.last_position(tid2) is None
+          and db.last_position(tid3) is None, "cancella tutte le tracce")
     v = TestClient(create_app(core, Auth(db), {"mode": "lan"}))
     v.post("/api/login", json={"username": "fam", "password": "123456"})
     check(v.post("/api/trackers/1/poll").json()["ok"] and v.get("/api/admin").status_code == 403,
@@ -154,6 +160,7 @@ def main():
     import io, zipfile
     old = int(time.time()) - 400 * 86400
     db._exec("INSERT INTO positions (ts, lat, lon, alt, batt_v, tracker_id) VALUES (?,?,?,?,?,?)", (old, 1, 1, 0, 0, tid2))
+    db.add_position(tid2, 44.2, 8.0, None, None)   # dopo "cancella tutte le tracce" non ne aveva più
     db._exec("INSERT INTO repeater_status (ts, name, ok) VALUES (?,?,?)", (old, "Ripetitore-1", 1))
     db.add_repeater_status("Ripetitore-1", True, {"bat": 4000})
     db._exec("INSERT INTO audit VALUES (?,?,?,?,?)", (old, "x", "", "vecchio", ""))

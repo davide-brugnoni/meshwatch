@@ -127,19 +127,37 @@ async function chatPoll() {
     if (!chat.list) await loadChatList();   // parte dall'ultimo messaggio, non da tutto lo storico
     const u = await api('/api/chat/updates?after=' + chat.lastId);
     let changed = false, newIn = false;
+    const elsewhere = [];   // arrivati in una conversazione che non si sta guardando
     u.messages.forEach(m => {
       chat.lastId = Math.max(chat.lastId, m.id);
-      if (chat.cur && m.kind === chat.cur.kind && m.peer === chat.cur.peer) { chat.msgs.set(m.id, m); changed = true; if (m.dir === 'in') newIn = true; }
+      const here = chat.cur && m.kind === chat.cur.kind && m.peer === chat.cur.peer;
+      if (here) { chat.msgs.set(m.id, m); changed = true; if (m.dir === 'in') newIn = true; }
+      if (m.dir === 'in' && !(here && isChatOpen() && !document.hidden)) elsewhere.push(m);
     });
+    if (elsewhere.length) notifyMsgs(elsewhere);
     u.status.forEach(x => { const m = chat.msgs.get(x.id); if (m && (m.status !== x.status || m.attempts !== x.attempts)) { Object.assign(m, x); changed = true; } });
     if (changed && isChatOpen()) renderMsgs(false);
     if (newIn && isChatOpen() && !document.hidden) await post('/api/chat/read', { kind: chat.cur.kind, peer: chat.cur.peer }).catch(() => { });
-    if (u.messages.length && isChatOpen()) await loadChatList();   // ricalcola anche i non letti
+    if (u.messages.length) await loadChatList();   // elenco a sinistra e non letti sempre aggiornati
     else setUnread(u.unread);
   } catch (e) { }
   // con il tempo reale i messaggi arrivano subito: il controllo periodico è solo di riserva
   const open_ = isChatOpen() && !document.hidden;
   chat.timer = setTimeout(chatPoll, live ? (open_ ? 30000 : 120000) : (open_ ? 4000 : 30000));
+}
+// avviso in alto a destra per i messaggi arrivati: si tocca per aprire la conversazione
+function notifyMsgs(list) {
+  const m = list[list.length - 1], n = $('msg-note');
+  const name = m.kind === 'chan' ? '# ' + (m.peer_name || m.peer) : (m.peer_name || m.peer);
+  const others = list.length - 1;
+  const x = el('button', { className: 'x', textContent: '×', title: 'Chiudi', ariaLabel: 'Chiudi' });
+  x.onclick = e => { e.stopPropagation(); n.hidden = true; };
+  n.replaceChildren(x, el('b', { textContent: 'Nuovo messaggio · ' + name }),
+    el('span', { textContent: (m.sender ? m.sender + ': ' : '') + m.text }),
+    el('small', { textContent: (others ? `e altri ${others} · ` : '') + 'tocca per aprire' }));
+  n.onclick = () => { n.hidden = true; setTab('chat'); openConv(m.kind, m.peer, m.peer_name || m.peer); };
+  n.hidden = false;
+  clearTimeout(n._h); n._h = setTimeout(() => n.hidden = true, 15000);
 }
 function chatPollSoon() { if (canChat()) { clearTimeout(chat.timer); chat.timer = setTimeout(chatPoll, 300); } }
 
