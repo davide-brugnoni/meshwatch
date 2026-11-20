@@ -40,7 +40,8 @@ async def run(cfg):
     server = uvicorn.Server(uvicorn.Config(
         create_app(core, auth, web_cfg, updater),
         host=web_cfg.get("host", "0.0.0.0"), port=int(web_cfg.get("port", 8080)),
-        log_level="warning", proxy_headers=web_cfg.get("mode") == "public"))
+        log_level="warning", proxy_headers=web_cfg.get("mode") == "public",
+        timeout_graceful_shutdown=5))   # le pagine collegate in tempo reale non bloccano il riavvio
 
     async def radio():
         await mesh.connect()
@@ -55,6 +56,7 @@ async def run(cfg):
     await asyncio.wait([serve, restart], return_when=asyncio.FIRST_COMPLETED)
     if restart.done():
         log.info("Riavvio richiesto (aggiornamento): chiudo il servizio, systemd lo fa ripartire")
+        core.events.close()
         server.should_exit = True
         await serve
     for t in others + [restart]:

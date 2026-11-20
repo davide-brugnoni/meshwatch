@@ -72,6 +72,16 @@ class DB:
                 CREATE INDEX IF NOT EXISTS i_audit_ts ON audit(ts);
                 CREATE INDEX IF NOT EXISTS i_pos_ts ON positions(ts);
                 CREATE INDEX IF NOT EXISTS i_rep ON repeater_status(name, ts);
+                CREATE TABLE IF NOT EXISTS sensor_readings (
+                    ts INTEGER, tracker_id INTEGER, channel INTEGER, type TEXT, value REAL
+                );
+                CREATE INDEX IF NOT EXISTS i_sens ON sensor_readings(tracker_id, ts);
+                CREATE TABLE IF NOT EXISTS sensor_rules (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    tracker_id INTEGER, type TEXT, channel INTEGER,
+                    op TEXT,                -- '<' sotto la soglia, '>' sopra la soglia
+                    value REAL
+                );
                 """
             )
             # migrazione dalla prima versione: posizioni e richieste legate a un tracker
@@ -80,6 +90,22 @@ class DB:
                 if "tracker_id" not in cols:
                     self.conn.execute(f"ALTER TABLE {table} ADD COLUMN tracker_id INTEGER")
             self.conn.execute("CREATE INDEX IF NOT EXISTS i_pos_tr ON positions(tracker_id, ts)")
+            # percorso dei pacchetti: salti e ripetitori attraversati dalla risposta
+            cols = [r[1] for r in self.conn.execute("PRAGMA table_info(tracker_polls)")]
+            for col, typ in (("hops", "INTEGER"), ("path", "TEXT")):
+                if col not in cols:
+                    self.conn.execute(f"ALTER TABLE tracker_polls ADD COLUMN {col} {typ}")
+            # mappa della copertura: dove si trovava il dispositivo a ogni richiesta
+            # (est=1: non ha risposto o non aveva il fix, è la sua ultima posizione nota)
+            if "lat" not in cols:
+                for col, typ in (("lat", "REAL"), ("lon", "REAL"), ("est", "INTEGER")):
+                    self.conn.execute(f"ALTER TABLE tracker_polls ADD COLUMN {col} {typ}")
+                # richieste riuscite delle versioni precedenti: posizione salvata nello stesso momento
+                same = ("FROM positions p WHERE p.tracker_id=tracker_polls.tracker_id "
+                        "AND p.ts BETWEEN tracker_polls.ts - 1 AND tracker_polls.ts + 1")
+                self.conn.execute(f"UPDATE tracker_polls SET lat=(SELECT p.lat {same} LIMIT 1), "
+                                  f"lon=(SELECT p.lon {same} LIMIT 1), est=0 WHERE ok=1 AND EXISTS (SELECT 1 {same})")
+            self.conn.execute("CREATE INDEX IF NOT EXISTS i_polls_tr ON tracker_polls(tracker_id, ts)")
             # intervallo adattivo: 0 = disattivato
             cols = [r[1] for r in self.conn.execute("PRAGMA table_info(trackers)")]
             if "moving_interval_min" not in cols:
@@ -152,9 +178,11 @@ class DB:
 
     def delete_tracker(self, tid, keep_history=False):
         self._exec("DELETE FROM trackers WHERE id=?", (tid,))
+        self._exec("DELETE FROM sensor_rules WHERE tracker_id=?", (tid,))
         if not keep_history:
             self._exec("DELETE FROM positions WHERE tracker_id=?", (tid,))
             self._exec("DELETE FROM tracker_polls WHERE tracker_id=?", (tid,))
+            self._exec("DELETE FROM sensor_readings WHERE tracker_id=?", (tid,))
 
     def clear_track(self, tid=None, keep_last=True):
         """Cancella i punti della traccia (di un dispositivo o di tutti). Con keep_last resta
@@ -170,9 +198,25 @@ class DB:
         self._exec("INSERT INTO positions (ts, lat, lon, alt, batt_v, tracker_id) VALUES (?,?,?,?,?,?)",
                    (int(time.time()), lat, lon, alt, batt_v, tid))
 
-    def add_tracker_poll(self, tid, ok):
-        self._exec("INSERT INTO tracker_polls (ts, ok, tracker_id) VALUES (?,?,?)",
-                   (int(time.time()), 1 if ok else 0, tid))
+    def add_tracker_poll(self, tid, ok, hops=None, path=None, lat=None, lon=None, est=None):
+        self._exec("INSERT INTO tracker_polls (ts, ok, tracker_id, hops, path, lat, lon, est) VALUES (?,?,?,?,?,?,?,?)",
+                   (int(time.time()), 1 if ok else 0, tid, hops, ",".join(path) if path else None, lat, lon, est))
+
+    def coverage_polls(self, since, tid=None):
+        sql = "SELECT ts, ok, tracker_id, hops, lat, lon, est FROM tracker_polls WHERE ts>=? AND lat IS NOT NULL"
+        args = [since]
+        if tid is not None:
+            sql += " AND tracker_id=?"
+            args.append(tid)
+        return self._all(sql, args)
+
+    def last_route(self, tid):
+        """Percorso dell'ultima risposta: {ts, hops, path: [prefissi]} o None."""
+        r = self._one("SELECT ts, hops, path FROM tracker_polls WHERE tracker_id=? AND ok=1 AND hops IS NOT NULL "
+                      "ORDER BY ts DESC, rowid DESC LIMIT 1", (tid,))
+        if r:
+            r["path"] = r["path"].split(",") if r["path"] else []
+        return r
 
     def last_position(self, tid):
         return self._one("SELECT * FROM positions WHERE tracker_id=? ORDER BY ts DESC LIMIT 1", (tid,))
@@ -183,6 +227,37 @@ class DB:
     def last_tracker_ok(self, tid):
         r = self._one("SELECT ts FROM tracker_polls WHERE tracker_id=? AND ok=1 ORDER BY ts DESC LIMIT 1", (tid,))
         return r["ts"] if r else None
+
+    # ---------- sensori (telemetria Cayenne LPP)
+    def add_sensor_readings(self, tid, items, ts=None):
+        ts = ts or int(time.time())
+        with self.lock:
+            self.conn.executemany("INSERT INTO sensor_readings VALUES (?,?,?,?,?)",
+                                  [(ts, tid, i["channel"], i["type"], i["value"]) for i in items])
+            self.conn.commit()
+
+    def sensor_latest(self, tid):
+        """Ultimo valore di ogni sensore del dispositivo: [{type, channel, value, ts}]."""
+        return self._all(
+            "SELECT type, channel, value, ts FROM sensor_readings WHERE rowid IN "
+            "(SELECT MAX(rowid) FROM sensor_readings WHERE tracker_id=? GROUP BY type, channel) ORDER BY channel, type",
+            (tid,))
+
+    def sensor_history(self, tid, since):
+        return self._all("SELECT ts, type, channel, value FROM sensor_readings WHERE tracker_id=? AND ts>=? ORDER BY ts",
+                         (tid, since))
+
+    def sensor_rules(self, tid=None):
+        if tid is None:
+            return self._all("SELECT * FROM sensor_rules ORDER BY id")
+        return self._all("SELECT * FROM sensor_rules WHERE tracker_id=? ORDER BY id", (tid,))
+
+    def add_sensor_rule(self, tid, type, channel, op, value):
+        return self._exec("INSERT INTO sensor_rules (tracker_id, type, channel, op, value) VALUES (?,?,?,?,?)",
+                          (tid, type, channel, op, value)).lastrowid
+
+    def delete_sensor_rule(self, rid):
+        return self._exec("DELETE FROM sensor_rules WHERE id=?", (rid,)).rowcount
 
     # ---------- ripetitori
     def repeaters(self):

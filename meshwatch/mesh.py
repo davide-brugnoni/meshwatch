@@ -72,22 +72,43 @@ def text_bytes(text):
 
 
 def parse_lpp(lpp):
-    """Estrae posizione e batteria dalla telemetria Cayenne LPP."""
-    out = {"lat": None, "lon": None, "alt": None, "batt_v": None}
+    """Estrae posizione, batteria e sensori dalla telemetria Cayenne LPP.
+    sensors: [{channel, type, value}] con tutti i valori numerici tranne il GPS; i valori
+    composti (es. accelerometro {acc_x, acc_y, acc_z}) diventano un sensore per campo."""
+    out = {"lat": None, "lon": None, "alt": None, "batt_v": None, "sensors": []}
     for item in lpp or []:
         t = item.get("type")
         v = item.get("value")
+        ch = item.get("channel", 0)
         if t == "gps":
             if isinstance(v, dict):
                 out["lat"], out["lon"], out["alt"] = v.get("latitude"), v.get("longitude"), v.get("altitude")
             elif isinstance(v, (list, tuple)) and len(v) >= 2:
                 out["lat"], out["lon"] = v[0], v[1]
                 out["alt"] = v[2] if len(v) > 2 else None
-        elif t == "voltage" and out["batt_v"] is None and item.get("channel") == 1:
+            continue
+        if t == "voltage" and out["batt_v"] is None and ch == 1:
             out["batt_v"] = v
+        if isinstance(v, bool):
+            v = int(v)
+        if isinstance(v, (int, float)) and t:
+            out["sensors"].append({"channel": ch, "type": t, "value": float(v)})
+        elif isinstance(v, dict) and t:
+            for k, x in v.items():
+                if isinstance(x, (int, float)) and not isinstance(x, bool):
+                    out["sensors"].append({"channel": ch, "type": f"{t}.{k}", "value": float(x)})
     if out["lat"] == 0 and out["lon"] == 0:   # GPS senza fix
         out["lat"] = out["lon"] = None
     return out
+
+
+def decode_path(path_hex, hash_mode=0):
+    """Percorso di un contatto ("out_path" in esadecimale) → elenco dei ripetitori come
+    prefissi della chiave pubblica (1, 2 o 3 byte per salto secondo hash_mode)."""
+    if not path_hex:
+        return []
+    size = 2 * ((hash_mode if hash_mode and hash_mode > 0 else 0) + 1)
+    return [path_hex[i:i + size] for i in range(0, len(path_hex) - size + 1, size)]
 
 
 def find_serial_port():
@@ -183,6 +204,7 @@ class Mesh:
                 "last_advert": c.get("last_advert"),
                 "lat": lat if has_pos else None, "lon": lon if has_pos else None,
                 "hops": c.get("out_path_len", -1),          # -1 = percorso sconosciuto (flood)
+                "path": decode_path(c.get("out_path"), c.get("out_path_hash_mode")) if (c.get("out_path_len") or 0) > 0 else [],
                 "favorite": bool((c.get("flags") or 0) & 1)}
 
     def contacts(self):
@@ -209,7 +231,7 @@ class Mesh:
         return self.mc.get_contact_by_key_prefix(key)
 
     async def request_telemetry(self, name, attempts=2):
-        """Chiede la telemetria al nodo. Ritorna dict (lat, lon, alt, batt_v) o None."""
+        """Chiede la telemetria al nodo. Ritorna dict (lat, lon, alt, batt_v, sensors, hops, path) o None."""
         async with self.lock:
             c = await self.contact(name)
             if not c:
@@ -221,7 +243,11 @@ class Mesh:
                         await self.mc.commands.reset_path(c)   # secondo tentativo in flood
                     lpp = await self.mc.commands.req_telemetry_sync(c, min_timeout=20)
                     if lpp is not None:
-                        return parse_lpp(lpp)
+                        res = parse_lpp(lpp)
+                        # percorso che il gateway usa ora per raggiungere il nodo
+                        info = self.contact_info(self.mc.get_contact_by_name(name) or c)
+                        res["hops"], res["path"] = info["hops"], info["path"]
+                        return res
                 except Exception as e:
                     log.error("Telemetria %s: %s", name, e)
             return None

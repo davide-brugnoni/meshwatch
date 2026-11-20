@@ -3,13 +3,13 @@ import time
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .auth import hash_password
 from . import maintenance, system
-from .core import is_dangerous
+from .core import fmt_sensor, is_dangerous, sensor_info
 from .updater import UpdateError
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
@@ -44,6 +44,13 @@ class TrackerIn(BaseModel):
     low_battery_v: float | None = Field(None, ge=0, le=5)
     paused: bool | None = None
     moving_interval_min: int | None = Field(None, ge=0, le=720)
+
+
+class SensorRuleIn(BaseModel):
+    type: str = Field(..., min_length=1, max_length=40)
+    channel: int = Field(..., ge=0, le=255)
+    op: str = Field(..., pattern=r"^[<>]$")
+    value: float
 
 
 class RepeaterIn(BaseModel):
@@ -148,6 +155,9 @@ def create_app(core, auth, web_cfg, updater=None):
         resp.headers["Referrer-Policy"] = "no-referrer"
         if req.url.path.startswith("/api/"):
             resp.headers["Cache-Control"] = "no-store"
+        elif req.url.path == "/" or req.url.path.startswith("/assets/"):
+            # dopo un aggiornamento il browser deve prendere subito pagina, stile e script nuovi
+            resp.headers["Cache-Control"] = "no-cache"
         return resp
 
     @app.get("/")
@@ -200,9 +210,22 @@ def create_app(core, auth, web_cfg, updater=None):
         s = core.state(max(1, min(hours, 24 * 30)))
         if u["role"] == "guest":
             s["contacts"] = []   # l'ospite vede la mappa, non la rubrica della radio
+            for t in s["trackers"]:
+                t["route"] = None   # né i ripetitori attraversati
         else:
             s["unread"] = db.unread_count()
         return s
+
+    # ---------- aggiornamenti in tempo reale (Server-Sent Events)
+    @app.get("/api/events")
+    async def events(req: Request, u=Depends(current_user)):
+        try:
+            sub = core.events.subscribe()
+        except (OverflowError, RuntimeError) as e:
+            raise HTTPException(503, str(e))
+        allowed = {"state"} if u["role"] == "guest" else {"state", "chat"}
+        return StreamingResponse(core.events.stream(sub, allowed, req.is_disconnected), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
 
     # ---------- chat (solo utenti con login: admin e viewer)
     @app.get("/api/chat")
@@ -252,6 +275,13 @@ def create_app(core, auth, web_cfg, updater=None):
     async def network(u=Depends(viewer)):
         return core.network()
 
+    @app.get("/api/coverage")
+    async def coverage(days: int = 30, tracker: int | None = None, cell: int = 250, u=Depends(viewer)):
+        if tracker is not None:
+            get_tracker(tracker)
+        import asyncio
+        return await asyncio.to_thread(core.coverage, max(1, min(days, 365)), tracker, max(50, min(cell, 5000)))
+
     @app.post("/api/network/neighbours")
     async def network_refresh(u=Depends(admin)):
         if not core.mesh.connected:
@@ -281,6 +311,7 @@ def create_app(core, auth, web_cfg, updater=None):
         tid = db.add_tracker(**f)
         core.schedule_now(tid)
         audit(u, "dispositivo aggiunto", f["label"])
+        core.events.publish("state")
         return {"ok": True, "id": tid}
 
     @app.put("/api/trackers/{tid}")
@@ -299,6 +330,7 @@ def create_app(core, auth, web_cfg, updater=None):
             core.schedule_now(tid)                 # ripreso: chiede subito
         elif "interval_min" in f or "moving_interval_min" in f:
             core.next_due[tid] = time.time() + core.interval_min(db.tracker(tid)) * 60
+        core.events.publish("state")
         return {"ok": True}
 
     @app.delete("/api/trackers/{tid}")
@@ -306,6 +338,7 @@ def create_app(core, auth, web_cfg, updater=None):
         audit(u, "dispositivo eliminato", get_tracker(tid)["label"])
         db.delete_tracker(tid)
         core.next_due.pop(tid, None)
+        core.events.publish("state")
         return {"ok": True}
 
     @app.delete("/api/trackers/{tid}/track")
@@ -313,13 +346,44 @@ def create_app(core, auth, web_cfg, updater=None):
         t = get_tracker(tid)
         n = db.clear_track(tid, keep_last)
         audit(u, "traccia cancellata", f"{t['label']}: {n} punti")
+        core.events.publish("state")
         return {"ok": True, "deleted": n}
 
     @app.delete("/api/track")
     async def clear_all_tracks(keep_last: bool = True, u=Depends(admin)):
         n = db.clear_track(None, keep_last)
         audit(u, "tracce cancellate", f"tutti i dispositivi: {n} punti")
+        core.events.publish("state")
         return {"ok": True, "deleted": n}
+
+    # ---------- soglie dei sensori
+    @app.get("/api/trackers/{tid}/rules")
+    async def sensor_rules(tid: int, u=Depends(admin)):
+        get_tracker(tid)
+        rules = [{**r, **sensor_info(r["type"], r["channel"])} for r in db.sensor_rules(tid)]
+        sensors = [{"type": x["type"], "channel": x["channel"], **sensor_info(x["type"], x["channel"])}
+                   for x in db.sensor_latest(tid)]
+        return {"rules": rules, "sensors": sensors}
+
+    @app.post("/api/trackers/{tid}/rules")
+    async def add_sensor_rule(tid: int, body: SensorRuleIn, u=Depends(admin)):
+        t = get_tracker(tid)
+        if len(db.sensor_rules(tid)) >= 20:
+            raise HTTPException(400, "massimo 20 soglie per dispositivo")
+        rid = db.add_sensor_rule(tid, body.type, body.channel, body.op, body.value)
+        audit(u, "soglia sensore aggiunta", f"{t['label']}: {sensor_info(body.type, body.channel)['label']} "
+              f"{body.op} {fmt_sensor(body.type, body.channel, body.value)}")
+        return {"ok": True, "id": rid}
+
+    @app.delete("/api/trackers/{tid}/rules/{rid}")
+    async def delete_sensor_rule(tid: int, rid: int, u=Depends(admin)):
+        t = get_tracker(tid)
+        if not any(r["id"] == rid for r in db.sensor_rules(tid)):
+            raise HTTPException(404, "soglia non trovata")
+        db.delete_sensor_rule(rid)
+        core.alerts.get(("t", tid), set()).discard(f"rule{rid}")
+        audit(u, "soglia sensore rimossa", t["label"])
+        return {"ok": True}
 
     # ---------- ripetitori
     @app.post("/api/repeaters/poll")
@@ -451,8 +515,10 @@ def create_app(core, auth, web_cfg, updater=None):
     async def contacts_list(u=Depends(admin)):
         need_radio()
         out = []
-        for c in core.mesh.contacts():
-            out.append({**c, "used_by": contact_uses(c["name"])})
+        contacts = core.mesh.contacts()
+        for c in contacts:
+            out.append({**c, "used_by": contact_uses(c["name"]),
+                        "route": [n["name"] or n["hash"] for n in core.resolve_path(c.get("path"), contacts)]})
         si = core.mesh.self_info()
         return {"contacts": out, "pending": core.mesh.pending_contacts(),
                 "manual_add": bool(si.get("manual_add_contacts"))}
@@ -633,5 +699,6 @@ def create_app(core, auth, web_cfg, updater=None):
             raise HTTPException(400, str(e))
         return {"ok": reply is not None, "reply": reply}
 
+    app.mount("/assets", StaticFiles(directory=WEB_DIR / "assets"), name="assets")
     app.mount("/vendor", StaticFiles(directory=WEB_DIR / "vendor"), name="vendor")
     return app

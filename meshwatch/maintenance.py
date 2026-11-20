@@ -18,7 +18,7 @@ BACKUP_EVERY_DAYS = 7
 RESTORE_TXT = """Backup di MeshWatch del {when}
 
 Contiene:
-  meshwatch.db   dati (dispositivi, posizioni, ripetitori, messaggi, utenti, registro)
+  meshwatch.db   dati (dispositivi, posizioni, sensori, ripetitori, messaggi, utenti, registro)
   config.yaml    configurazione (token Telegram, password dei ripetitori)
 
 ATTENZIONE: contiene password e posizioni. Conservalo in un posto sicuro.
@@ -61,6 +61,7 @@ def purge(db, days):
         "WHERE p2.tracker_id=t.id ORDER BY p2.ts DESC, p2.rowid DESC LIMIT 1) FROM trackers t)",
         (cutoff,)).rowcount
     n += db._exec("DELETE FROM tracker_polls WHERE ts < ?", (cutoff,)).rowcount
+    n += db._exec("DELETE FROM sensor_readings WHERE ts < ?", (cutoff,)).rowcount
     n += db._exec(
         "DELETE FROM repeater_status WHERE ts < ? AND rowid NOT IN "
         "(SELECT MAX(rowid) FROM repeater_status GROUP BY name) AND rowid NOT IN "

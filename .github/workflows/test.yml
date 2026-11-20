@@ -46,21 +46,32 @@ jobs:
       - name: Test aggiornamento dalla pagina
         run: python tests/test_update.py
 
+      - name: Test sensori, percorsi, copertura, tempo reale e bot
+        run: python tests/test_features.py
+
+      - name: Permessi di tutti gli endpoint per ogni ruolo
+        run: python tests/test_permissions.py
+
   pagina-e-script:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: JavaScript della pagina senza errori di sintassi
+      - name: Pagina web (file inclusi, id, sintassi JavaScript)
+        run: python3 tests/check_page.py
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Browser per il test della pagina
         run: |
-          python3 - <<'PY'
-          import re
-          html = open("web/index.html", encoding="utf-8").read()
-          scripts = re.findall(r"<script>(.*?)</script>", html, re.S)
-          assert scripts, "nessuno script nella pagina"
-          open("/tmp/app.js", "w", encoding="utf-8").write("\n".join(scripts))
-          PY
-          node --check /tmp/app.js
+          pip install -r requirements.txt playwright
+          python -m playwright install --with-deps chromium
+
+      - name: Pagina in un browser vero (computer, telefono, tutte le schede)
+        run: python tests/test_page_browser.py
 
       - name: Script di shell senza errori di sintassi
         run: for f in install.sh tools/*.sh sd-kit/*.sh; do bash -n "$f" && echo "ok $f"; done

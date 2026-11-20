@@ -4,6 +4,8 @@ import math
 import time
 from datetime import datetime
 
+from .events import Events
+
 log = logging.getLogger("meshwatch.core")
 
 # Comandi che cambiano la configurazione o riavviano: chiedono conferma.
@@ -41,6 +43,36 @@ def distance_m(a, b):
     return 2 * r * math.asin(math.sqrt(h))
 
 
+# Sensori Cayenne LPP: nome e unità per pagina, avvisi e Telegram
+SENSORS = {
+    "temperature": ("Temperatura", "°C", 1), "humidity": ("Umidità", "%", 0), "barometer": ("Pressione", "hPa", 0),
+    "voltage": ("Tensione", "V", 2), "current": ("Corrente", "A", 3), "illuminance": ("Luce", "lux", 0),
+    "percentage": ("Percentuale", "%", 0), "altitude": ("Quota", "m", 0), "power": ("Potenza", "W", 1),
+    "energy": ("Energia", "kWh", 2), "distance": ("Distanza", "m", 2), "direction": ("Direzione", "°", 0),
+    "concentration": ("Concentrazione", "ppm", 0), "load": ("Carico", "kg", 2), "frequency": ("Frequenza", "Hz", 0),
+    "presence": ("Presenza", "", 0), "digital input": ("Ingresso digitale", "", 0),
+    "digital output": ("Uscita digitale", "", 0), "analog input": ("Ingresso analogico", "", 2),
+    "analog output": ("Uscita analogica", "", 2), "generic sensor": ("Sensore", "", 2), "switch": ("Interruttore", "", 0),
+    "time": ("Ora", "s", 0), "accelerometer": ("Accelerometro", "g", 2), "gyrometer": ("Giroscopio", "°/s", 1),
+}
+
+
+def sensor_info(type, channel):
+    """{label, unit, dec} di un sensore. La tensione sul canale 1 è la batteria del dispositivo."""
+    base, _, field = type.partition(".")
+    label, unit, dec = SENSORS.get(base, (base.capitalize(), "", 2))
+    if base == "voltage" and channel == 1:
+        label = "Batteria"
+    if field:
+        label += " " + field.replace("acc_", "").upper()
+    return {"label": label, "unit": unit, "dec": dec}
+
+
+def fmt_sensor(type, channel, value):
+    i = sensor_info(type, channel)
+    return f"{value:.{i['dec']}f}" + (f" {i['unit']}" if i["unit"] else "")
+
+
 def maps_link(lat, lon):
     return f"https://www.google.com/maps?q={lat:.6f},{lon:.6f}"
 
@@ -59,6 +91,8 @@ class Core:
         self.moving = {}             # tracker_id -> True se all'ultima posizione si stava spostando
         self.file_senders = []       # funzioni async(data, filename, caption) per i backup (Telegram)
         self.tasks = set()           # invii della chat in corso
+        self.events = Events()       # notifiche in tempo reale per le pagine aperte
+        self.position_listeners = [] # funzioni async(tracker, posizione) per ogni nuova posizione (Telegram /segui)
         db.seed_from_config(cfg)
         mesh.on_message = self.on_message
         # invii rimasti a metà quando il programma si è fermato
@@ -98,18 +132,42 @@ class Core:
         t = self.db.tracker(tid)
         if not t or not self.mesh.connected:
             return None
+        last = self.db.last_position(tid)
         res = await self.mesh.request_telemetry(t["contact"])
         ok = res is not None
-        self.db.add_tracker_poll(tid, ok)
+        self.db.add_tracker_poll(tid, ok, *((res.get("hops"), res.get("path")) if ok else (None, None)),
+                                 *self._poll_place(t, res, last))
         if ok:
             if res["lat"] is not None:
                 prev = self.db.last_position(tid)
                 self.db.add_position(tid, res["lat"], res["lon"], res["alt"], res["batt_v"])
                 self._update_moving(t, prev, res)
+                for listener in self.position_listeners:
+                    try:
+                        await listener(t, self.db.last_position(tid))
+                    except Exception as e:
+                        log.error("Posizione non inoltrata: %s", e)
+            if res.get("sensors"):
+                self.db.add_sensor_readings(tid, res["sensors"])
+            self.events.publish("state")
             await self._tracker_ok(t, res)
+            await self._sensor_alerts(t, res.get("sensors") or [])
         else:
+            self.events.publish("state")
             await self._tracker_fail(t)
         return res
+
+    COVERAGE_MAX_AGE_S = 3600   # oltre, l'ultima posizione nota non dice dove fosse il dispositivo
+
+    def _poll_place(self, t, res, last):
+        """Dove si trovava il dispositivo durante la richiesta, per la mappa della copertura:
+        (lat, lon, stimata). Senza risposta o senza fix si usa l'ultima posizione nota, se recente."""
+        if res and res.get("lat") is not None:
+            return res["lat"], res["lon"], 0
+        max_age = max(self.COVERAGE_MAX_AGE_S, 2 * self.interval_min(t) * 60)
+        if last and time.time() - last["ts"] <= max_age:
+            return last["lat"], last["lon"], 1
+        return None, None, None
 
     def _update_moving(self, t, prev, res):
         was = self.moving.get(t["id"], False)
@@ -144,6 +202,35 @@ class Core:
             elif res["batt_v"] >= lim + 0.1:
                 f.discard("batt")
 
+    async def _sensor_alerts(self, t, sensors):
+        """Soglie impostate dalla pagina: un avviso quando il valore supera la soglia, uno
+        quando rientra. Senza lettura del sensore lo stato resta com'era."""
+        f = self._flags(("t", t["id"]))
+        values = {(x["type"], x["channel"]): x["value"] for x in sensors}
+        for r in self.db.sensor_rules(t["id"]):
+            v = values.get((r["type"], r["channel"]))
+            if v is None:
+                continue
+            key = f"rule{r['id']}"
+            out = v < r["value"] if r["op"] == "<" else v > r["value"]
+            what = sensor_info(r["type"], r["channel"])["label"].lower()
+            limit = f"{'sotto' if r['op'] == '<' else 'sopra'} {fmt_sensor(r['type'], r['channel'], r['value'])}"
+            if out and key not in f:
+                f.add(key)
+                await self.notify(f"🌡️ {t['label']}: {what} {fmt_sensor(r['type'], r['channel'], v)} ({limit})")
+            elif not out and key in f:
+                f.discard(key)
+                await self.notify(f"✅ {t['label']}: {what} di nuovo nella norma ({fmt_sensor(r['type'], r['channel'], v)})")
+
+    def sensors_state(self, tid, since):
+        """Ultimi valori dei sensori e storico per i grafici."""
+        latest = [{**x, **sensor_info(x["type"], x["channel"]), "key": f"{x['type']}:{x['channel']}"}
+                  for x in self.db.sensor_latest(tid)]
+        history = {}
+        for h in self.db.sensor_history(tid, since):
+            history.setdefault(f"{h['type']}:{h['channel']}", []).append([h["ts"], h["value"]])
+        return latest, history
+
     async def _tracker_fail(self, t):
         f = self._flags(("t", t["id"]))
         lim = t["offline_alert_min"] or 90
@@ -159,6 +246,38 @@ class Core:
                 msg += f"\nUltima posizione ({when}):\n{maps_link(p['lat'], p['lon'])}"
             await self.notify(msg)
 
+    def find_trackers(self, text):
+        """Dispositivi che corrispondono a un nome scritto (es. su Telegram): prima uguale al nome
+        o al contatto, poi che inizia così, poi che lo contiene. Maiuscole indifferenti."""
+        q = (text or "").strip().lower()
+        ts = self.db.trackers()
+        if not q:
+            return ts
+        for test in (lambda n: n == q, lambda n: n.startswith(q), lambda n: q in n):
+            found = [t for t in ts if test(t["label"].lower()) or test(t["contact"].lower())]
+            if found:
+                return found
+        return []
+
+    def tracker_stats(self, tid, since):
+        """Statistiche del periodo: distanza, movimento, risposte, quota, batteria."""
+        pts = self.db.positions_since(tid, since)
+        polls = self.db._all("SELECT ok FROM tracker_polls WHERE tracker_id=? AND ts>=?", (tid, since))
+        dist = moving_s = 0.0
+        for a, b in zip(pts, pts[1:]):
+            d = distance_m(a, b)
+            if d > MOVE_M / 3:          # sotto ~50 m è l'errore del GPS, non uno spostamento
+                dist += d
+                if b["ts"] - a["ts"] <= 3 * 3600:
+                    moving_s += b["ts"] - a["ts"]
+        alts = [p["alt"] for p in pts if p.get("alt") is not None]
+        batt = [p["batt_v"] for p in pts if p.get("batt_v") is not None]
+        ok = sum(1 for p in polls if p["ok"])
+        return {"points": len(pts), "km": round(dist / 1000, 2), "moving_h": round(moving_s / 3600, 1),
+                "polls": len(polls), "ok": ok, "ok_pct": round(100 * ok / len(polls)) if polls else None,
+                "alt_min": min(alts) if alts else None, "alt_max": max(alts) if alts else None,
+                "batt_first": batt[0] if batt else None, "batt_last": batt[-1] if batt else None}
+
     # ---------- ripetitori
     def repeater_password(self, name):
         r = self.db.repeater(name)
@@ -171,6 +290,7 @@ class Core:
     async def poll_repeater(self, name):
         st = await self.mesh.request_status(name, self.repeater_password(name))
         self.db.add_repeater_status(name, st is not None, st)
+        self.events.publish("state")
         await self._repeater_alerts(name, st)
         if st is not None:
             await self.poll_neighbours(name)
@@ -244,6 +364,7 @@ class Core:
         self.db.add_message(dir="in", kind=m["kind"], peer=m["peer"], peer_name=m.get("peer_name"),
                             sender=m.get("sender"), text=m["text"], snr=m.get("snr"),
                             path_len=m.get("path_len"), sender_ts=m.get("sender_ts"), status="received")
+        self.events.publish("chat")
         log.info("Messaggio ricevuto (%s %s)", m["kind"], m.get("peer_name"))
 
     def max_text_bytes(self, kind):
@@ -299,16 +420,17 @@ class Core:
             if trip_ms is not None:
                 f["trip_ms"] = trip_ms
             self.db.update_message(mid, **f)
+            self.events.publish("chat")
         try:
             if kind == "dm":
                 await self.mesh.send_text(peer, text, on_status)
             else:
-                self.db.update_message(mid, status="sending")
+                await on_status("sending")
                 ok = await self.mesh.send_channel(int(peer), text)
-                self.db.update_message(mid, status="sent" if ok else "failed")
+                await on_status("sent" if ok else "failed")
         except Exception as e:
             log.error("Invio messaggio %s: %s", mid, e)
-            self.db.update_message(mid, status="failed")
+            await on_status("failed")
 
     def chat_targets(self):
         """Con chi si può scrivere: canali della radio e contatti companion/room server."""
@@ -316,6 +438,59 @@ class Core:
         people = [{"kind": "dm", "peer": c["public_key"][:12], "name": c["name"], "type": c["type"]}
                   for c in self.mesh.contacts() if c["type"] in ("companion", "room server") and c.get("public_key")]
         return chans + people
+
+    # ---------- percorso dei pacchetti
+    def gateway_node(self):
+        si = self.mesh.self_info() if hasattr(self.mesh, "self_info") else {}
+        has_pos = si.get("adv_lat") or si.get("adv_lon")
+        return {"name": si.get("name") or "Gateway", "public_key": si.get("public_key", ""),
+                "lat": si.get("adv_lat") if has_pos else None, "lon": si.get("adv_lon") if has_pos else None}
+
+    def resolve_path(self, path, contacts=None):
+        """Prefissi dei ripetitori → [{hash, name, lat, lon, ambiguous}]. Con prefissi da un byte
+        più ripetitori possono coincidere: si sceglie quello sentito più di recente."""
+        contacts = self.mesh.contacts() if contacts is None else contacts
+        out = []
+        for h in path or []:
+            cands = [c for c in contacts if c.get("public_key", "").lower().startswith(h.lower())]
+            reps = [c for c in cands if c["type"] in ("ripetitore", "room server")] or cands
+            best = max(reps, key=lambda c: c.get("last_advert") or 0) if reps else None
+            out.append({"hash": h, "name": best["name"] if best else None,
+                        "lat": best["lat"] if best else None, "lon": best["lon"] if best else None,
+                        "ambiguous": len(reps) > 1})
+        return out
+
+    def route(self, tid, contacts=None):
+        r = self.db.last_route(tid)
+        if not r:
+            return None
+        return {"ts": r["ts"], "hops": r["hops"], "nodes": self.resolve_path(r["path"], contacts),
+                "gateway": self.gateway_node()}
+
+    # ---------- mappa della copertura
+    def coverage(self, days=30, tid=None, cell_m=250):
+        """Richieste raggruppate in celle di circa cell_m metri: risposte, richieste senza
+        risposta e salti medi. Le richieste senza risposta stanno nell'ultima posizione nota."""
+        polls = self.db.coverage_polls(int(time.time()) - days * 86400, tid)
+        if not polls:
+            return {"cells": [], "days": days, "cell_m": cell_m, "polls": 0}
+        mid = sum(p["lat"] for p in polls) / len(polls)
+        dlat = cell_m / 111320
+        dlon = cell_m / (111320 * max(0.1, math.cos(math.radians(mid))))
+        cells = {}
+        for p in polls:
+            k = (math.floor(p["lat"] / dlat), math.floor(p["lon"] / dlon))
+            c = cells.setdefault(k, {"ok": 0, "fail": 0, "hops": [], "last": 0})
+            c["ok" if p["ok"] else "fail"] += 1
+            if p["ok"] and p["hops"] is not None and p["hops"] >= 0:
+                c["hops"].append(p["hops"])
+            c["last"] = max(c["last"], p["ts"])
+        out = []
+        for (i, j), c in cells.items():
+            out.append({"bounds": [[i * dlat, j * dlon], [(i + 1) * dlat, (j + 1) * dlon]],
+                        "ok": c["ok"], "fail": c["fail"], "last": c["last"],
+                        "hops": round(sum(c["hops"]) / len(c["hops"]), 1) if c["hops"] else None})
+        return {"cells": out, "days": days, "cell_m": cell_m, "polls": len(polls)}
 
     # ---------- mappa della rete
     def network(self):
@@ -418,9 +593,13 @@ class Core:
     async def radio_watchdog(self, tick=20):
         down_since = alerted = None
         last_try = 0
+        was = None
         while True:
             await asyncio.sleep(tick)
             now = time.time()
+            if self.mesh.connected != was:
+                was = self.mesh.connected
+                self.events.publish("state")   # la pagina mostra subito radio collegata/scollegata
             if self.mesh.connected:
                 if down_since:
                     mins = max(1, round((now - down_since) / 60))
@@ -476,8 +655,12 @@ class Core:
             await asyncio.sleep(3600)
 
     # ---------- dati per interfacce
-    def tracker_state(self, t, since):
+    def tracker_state(self, t, since, contacts=None):
+        sensors, history = self.sensors_state(t["id"], since)
         return {
+            "route": self.route(t["id"], contacts),
+            "sensors": sensors,
+            "sensor_history": history,
             **t,
             "paused": bool(t["paused"]),
             "moving": self.moving.get(t["id"], False),
@@ -489,6 +672,7 @@ class Core:
 
     def state(self, hours=24):
         since = int(time.time()) - hours * 3600
+        contacts = self.mesh.contacts()
         reps = []
         for r in self.db.repeaters():
             last, good = self.db.repeater_latest(r["name"])
@@ -501,7 +685,7 @@ class Core:
             })
         return {
             "radio_connected": self.mesh.connected,
-            "trackers": [self.tracker_state(t, since) for t in self.db.trackers()],
+            "trackers": [self.tracker_state(t, since, contacts) for t in self.db.trackers()],
             "repeaters": reps,
-            "contacts": self.mesh.contacts(),
+            "contacts": contacts,
         }
