@@ -14,12 +14,19 @@ from .updater import UpdateError
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 COOKIE = "meshwatch_session"
+GUEST = {"username": "ospite", "role": "guest"}
+ROLES = {"guest": 0, "viewer": 1, "admin": 2}
 HOURS_RE = re.compile(r"^$|^([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-3]):[0-5]\d$")
 
 
 class LoginIn(BaseModel):
     username: str
     password: str
+
+
+class SetupIn(BaseModel):
+    username: str = Field(..., pattern=r"^[A-Za-z0-9_.-]{2,32}$")
+    password: str = Field(..., min_length=8, max_length=128)
 
 
 class CliIn(BaseModel):
@@ -64,6 +71,8 @@ class UserIn(BaseModel):
 
 def create_app(core, auth, web_cfg, updater=None):
     public = web_cfg.get("mode", "lan") == "public"
+    # mappa visibile senza login (sola lettura): di default sì in casa, no su Internet
+    public_map = bool(web_cfg.get("public_map", not public))
     db = core.db
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -74,16 +83,28 @@ def create_app(core, auth, web_cfg, updater=None):
                 return ip.split(",")[0].strip()
         return req.client.host if req.client else "?"
 
+    def resolve_user(req: Request):
+        """Utente collegato, ospite (se la mappa è libera) o None."""
+        return auth.user_from_token(req.cookies.get(COOKIE)) or (GUEST if public_map else None)
+
     def current_user(req: Request):
-        u = auth.user_from_token(req.cookies.get(COOKIE))
+        u = resolve_user(req)
         if not u:
             raise HTTPException(401, "login richiesto")
         return u
 
-    def admin(u=Depends(current_user)):
-        if u["role"] != "admin":
-            raise HTTPException(403, "solo amministratore")
-        return u
+    def needs(role):
+        def dep(u=Depends(current_user)):
+            if ROLES.get(u["role"], -1) < ROLES[role]:
+                # l'ospite viene mandato al login, un viewer ha già fatto il login
+                if u["role"] == "guest":
+                    raise HTTPException(401, "login richiesto")
+                raise HTTPException(403, "solo amministratore")
+            return u
+        return dep
+
+    viewer = needs("viewer")
+    admin = needs("admin")
 
     def get_tracker(tid):
         t = db.tracker(tid)
@@ -121,17 +142,33 @@ def create_app(core, auth, web_cfg, updater=None):
         return {"ok": True}
 
     @app.get("/api/me")
-    async def me(u=Depends(current_user)):
-        return {**u, "auth": auth.enabled}
+    async def me(req: Request):
+        u = resolve_user(req) or {"username": None, "role": None}
+        return {**u, "auth": auth.enabled, "setup": not auth.enabled and not public,
+                "public_map": public_map}
+
+    # Primo avvio: crea l'utente admin. Possibile solo finché non esistono utenti
+    # e mai in modalità public (lì il programma non parte senza utenti).
+    @app.post("/api/setup")
+    async def setup(body: SetupIn, req: Request, resp: Response):
+        if public or auth.enabled:
+            raise HTTPException(403, "password admin già impostata")
+        db.set_user(body.username, hash_password(body.password), "admin")
+        resp.set_cookie(COOKIE, auth.login(body.username, body.password, client_ip(req)),
+                        httponly=True, samesite="strict", secure=public, max_age=30 * 86400)
+        return {"ok": True}
 
     # ---------- stato
     @app.get("/api/state")
     async def state(hours: int = 24, u=Depends(current_user)):
-        return core.state(max(1, min(hours, 24 * 30)))
+        s = core.state(max(1, min(hours, 24 * 30)))
+        if u["role"] == "guest":
+            s["contacts"] = []   # l'ospite vede la mappa, non la rubrica della radio
+        return s
 
     # ---------- tracker
     @app.post("/api/trackers/{tid}/poll")
-    async def poll_tracker(tid: int, u=Depends(current_user)):
+    async def poll_tracker(tid: int, u=Depends(viewer)):
         get_tracker(tid)
         res = await core.poll_tracker(tid)
         return {"ok": res is not None, "result": res}
@@ -241,10 +278,8 @@ def create_app(core, auth, web_cfg, updater=None):
         if not target:
             raise HTTPException(404, "utente non trovato")
         admins = [x for x in db.users() if x["role"] == "admin"]
-        if target["role"] == "admin" and len(admins) <= 1 and len(db.users()) > 1:
+        if target["role"] == "admin" and len(admins) <= 1:
             raise HTTPException(400, "deve restare almeno un admin")
-        if public and len(db.users()) <= 1:
-            raise HTTPException(400, "in modalità public deve restare almeno un utente")
         db.delete_user(username)
         return {"ok": True}
 

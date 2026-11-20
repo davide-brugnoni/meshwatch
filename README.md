@@ -19,7 +19,7 @@ Gira su un Raspberry Pi con una radio MeshCore in modalità *Companion USB* (Hel
 - **Telegram**: posizione con pin e link Google Maps, ultima posizione, traccia, stato dei nodi, avvisi (dispositivo che non risponde, batteria bassa, ripetitore muto).
 - **Da telefono**: pagina pensata anche per lo smartphone (barra in basso Mappa · Nodi · Gestione).
 - **Aggiornamento dalla pagina**: scarica l'ultima versione da GitHub e riavvia, senza togliere la SD; se la nuova versione non parte torna da sola alla precedente.
-- **Utenti**: ruoli *admin* (gestisce tutto) e *viewer* (vede e chiede la posizione), predisposto per l'accesso da Internet tramite Cloudflare Tunnel.
+- **Accesso**: la mappa è libera in casa (sola lettura), la Gestione chiede sempre la password admin. Ruoli *admin* (gestisce tutto) e *viewer* (vede e chiede la posizione). Predisposto per l'accesso da Internet tramite Cloudflare Tunnel.
 
 | Gestione | Sistema e gateway |
 |---|---|
@@ -43,6 +43,7 @@ Nella cartella [`sd-kit/`](sd-kit/) c'è tutto per creare una scheda che si inst
 1. Scarica DietPi per Raspberry Pi (ARMv8 64-bit per Pi 3/4/5, ARMv7 per Pi 2) e scrivilo sulla SD con balenaEtcher.
 2. Doppio clic su `sd-kit/PREPARA-SD.bat`: chiede nome, password e WiFi, copia MeshWatch sulla SD e apre il config.
 3. Inserisci la SD nel Raspberry con la radio collegata e accendi: in 20–30 minuti è pronto su `http://meshwatch.local:8080`.
+4. Apri **Gestione**: la prima volta chiede di impostare la password admin.
 
 Accesso SSH con l'utente `meshwatch` (root disabilitato via SSH). Per aggiornare: dalla pagina (vedi [Aggiornamenti](#aggiornamenti)); in alternativa SD nel PC e `sd-kit/AGGIORNA-SD.bat`. Config e dati restano.
 
@@ -69,6 +70,17 @@ Copia `config.example.yaml` in `config.yaml` (con il kit SD il file è `meshwatc
 - `serial_port: auto` trova da solo la radio.
 - `telegram.token`: crealo con @BotFather. `allowed_chat_ids`: chi può usare il bot e riceve gli avvisi; `admin_chat_ids`: chi può usare il terminale. Il tuo ID te lo dà @userinfobot.
 - Le sezioni `tracker` e `repeaters` vengono importate solo al primo avvio: poi dispositivi, ripetitori e utenti si gestiscono dalla pagina (scheda **Gestione**).
+
+### Chi vede cosa
+
+| | Mappa e stato | Chiedere la posizione | Gestione |
+|---|---|---|---|
+| senza login (in casa) | sì | no | no |
+| utente *viewer* | sì | sì | no |
+| utente *admin* | sì | sì | sì |
+
+- **Primo accesso**: finché non c'è un admin, la pagina mostra la mappa e aprendo **Gestione** chiede di creare la password admin (almeno 8 caratteri). Chi aggiorna da una versione precedente senza utenti trova la stessa richiesta.
+- **Mappa libera**: `web.public_map` nel config. Di default è `true` in modalità `lan` e `false` in modalità `public`. Con `false` serve il login anche per la mappa.
 
 ### Comandi Telegram
 
@@ -121,12 +133,12 @@ L'aggiornamento da SD (`AGGIORNA-SD.bat`) resta possibile: lascia sulla SD il fi
 
 ## Accesso da Internet
 
-1. Crea un utente admin dalla pagina (Gestione → Utenti): da quel momento la pagina chiede il login.
+1. Imposta la password admin dalla pagina (al primo accesso a Gestione).
 2. Nel config: `web.mode: public` e `web.host: 127.0.0.1`.
 3. Cloudflare Zero Trust → *Tunnels* → crea un tunnel, installa `cloudflared` sul Raspberry con il comando proposto, *Public hostname* `mesh.tuodominio.it` → `http://localhost:8080`.
 4. Consigliato: *Access → Applications* con policy per email, come secondo lucchetto.
 
-In modalità `public` il login è obbligatorio, i cookie viaggiano solo su HTTPS e dopo 8 tentativi errati l'IP viene bloccato per 15 minuti. La pagina mostra la posizione di persone in tempo reale: non esporla mai senza login.
+In modalità `public` il login è obbligatorio (anche per la mappa, salvo `public_map: true`), i cookie viaggiano solo su HTTPS e dopo 8 tentativi errati l'IP viene bloccato per 15 minuti. La pagina mostra la posizione di persone in tempo reale: non esporla senza login. Per far vedere la mappa a qualcuno da fuori, meglio creargli un utente *viewer* che usare `public_map: true`.
 
 ## Limiti
 

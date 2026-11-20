@@ -91,6 +91,9 @@
   #login { position:fixed; inset:0; background:var(--bg); display:none; align-items:center; justify-content:center; z-index:2000; }
   #login form { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:26px; width:min(320px, calc(100% - 32px)); display:flex; flex-direction:column; gap:10px; }
   #login input { padding:9px; }
+  #login form[hidden] { display:none; }
+  #login p { margin:0; font-size:13.5px; color:var(--mute); line-height:1.45; }
+  body.guest .guest-hide { display:none !important; }
   #toast { position:fixed; bottom:calc(16px + var(--nav-h, 0px) + env(safe-area-inset-bottom)); left:50%; transform:translateX(-50%); background:var(--acc); color:#06130e;
            padding:9px 16px; border-radius:8px; display:none; z-index:3000; font-size:14px; max-width:calc(100% - 32px); text-align:center; }
   /* barra in basso (solo telefono) */
@@ -116,7 +119,7 @@
     :root { --nav-h: 54px; }
     header { gap:8px 10px; padding:8px 12px; padding-top:max(8px, env(safe-area-inset-top)); }
     header h1 { font-size:16px; }
-    body.admin header .tabs, #whoami { display:none !important; }
+    header .tabs, #whoami, #login-btn { display:none !important; }
     #range { padding:5px 6px; }
     main { grid-template-columns: 1fr; }
     aside { display:none; border-left:none; padding:12px; padding-bottom:24px; -webkit-overflow-scrolling:touch; }
@@ -149,7 +152,7 @@
 <header>
   <h1>MeshWatch</h1>
   <span class="status" id="radio"><span class="dot"></span>…</span>
-  <nav class="tabs admin-only">
+  <nav class="tabs">
     <button id="tab-map" class="on">Mappa</button>
     <button id="tab-admin">Gestione</button>
   </nav>
@@ -159,6 +162,7 @@
     <option value="72">3 giorni</option><option value="168">7 giorni</option>
   </select>
   <span class="muted" id="whoami"></span>
+  <button id="login-btn" style="display:none">Accedi</button>
   <button id="logout" style="display:none">Esci</button>
 </header>
 
@@ -196,7 +200,7 @@
       <p class="note">Ogni comando passa via radio: la risposta può richiedere 5–30 secondi.</p>
     </section>
 
-    <section class="card">
+    <section class="card guest-hide">
       <h2>Contatti visti dal gateway</h2>
       <p class="mono" id="contacts" style="margin:0"></p>
     </section>
@@ -302,16 +306,28 @@
 <nav id="mnav">
   <button data-t="map" class="on"><svg viewBox="0 0 24 24"><path d="M9 4 3 6.5v13.5l6-2.5 6 2.5 6-2.5V4l-6 2.5z"/><path d="M9 4v13.5M15 6.5V20"/></svg>Mappa</button>
   <button data-t="list"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"/><path d="M8.5 15.5a5 5 0 0 1 0-7M15.5 8.5a5 5 0 0 1 0 7M5.6 18.4a9 9 0 0 1 0-12.8M18.4 5.6a9 9 0 0 1 0 12.8"/></svg>Nodi</button>
-  <button data-t="admin" class="admin-only"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.9 4.9 7 7M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1 7 17M17 7l2.1-2.1"/></svg>Gestione</button>
+  <button data-t="admin"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.9 4.9 7 7M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1 7 17M17 7l2.1-2.1"/></svg>Gestione</button>
 </nav>
 
 <div id="login">
   <form id="login-form">
     <strong>MeshWatch</strong>
+    <p id="login-msg" hidden>Per la gestione serve l'accesso.</p>
     <input name="username" placeholder="Utente" autocomplete="username" required>
     <input name="password" type="password" placeholder="Password" autocomplete="current-password" required>
     <button class="primary">Entra</button>
+    <button type="button" class="login-cancel">Torna alla mappa</button>
     <span class="muted" id="login-err"></span>
+  </form>
+  <form id="setup-form" hidden>
+    <strong>Imposta la password admin</strong>
+    <p>La gestione (dispositivi, gateway, sistema, aggiornamenti, terminale) è protetta da password. Crea l'utente amministratore: servirà per entrare in Gestione.</p>
+    <input name="username" placeholder="Utente" value="admin" pattern="[A-Za-z0-9_.\-]{2,32}" autocomplete="username" required>
+    <input name="password" type="password" placeholder="Password (almeno 8 caratteri)" minlength="8" autocomplete="new-password" required>
+    <input name="password2" type="password" placeholder="Ripeti la password" minlength="8" autocomplete="new-password" required>
+    <button class="primary">Salva ed entra</button>
+    <button type="button" class="login-cancel">Torna alla mappa</button>
+    <span class="muted" id="setup-err"></span>
   </form>
 </div>
 <div id="toast"></div>
@@ -383,7 +399,28 @@ async function action(btn, fn, okMsg) {
 }
 
 // ---------- login
-function showLogin() { $('login').style.display = 'flex'; }
+// la mappa può essere libera: in quel caso il login si può chiudere
+function showLogin() {
+  const setup = !!(me && me.setup), canClose = !!(me && me.role);
+  $('login-form').hidden = setup; $('setup-form').hidden = !setup;
+  $('login-msg').hidden = !canClose;
+  document.querySelectorAll('.login-cancel').forEach(b => b.hidden = !canClose);
+  $('login').style.display = 'flex';
+  const f = setup ? $('setup-form') : $('login-form');
+  setTimeout(() => f.querySelector(setup ? 'input[type=password]' : 'input').focus(), 50);
+}
+function hideLogin() { $('login').style.display = 'none'; if (document.body.classList.contains('tab-admin')) setTab('map'); }
+document.querySelectorAll('.login-cancel').forEach(b => b.onclick = hideLogin);
+$('login-btn').onclick = showLogin;
+$('setup-form').onsubmit = async e => {
+  e.preventDefault();
+  const f = e.target, err = $('setup-err');
+  if (f.password.value !== f.password2.value) { err.textContent = 'Le due password non coincidono'; return; }
+  const r = await fetch('/api/setup', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: f.username.value.trim(), password: f.password.value }) });
+  if (!r.ok) { const j = await r.json().catch(() => ({})); err.textContent = Array.isArray(j.detail) ? 'Utente (2-32 lettere/numeri) o password (min 8) non validi' : (j.detail || 'Errore'); return; }
+  location.hash = '#gestione'; location.reload();
+};
 $('login-form').onsubmit = async e => {
   e.preventDefault();
   const f = new FormData(e.target);
@@ -397,6 +434,7 @@ $('logout').onclick = async () => { await fetch('/api/logout', { method: 'POST' 
 // ---------- schede
 // 'map' e 'list' su computer sono la stessa vista (mappa + colonna); sul telefono sono separate
 function setTab(t) {
+  if (t === 'admin' && (!me || me.role !== 'admin')) { showLogin(); return; }
   history.replaceState(null, '', t === 'admin' ? '#gestione' : t === 'list' ? '#nodi' : '#');
   document.body.classList.toggle('tab-admin', t === 'admin');
   document.body.classList.toggle('tab-list', t === 'list');
@@ -442,7 +480,7 @@ function trackerCard(t) {
   const poll = el('button', { className: 'primary', textContent: 'Chiedi posizione' });
   poll.onclick = () => action(poll, () => post(`/api/trackers/${t.id}/poll`),
     r => r.ok ? (r.result.lat != null ? `Posizione di ${t.label} ricevuta` : 'Risposta ricevuta, GPS senza fix') : `${t.label} non ha risposto`);
-  const row = el('div', { className: 'row' }, poll);
+  const row = el('div', { className: 'row' }, me && me.role !== 'guest' ? poll : null);
   if (p) {
     row.append(el('a', { className: 'btn', href: mapsUrl(p.lat, p.lon), target: '_blank', rel: 'noopener', textContent: 'Google Maps' }));
     const c = el('button', { textContent: 'Centra' }); c.onclick = () => focusTracker(t); row.append(c);
@@ -632,7 +670,6 @@ async function loadAdmin() {
   });
   // utenti
   const ul = $('adm-users'); ul.replaceChildren();
-  if (!adm.users.length) ul.append(el('p', { className: 'muted', textContent: 'Nessun utente: la pagina è aperta a chiunque sia sulla rete di casa.' }));
   adm.users.forEach(u => {
     const pw = el('button', { className: 'small', textContent: 'Cambia password' }); pw.onclick = () => userForm(u);
     const role = el('button', { className: 'small', textContent: u.role === 'admin' ? 'Rendi viewer' : 'Rendi admin' });
@@ -643,10 +680,11 @@ async function loadAdmin() {
       el('span', { className: 'info', textContent: u.role }), el('span', { className: 'acts' }, pw, role, rm)));
   });
   const note = $('users-note');
-  note.className = adm.users.length ? 'note' : 'note warn';
-  note.textContent = adm.users.length ? 'Gli utenti viewer vedono mappa e stato e possono chiedere la posizione, ma non gestiscono nulla.'
-    : 'Creando il primo utente (deve essere admin) la pagina chiederà il login anche in casa. È necessario prima di aprirla su Internet.';
+  note.className = 'note';
+  note.textContent = 'Admin gestisce tutto. Viewer vede mappa e stato e può chiedere la posizione, ma non gestisce nulla. '
+    + (me.public_map ? 'La mappa è visibile anche senza login (sola lettura).' : 'Senza login la mappa non è visibile.');
 }
+
 
 function trackerForm(t) {
   const f = $('form-tracker');
@@ -823,9 +861,14 @@ async function refresh() {
 }
 async function init() {
   try { me = await api('/api/me'); } catch (e) { return; }
+  if (!me.role) { showLogin(); return; }   // mappa non libera: serve il login
+  const guest = me.role === 'guest';
   document.body.classList.toggle('admin', me.role === 'admin');
-  $('logout').style.display = me.auth ? '' : 'none';
-  $('whoami').textContent = me.auth ? me.username : '';
+  document.body.classList.toggle('guest', guest);
+  $('logout').style.display = guest ? 'none' : '';
+  $('login-btn').style.display = guest ? '' : 'none';
+  $('login-btn').textContent = me.setup ? 'Imposta password' : 'Accedi';
+  $('whoami').textContent = guest ? '' : me.username;
   await refresh();
   if (me.role === 'admin' && location.hash === '#gestione') setTab('admin');
   else if (location.hash === '#nodi' && isPhone()) setTab('list');

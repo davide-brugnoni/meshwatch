@@ -69,17 +69,38 @@ def main():
     check(not db.repeaters(), "import non ripetuto ai riavvii")
 
     c = TestClient(create_app(core, Auth(db), {"mode": "lan"}))
-    check(c.get("/api/me").json()["role"] == "admin", "senza utenti la pagina in lan è aperta")
+    me = c.get("/api/me").json()
+    check(me["role"] == "guest" and me["setup"], "senza utenti: mappa libera, gestione da impostare")
+    check(c.get("/api/state").status_code == 200, "mappa libera in lan")
+    check(c.get("/api/admin").status_code == 401 and c.post("/api/update/apply").status_code == 401
+          and c.post("/api/system/reboot").status_code == 401, "gestione chiusa anche senza utenti")
+    check(c.post("/api/trackers/1/poll").status_code == 401, "l'ospite non chiede la posizione")
+    check(c.post("/api/users", json={"username": "x1", "password": "segreto12", "role": "admin"}).status_code == 401,
+          "senza login non si creano utenti")
+    check(c.post("/api/setup", json={"username": "admin1", "password": "corta"}).status_code == 422,
+          "password admin di almeno 8 caratteri")
+    check(c.post("/api/setup", json={"username": "admin1", "password": "segreto1"}).json()["ok"], "primo avvio: crea admin")
+    check(TestClient(create_app(core, Auth(db), {"mode": "lan"})).post(
+        "/api/setup", json={"username": "evil", "password": "segreto99"}).status_code == 403, "setup una volta sola")
+    check(c.get("/api/me").json()["role"] == "admin", "dopo il setup si è già dentro come admin")
     check(c.post("/api/trackers/1/poll").json()["ok"], "richiesta posizione")
     check(c.post("/api/trackers", json={"contact": "X", "active_hours": "25:00-1"}).status_code == 400,
           "validazione fascia oraria")
     check(c.post("/api/repeaters", json={"name": "Ripetitore-1", "password": "pw"}).json()["ok"], "aggiunta ripetitore")
     check(c.post("/api/cli", json={"node": "Ripetitore-1", "cmd": "reboot"}).json().get("needs_confirm"),
           "conferma per comandi pericolosi")
-    check(c.post("/api/users", json={"username": "fam", "password": "123456", "role": "viewer"}).status_code == 400,
-          "il primo utente deve essere admin")
-    c.post("/api/users", json={"username": "admin1", "password": "segreto1", "role": "admin"})
-    check(c.get("/api/state").status_code == 401, "dopo il primo utente serve il login")
+    anon = TestClient(create_app(core, Auth(db), {"mode": "lan"}))
+    st = anon.get("/api/state")
+    check(st.status_code == 200 and st.json()["contacts"] == [], "mappa libera senza login, senza rubrica")
+    check(anon.get("/api/admin").status_code == 401, "gestione con login")
+    closed = TestClient(create_app(core, Auth(db), {"mode": "lan", "public_map": False}))
+    check(closed.get("/api/state").status_code == 401 and closed.get("/api/me").json()["role"] is None,
+          "public_map: false chiude la mappa")
+    pub = TestClient(create_app(core, Auth(db), {"mode": "public"}))
+    check(pub.get("/api/state").status_code == 401, "in modalità public la mappa chiede il login")
+    check(pub.post("/api/setup", json={"username": "x2", "password": "segreto12"}).status_code == 403,
+          "niente setup in modalità public")
+    c.post("/api/logout")
     c.post("/api/login", json={"username": "admin1", "password": "segreto1"})
     check(c.get("/api/state").status_code == 200, "login")
     c.post("/api/users", json={"username": "fam", "password": "123456", "role": "viewer"})
@@ -101,6 +122,8 @@ def main():
           and db.last_position(1) == last, "cancella tutte le tracce")
     v = TestClient(create_app(core, Auth(db), {"mode": "lan"}))
     v.post("/api/login", json={"username": "fam", "password": "123456"})
+    check(v.post("/api/trackers/1/poll").json()["ok"] and v.get("/api/admin").status_code == 403,
+          "il viewer chiede la posizione ma non gestisce")
     check(v.delete("/api/track").status_code == 403, "un viewer non cancella le tracce")
 
     async def sched():

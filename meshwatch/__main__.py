@@ -27,7 +27,7 @@ async def run(cfg):
     auth = Auth(db)
     if web_cfg.get("mode") == "public" and not auth.enabled:
         sys.exit("web.mode è 'public' ma non ci sono utenti: crea prima un utente admin dalla pagina "
-                 "in modalità lan (Gestione → Utenti), poi passa a public.")
+                 "in modalità lan (al primo accesso a Gestione chiede la password admin), poi passa a public.")
 
     tg = cfg.get("telegram") or {}
     if tg.get("token") and "BotFather" not in tg["token"]:

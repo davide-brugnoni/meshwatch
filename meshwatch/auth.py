@@ -1,4 +1,11 @@
-"""Login con utenti e ruoli (admin / viewer), sessioni firmate in cookie.
+"""Login con utenti e ruoli, sessioni firmate in cookie.
+
+Ruoli, dal meno al più potente:
+    guest   senza login: vede la mappa e lo stato (se la mappa è libera), non chiede posizioni
+    viewer  come guest, in più chiede la posizione
+    admin   gestisce tutto (dispositivi, utenti, gateway, sistema, aggiornamenti, terminale)
+
+La gestione richiede sempre un utente admin: finché non esiste, la pagina propone di crearlo.
 
 Le password nel config sono salvate come hash:
     python -m meshwatch hashpw
@@ -66,8 +73,6 @@ class Auth:
 
     def user_from_token(self, token):
         """Ritorna {"username","role"} o None."""
-        if not self.enabled:
-            return {"username": "locale", "role": "admin"}
         if not token or "." not in token:
             return None
         payload, sig = token.rsplit(".", 1)
