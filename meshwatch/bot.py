@@ -152,14 +152,17 @@ class Bot:
             await self.track(chat, t)
         elif action == "pause":
             self.core.db.update_tracker(t["id"], paused=1)
+            self.core.audit(f"telegram:{chat.id}", "pausa tracciamento", t["label"])
             await chat.send_message(f"⏸ Tracciamento di {t['label']} sospeso.")
         elif action == "resume":
             self.core.db.update_tracker(t["id"], paused=0)
             self.core.schedule_now(t["id"])
+            self.core.audit(f"telegram:{chat.id}", "ripresa tracciamento", t["label"])
             await chat.send_message(f"▶️ Tracciamento di {t['label']} riattivato.")
         elif action == "interval":
             m = max(5, min(int(arg), 720))
             self.core.db.update_tracker(t["id"], interval_min=m)
+            self.core.audit(f"telegram:{chat.id}", "intervallo", f"{t['label']}: {m} min")
             self.core.next_due[t["id"]] = time.time() + m * 60
             await chat.send_message(f"{t['label']}: posizione ogni {m} minuti.")
 
@@ -270,6 +273,7 @@ class Bot:
     async def advert(self, update: Update, ctx):
         if self.ok(update):
             await self.core.mesh.send_advert()
+            self.core.audit(f"telegram:{update.effective_chat.id}", "advert gateway")
             await update.message.reply_text("Advert inviato.")
 
     # ---------- pulsanti

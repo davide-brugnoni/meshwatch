@@ -46,7 +46,6 @@ class Auth:
             secret = secrets.token_hex(32)
             db.set("session_secret", secret)
         self.secret = secret.encode()
-        self.failures = {}   # ip -> (count, first_ts)
 
     @property
     def enabled(self):
@@ -55,17 +54,26 @@ class Auth:
     def _sign(self, data):
         return hmac.new(self.secret, data, hashlib.sha256).hexdigest()
 
+    MAX_FAILURES = 8
+    BLOCK_SECONDS = 900
+
+    def blocked(self, ip):
+        """True se l'IP ha sbagliato troppe volte negli ultimi 15 minuti.
+        Il conteggio è nel database: un riavvio non lo azzera."""
+        n, t0 = self.db.login_failures(ip)
+        return n >= self.MAX_FAILURES and time.time() - t0 <= self.BLOCK_SECONDS
+
     def login(self, username, password, ip):
-        n, t0 = self.failures.get(ip, (0, time.time()))
-        if time.time() - t0 > 900:
-            n, t0 = 0, time.time()
-        if n >= 8:
+        n, t0 = self.db.login_failures(ip)
+        if not t0 or time.time() - t0 > self.BLOCK_SECONDS:
+            n, t0 = 0, int(time.time())
+        if n >= self.MAX_FAILURES:
             return None   # troppi tentativi: blocco 15 minuti
         u = self.db.user(username)
         if not u or not check_password(password, u.get("password_hash", "")):
-            self.failures[ip] = (n + 1, t0)
+            self.db.set_login_failures(ip, n + 1, t0)
             return None
-        self.failures.pop(ip, None)
+        self.db.clear_login_failures(ip)
         payload = base64.urlsafe_b64encode(json.dumps(
             {"u": username, "h": u["password_hash"][-8:],
              "exp": int(time.time()) + SESSION_DAYS * 86400}).encode())

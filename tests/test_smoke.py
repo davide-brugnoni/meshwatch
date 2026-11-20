@@ -126,6 +126,23 @@ def main():
           "il viewer chiede la posizione ma non gestisce")
     check(v.delete("/api/track").status_code == 403, "un viewer non cancella le tracce")
 
+    # sicurezza: blocco dei tentativi persistente e registro attività
+    for _ in range(8):
+        anon.post("/api/login", json={"username": "admin1", "password": "sbagliata"})
+    check(anon.post("/api/login", json={"username": "admin1", "password": "segreto1"}).status_code == 429,
+          "dopo 8 errori l'IP è bloccato")
+    restarted = TestClient(create_app(core, Auth(db), {"mode": "lan"}))
+    check(restarted.post("/api/login", json={"username": "admin1", "password": "segreto1"}).status_code == 429,
+          "il blocco resta dopo un riavvio")
+    db.clear_login_failures("testclient")
+    log_rows = c.get("/api/audit").json()
+    acts = [r["action"] for r in log_rows]
+    check("IP bloccato per 15 minuti" in acts and "login fallito" in acts and "login" in acts
+          and "password admin impostata (primo accesso)" in acts and "tracce cancellate" in acts,
+          "registro attività")
+    check(anon.get("/api/audit").status_code == 401 and v.get("/api/audit").status_code == 403,
+          "registro solo per admin")
+
     # intervallo adattivo
     from meshwatch.core import distance_m
     check(abs(distance_m({"lat": 45.0, "lon": 9.0}, {"lat": 45.001, "lon": 9.0}) - 111) < 2, "distanza in metri")

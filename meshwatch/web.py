@@ -92,7 +92,10 @@ def create_app(core, auth, web_cfg, updater=None):
         u = resolve_user(req)
         if not u:
             raise HTTPException(401, "login richiesto")
-        return u
+        return {**u, "ip": client_ip(req)}
+
+    def audit(u, action, detail=""):
+        core.audit(u["username"], action, detail, u.get("ip", ""))
 
     def needs(role):
         def dep(u=Depends(current_user)):
@@ -130,9 +133,16 @@ def create_app(core, auth, web_cfg, updater=None):
     # ---------- sessione
     @app.post("/api/login")
     async def login(body: LoginIn, req: Request, resp: Response):
-        token = auth.login(body.username, body.password, client_ip(req))
+        ip = client_ip(req)
+        if auth.blocked(ip):
+            raise HTTPException(429, "troppi tentativi errati: riprova tra 15 minuti")
+        token = auth.login(body.username, body.password, ip)
         if not token:
+            core.audit(body.username[:32], "login fallito", "", ip)
+            if auth.blocked(ip):
+                core.audit(body.username[:32], "IP bloccato per 15 minuti", "troppi tentativi errati", ip)
             raise HTTPException(401, "credenziali errate")
+        core.audit(body.username, "login", "", ip)
         resp.set_cookie(COOKIE, token, httponly=True, samesite="strict",
                         secure=public, max_age=30 * 86400)
         return {"ok": True}
@@ -155,6 +165,7 @@ def create_app(core, auth, web_cfg, updater=None):
         if public or auth.enabled:
             raise HTTPException(403, "password admin già impostata")
         db.set_user(body.username, hash_password(body.password), "admin")
+        core.audit(body.username, "password admin impostata (primo accesso)", "", client_ip(req))
         resp.set_cookie(COOKIE, auth.login(body.username, body.password, client_ip(req)),
                         httponly=True, samesite="strict", secure=public, max_age=30 * 86400)
         return {"ok": True}
@@ -185,6 +196,7 @@ def create_app(core, auth, web_cfg, updater=None):
         f["paused"] = 1 if f.get("paused") else 0
         tid = db.add_tracker(**f)
         core.schedule_now(tid)
+        audit(u, "dispositivo aggiunto", f["label"])
         return {"ok": True, "id": tid}
 
     @app.put("/api/trackers/{tid}")
@@ -198,6 +210,7 @@ def create_app(core, auth, web_cfg, updater=None):
         if "paused" in f:
             f["paused"] = 1 if f["paused"] else 0
         db.update_tracker(tid, **f)
+        audit(u, "dispositivo modificato", old["label"] + ": " + ", ".join(f"{k}={v}" for k, v in f.items()))
         if "paused" in f and old["paused"] and not f["paused"]:
             core.schedule_now(tid)                 # ripreso: chiede subito
         elif "interval_min" in f or "moving_interval_min" in f:
@@ -206,19 +219,23 @@ def create_app(core, auth, web_cfg, updater=None):
 
     @app.delete("/api/trackers/{tid}")
     async def delete_tracker(tid: int, u=Depends(admin)):
-        get_tracker(tid)
+        audit(u, "dispositivo eliminato", get_tracker(tid)["label"])
         db.delete_tracker(tid)
         core.next_due.pop(tid, None)
         return {"ok": True}
 
     @app.delete("/api/trackers/{tid}/track")
     async def clear_tracker_track(tid: int, keep_last: bool = True, u=Depends(admin)):
-        get_tracker(tid)
-        return {"ok": True, "deleted": db.clear_track(tid, keep_last)}
+        t = get_tracker(tid)
+        n = db.clear_track(tid, keep_last)
+        audit(u, "traccia cancellata", f"{t['label']}: {n} punti")
+        return {"ok": True, "deleted": n}
 
     @app.delete("/api/track")
     async def clear_all_tracks(keep_last: bool = True, u=Depends(admin)):
-        return {"ok": True, "deleted": db.clear_track(None, keep_last)}
+        n = db.clear_track(None, keep_last)
+        audit(u, "tracce cancellate", f"tutti i dispositivi: {n} punti")
+        return {"ok": True, "deleted": n}
 
     # ---------- ripetitori
     @app.post("/api/repeaters/poll")
@@ -232,11 +249,13 @@ def create_app(core, auth, web_cfg, updater=None):
         # password vuota in modifica = lascia quella che c'era
         pw = body.password if (body.password or not old) else old["password"]
         db.set_repeater(body.name, pw)
+        audit(u, "ripetitore modificato" if old else "ripetitore aggiunto", body.name)
         return {"ok": True}
 
     @app.delete("/api/repeaters/{name}")
     async def delete_repeater(name: str, u=Depends(admin)):
         db.delete_repeater(name)
+        audit(u, "ripetitore rimosso", name)
         return {"ok": True}
 
     # ---------- amministrazione
@@ -260,6 +279,7 @@ def create_app(core, auth, web_cfg, updater=None):
         if not db.users() and role != "admin":
             raise HTTPException(400, "il primo utente deve essere admin")
         db.set_user(body.username, hash_password(body.password), role)
+        audit(u, "utente creato", f"{body.username} ({role})")
         return {"ok": True, "first": len(db.users()) == 1}
 
     @app.put("/api/users/{username}")
@@ -271,6 +291,8 @@ def create_app(core, auth, web_cfg, updater=None):
         if body.role == "viewer" and target["role"] == "admin" and len(admins) <= 1:
             raise HTTPException(400, "deve restare almeno un admin")
         db.set_user(username, hash_password(body.password) if body.password else None, body.role)
+        audit(u, "utente modificato", username + (" (nuova password)" if body.password else "")
+              + (f" (ruolo {body.role})" if body.role else ""))
         return {"ok": True}
 
     @app.delete("/api/users/{username}")
@@ -282,6 +304,7 @@ def create_app(core, auth, web_cfg, updater=None):
         if target["role"] == "admin" and len(admins) <= 1:
             raise HTTPException(400, "deve restare almeno un admin")
         db.delete_user(username)
+        audit(u, "utente eliminato", username)
         return {"ok": True}
 
     # ---------- gateway
@@ -316,12 +339,16 @@ def create_app(core, auth, web_cfg, updater=None):
             lat=body.lat, lon=body.lon, share_location=body.share_location,
             tx_power=body.tx_power if body.tx_power != cur.get("tx_power") else None,
             radio=radio)
+        audit(u, "gateway configurato", ", ".join(f"{k}={v}" for k, v in body.model_dump(exclude_none=True).items()
+                                                   if k != "confirm_radio")
+              + (" — errori: " + ", ".join(errors) if errors else ""))
         if errors:
             raise HTTPException(500, "non applicato: " + ", ".join(errors))
         return {"ok": True, "radio_changed": radio is not None}
 
     @app.post("/api/gateway/reboot")
     async def gateway_reboot(u=Depends(admin)):
+        audit(u, "riavvio gateway")
         await core.mesh.gateway_reboot()
         return {"ok": True}
 
@@ -339,6 +366,7 @@ def create_app(core, auth, web_cfg, updater=None):
         if not await system.can_sudo(action):
             raise HTTPException(403, "permesso mancante: esegui una volta il comando indicato nel README")
         import asyncio
+        audit(u, "riavvio Raspberry" if action == "reboot" else "spegnimento Raspberry")
         asyncio.create_task(system.run_later(action))
         return {"ok": True}
 
@@ -365,13 +393,19 @@ def create_app(core, auth, web_cfg, updater=None):
             await get_updater().start()
         except UpdateError as e:
             raise HTTPException(400, str(e))
+        audit(u, "aggiornamento avviato")
         return {"ok": True}
 
     # ---------- varie
     @app.post("/api/advert")
     async def advert(u=Depends(admin)):
         await core.mesh.send_advert()
+        audit(u, "advert gateway")
         return {"ok": True}
+
+    @app.get("/api/audit")
+    async def audit_log(u=Depends(admin)):
+        return db.audit(300)
 
     @app.get("/api/cli/{node}")
     async def cli_history(node: str, u=Depends(admin)):

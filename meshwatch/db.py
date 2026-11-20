@@ -42,6 +42,13 @@ class DB:
                 CREATE TABLE IF NOT EXISTS users (
                     username TEXT PRIMARY KEY, password_hash TEXT NOT NULL, role TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS login_failures (
+                    ip TEXT PRIMARY KEY, count INTEGER, first_ts INTEGER
+                );
+                CREATE TABLE IF NOT EXISTS audit (
+                    ts INTEGER, user TEXT, ip TEXT, action TEXT, detail TEXT
+                );
+                CREATE INDEX IF NOT EXISTS i_audit_ts ON audit(ts);
                 CREATE INDEX IF NOT EXISTS i_pos_ts ON positions(ts);
                 CREATE INDEX IF NOT EXISTS i_rep ON repeater_status(name, ts);
                 """
@@ -205,6 +212,28 @@ class DB:
 
     def delete_user(self, username):
         self._exec("DELETE FROM users WHERE username=?", (username,))
+
+    # ---------- tentativi di login falliti (restano anche dopo un riavvio)
+    def login_failures(self, ip):
+        r = self._one("SELECT count, first_ts FROM login_failures WHERE ip=?", (ip,))
+        return (r["count"], r["first_ts"]) if r else (0, None)
+
+    def set_login_failures(self, ip, count, first_ts):
+        self._exec("INSERT OR REPLACE INTO login_failures VALUES (?,?,?)", (ip, count, first_ts))
+
+    def clear_login_failures(self, ip=None):
+        if ip is None:
+            self._exec("DELETE FROM login_failures WHERE first_ts < ?", (int(time.time()) - 86400,))
+        else:
+            self._exec("DELETE FROM login_failures WHERE ip=?", (ip,))
+
+    # ---------- registro attività
+    def add_audit(self, user, action, detail="", ip=""):
+        self._exec("INSERT INTO audit VALUES (?,?,?,?,?)",
+                   (int(time.time()), user or "", ip or "", action, (detail or "")[:300]))
+
+    def audit(self, limit=200):
+        return self._all("SELECT * FROM audit ORDER BY rowid DESC LIMIT ?", (limit,))
 
     # ---------- terminale
     def add_cli(self, user, node, cmd, reply):

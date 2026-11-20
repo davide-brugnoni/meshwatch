@@ -59,6 +59,13 @@ class Core:
         self.moving = {}             # tracker_id -> True se all'ultima posizione si stava spostando
         db.seed_from_config(cfg)
 
+    # ---------- registro attività (pagina e Telegram)
+    def audit(self, user, action, detail="", ip=""):
+        try:
+            self.db.add_audit(user, action, detail, ip)
+        except Exception as e:
+            log.error("Registro attività: %s", e)
+
     # ---------- avvisi
     async def notify(self, text):
         for n in self.notifiers:
@@ -197,6 +204,7 @@ class Core:
             raise RuntimeError("radio gateway non collegata")
         reply = await self.mesh.cli(name, self.repeater_password(name), cmd)
         self.db.add_cli(user, name, cmd, reply)
+        self.audit(user, "terminale", f"{name}: {cmd}")
         log.info("CLI %s @%s: %s -> %s", user, name, cmd, reply)
         return reply
 

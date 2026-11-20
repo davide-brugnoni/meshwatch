@@ -56,6 +56,11 @@
   .grid { display:grid; grid-template-columns: repeat(3, 1fr); gap:4px 10px; margin-top:6px; }
   .grid div span { display:block; color:var(--mute); font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
   svg.spark { width:100%; height:34px; margin-top:6px; display:block; }
+  .audit { max-height:320px; overflow-y:auto; font-size:12.5px; display:flex; flex-direction:column; gap:3px; }
+  .audit div { display:grid; grid-template-columns:96px 110px 1fr; gap:8px; padding:3px 0; border-bottom:1px solid var(--line); }
+  .audit .who { color:var(--mute); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .audit .bad { color:var(--warn); }
+  @media (max-width: 820px) { .audit div { grid-template-columns:80px 1fr; } .audit .what { grid-column:1 / -1; } }
   .metric-tabs { display:flex; gap:4px; margin-top:8px; flex-wrap:wrap; }
   .metric-tabs button { font-size:12px; padding:3px 8px; }
   .metric-tabs button.on { border-color:var(--acc); color:var(--acc); }
@@ -306,6 +311,12 @@
     </form>
     <p class="note" id="users-note"></p>
   </section>
+
+  <section class="card">
+    <h2>Registro attività</h2>
+    <div class="audit mono" id="adm-audit"><p class="muted">Caricamento…</p></div>
+    <p class="note">Accessi, tentativi falliti e azioni di gestione dalla pagina e da Telegram (ultime 300).</p>
+  </section>
 </div></div>
 
 <nav id="mnav">
@@ -431,7 +442,7 @@ $('login-form').onsubmit = async e => {
   const f = new FormData(e.target);
   const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username: f.get('username'), password: f.get('password') }) });
-  if (!r.ok) { $('login-err').textContent = 'Credenziali errate'; return; }
+  if (!r.ok) { const j = await r.json().catch(() => ({})); $('login-err').textContent = r.status === 429 ? j.detail : 'Credenziali errate'; return; }
   location.reload();
 };
 $('logout').onclick = async () => { await fetch('/api/logout', { method: 'POST' }); location.reload(); };
@@ -713,6 +724,22 @@ async function loadAdmin() {
   note.className = 'note';
   note.textContent = 'Admin gestisce tutto. Viewer vede mappa e stato e può chiedere la posizione, ma non gestisce nulla. '
     + (me.public_map ? 'La mappa è visibile anche senza login (sola lettura).' : 'Senza login la mappa non è visibile.');
+  loadAudit();
+}
+
+async function loadAudit() {
+  let rows; try { rows = await api('/api/audit'); } catch (e) { return; }
+  const box = $('adm-audit'); box.replaceChildren();
+  if (!rows.length) box.append(el('p', { className: 'muted', textContent: 'Nessuna attività registrata.' }));
+  rows.forEach(r => {
+    const d = new Date(r.ts * 1000);
+    const when = d.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' }) + ' ' + d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+    const bad = /fallito|bloccato/.test(r.action);
+    box.append(el('div', {},
+      el('span', { className: 'who', textContent: when }),
+      el('span', { className: 'who', title: r.ip ? `${r.user} da ${r.ip}` : r.user, textContent: r.user || '—' }),
+      el('span', { className: 'what' + (bad ? ' bad' : ''), textContent: r.action + (r.detail ? ' · ' + r.detail : '') + (r.ip ? ` (${r.ip})` : '') })));
+  });
 }
 
 
