@@ -49,6 +49,9 @@ jobs:
       - name: Test sensori, percorsi, copertura, tempo reale e bot
         run: python tests/test_features.py
 
+      - name: Cache delle mappe
+        run: python tests/test_tiles.py
+
       - name: Permessi di tutti gli endpoint per ogni ruolo
         run: python tests/test_permissions.py
 

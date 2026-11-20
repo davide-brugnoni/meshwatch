@@ -135,6 +135,22 @@
       Il backup è uno zip con database e config.yaml: contiene password e posizioni, conservalo con cura. Come ripristinarlo è spiegato nel file LEGGIMI.txt dentro lo zip.</p>
   </section>
   <section class="card">
+    <h2>Cache delle mappe</h2>
+    <div id="tc-info" class="grid mono" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))"><p class="muted">Caricamento…</p></div>
+    <form class="edit" id="form-tc">
+      <label><span class="hours" style="text-transform:none"><input type="checkbox" name="enabled"> tessere delle mappe salvate sul Raspberry</span></label>
+      <label>Spazio massimo sulla SD (MB) <input type="number" name="max_mb" min="50" max="20000" step="50"></label>
+      <div class="formacts"><button class="primary">Salva</button></div>
+    </form>
+    <div class="row">
+      <button id="tc-clear">Svuota cache</button>
+      <button id="tc-reload">Aggiorna</button>
+    </div>
+    <p class="note">Le tessere di OpenStreetMap, CyclOSM e OpenTopoMap passano dal Raspberry, che conserva quelle già viste: le zone che guardi di solito si aprono subito e restano visibili anche senza Internet.
+      Si salvano solo le zone aperte sulla mappa (le regole di OpenStreetMap non permettono di scaricare intere regioni). Quando il server dice che una tessera è scaduta, il Raspberry chiede se è cambiata.
+      Superato lo spazio massimo si cancellano quelle usate meno di recente. Le mappe satellitari arrivano sempre direttamente da Internet.</p>
+  </section>
+  <section class="card">
     <h2>Gateway (radio collegata al Raspberry)</h2>
     <div id="gw-info" class="grid mono" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))"><p class="muted">Caricamento…</p></div>
     <form class="edit" id="form-gw">

@@ -75,6 +75,10 @@ POLICY = {
     ("POST", "/api/maintenance/purge"): "admin",
     ("GET", "/api/backup"): "admin",
     ("POST", "/api/backup/telegram"): "admin",
+    ("GET", "/api/tiles/{layer}/{z}/{x}/{y}"): "guest",
+    ("GET", "/api/tilecache"): "admin",
+    ("PUT", "/api/tilecache"): "admin",
+    ("POST", "/api/tilecache/clear"): "admin",
     ("POST", "/api/advert"): "admin",
     ("GET", "/api/audit"): "admin",
     ("GET", "/api/cli/{node}"): "admin",
@@ -83,7 +87,8 @@ POLICY = {
 LEVEL = {"public": 0, "guest": 1, "viewer": 2, "admin": 3}
 # valori innocui per i parametri: nessuna azione distruttiva va a buon fine
 PARAMS = {"{tid}": "999", "{rid}": "999", "{name}": "nessuno", "{username}": "nessuno", "{key}": "000000000000",
-          "{action}": "nessuna", "{node}": "nessuno"}
+          "{action}": "nessuna", "{node}": "nessuno",
+          "{layer}": "nessuna", "{z}": "0", "{x}": "0", "{y}": "0"}   # mappa inesistente: nessun download
 # chi lo può usare riceve un flusso infinito: si controlla solo che gli altri vengano respinti
 STREAMS = {("GET", "/api/events")}
 

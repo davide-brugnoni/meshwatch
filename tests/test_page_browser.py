@@ -97,7 +97,8 @@ def main():
 
         def page(viewport, login=False, storage=None):
             ctx = browser.new_context(viewport=viewport)
-            ctx.route("**/*", lambda r: r.continue_() if r.request.url.startswith(url) else r.abort())
+            ctx.route("**/*", lambda r: r.continue_() if r.request.url.startswith(url) and "/api/tiles/" not in r.request.url
+                      else r.abort())   # anche le tessere dalla cache: il Raspberry finto non va su Internet
             p = ctx.new_page()
             p.errors = []
             p.on("pageerror", lambda e: p.errors.append(str(e)))
@@ -142,6 +143,10 @@ def main():
         check("Temperatura (canale 2) sopra 30.0 °C" in a.inner_text("#rules-list"), "gestione: soglie dei sensori")
         a.wait_for_selector("#ctc-list .item")
         check("via Rip-Monte → Rip-Valle" in a.inner_text("#ctc-list"), "gestione: rubrica con percorso")
+        a.wait_for_selector("#tc-info :text('Tessere salvate')")
+        check(a.is_checked("#form-tc [name=enabled]"), "gestione: cache delle mappe attiva")
+        check(a.evaluate("[...document.querySelectorAll('.leaflet-tile')].some(t => t.src.includes('/api/tiles/osm/'))"),
+              "mappa: le tessere passano dalla cache del Raspberry")
         a.click("#tab-map")
         # una modifica da un'altra pagina arriva da sola
         other = page({"width": 800, "height": 600}, login=True)
