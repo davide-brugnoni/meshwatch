@@ -25,8 +25,16 @@ ATTENZIONE: contiene password e posizioni. Conservalo in un posto sicuro.
 
 Per ripristinarlo sul Raspberry (via SSH):
   sudo systemctl stop meshwatch
-  copia meshwatch.db e config.yaml nella cartella di MeshWatch
-  (con il kit SD: /opt/meshwatch), sovrascrivendo quelli presenti
+
+  SD preparata con il kit (DietPi):
+    meshwatch.db -> /var/lib/meshwatch/meshwatch.db
+    config.yaml  -> /boot/firmware/meshwatch-config.yaml
+                    (a ogni avvio viene ricopiato da qui)
+    poi: sudo chown meshwatch-svc: /var/lib/meshwatch/meshwatch.db
+
+  Installazione con install.sh:
+    meshwatch.db e config.yaml nella cartella del programma
+
   sudo systemctl start meshwatch
 """
 
