@@ -1,0 +1,349 @@
+// MeshWatch — gestione: dispositivi, ripetitori, utenti, gateway, sistema, aggiornamenti, backup, rubrica
+// ---------- gestione
+const FREE = '__altro__';
+function contactSelect(sel, types, exclude, current) {
+  const opts = adm.contacts.filter(c => types.includes(c.type) && (!exclude.includes(c.name) || c.name === current));
+  sel.replaceChildren(
+    ...opts.map(c => el('option', { value: c.name, textContent: `${c.name} (${c.type})` })),
+    el('option', { value: FREE, textContent: opts.length ? 'Altro, scrivo il nome…' : 'Nessun contatto visto: scrivo il nome…' }));
+  const free = sel.closest('form').querySelector('.free');
+  const upd = () => { free.hidden = sel.value !== FREE; };
+  sel.onchange = upd;
+  if (current && !opts.some(c => c.name === current)) { sel.value = FREE; free.querySelector('input').value = current; }
+  else if (current) sel.value = current;
+  upd();
+}
+const pickedName = (f, sel, free) => f[sel].value === FREE ? f[free].value.trim() : f[sel].value;
+function openForm(form, onSubmit) {
+  // chiude gli altri moduli a comparsa (quelli con "Annulla"), non gateway e manutenzione
+  document.querySelectorAll('form.edit').forEach(x => { if (x.querySelector('.cancel')) x.hidden = true; });
+  form.hidden = false; form.querySelector('.cancel').onclick = () => form.hidden = true;
+  form.onsubmit = async e => { e.preventDefault(); const r = await action(form.querySelector('.primary'), onSubmit); if (r) form.hidden = true; };
+  form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+async function loadAdmin() {
+  try { adm = await api('/api/admin'); } catch (e) { return; }
+  // dispositivi
+  const tl = $('adm-trackers'); tl.replaceChildren();
+  if (!adm.trackers.length) tl.append(el('p', { className: 'muted', textContent: 'Nessun dispositivo.' }));
+  adm.trackers.forEach(t => {
+    const edit = el('button', { className: 'small', textContent: 'Modifica' }); edit.onclick = () => trackerForm(t);
+    const rm = el('button', { className: 'small danger', textContent: 'Elimina' });
+    rm.onclick = () => { if (confirm(`Eliminare ${t.label}? Verrà cancellato anche lo storico delle posizioni.`)) action(rm, () => del(`/api/trackers/${t.id}`), 'Dispositivo eliminato'); };
+    tl.append(el('div', { className: 'item' },
+      el('span', { className: 'name' }, swatch(t.color), t.label),
+      el('span', { className: 'info', textContent: `contatto ${t.contact} · ogni ${t.interval_min} min${t.moving_interval_min ? ` (${t.moving_interval_min} in movimento)` : ''} · ${t.active_hours || 'sempre'} · avviso dopo ${t.offline_alert_min} min · batteria < ${t.low_battery_v} V${t.paused ? ' · IN PAUSA' : ''}` }),
+      el('span', { className: 'acts' }, edit, rm)));
+  });
+  // ripetitori
+  const rl = $('adm-reps'); rl.replaceChildren();
+  if (!adm.repeaters.length) rl.append(el('p', { className: 'muted', textContent: 'Nessun ripetitore.' }));
+  adm.repeaters.forEach(r => {
+    const edit = el('button', { className: 'small', textContent: 'Cambia password' }); edit.onclick = () => repForm(r);
+    const rm = el('button', { className: 'small danger', textContent: 'Rimuovi' });
+    rm.onclick = () => { if (confirm(`Rimuovere ${r.name} dal monitoraggio?`)) action(rm, () => del('/api/repeaters/' + encodeURIComponent(r.name)), 'Ripetitore rimosso'); };
+    rl.append(el('div', { className: 'item' }, el('span', { className: 'name' }, r.name),
+      el('span', { className: 'info', textContent: r.has_password ? 'password impostata' : 'senza password' }), el('span', { className: 'acts' }, edit, rm)));
+  });
+  // utenti
+  const ul = $('adm-users'); ul.replaceChildren();
+  adm.users.forEach(u => {
+    const pw = el('button', { className: 'small', textContent: 'Cambia password' }); pw.onclick = () => userForm(u);
+    const role = el('button', { className: 'small', textContent: u.role === 'admin' ? 'Rendi viewer' : 'Rendi admin' });
+    role.onclick = () => action(role, () => put('/api/users/' + encodeURIComponent(u.username), { role: u.role === 'admin' ? 'viewer' : 'admin' }), 'Ruolo cambiato');
+    const rm = el('button', { className: 'small danger', textContent: 'Elimina' });
+    rm.onclick = () => { if (confirm(`Eliminare l'utente ${u.username}?`)) action(rm, () => del('/api/users/' + encodeURIComponent(u.username)), 'Utente eliminato').then(() => { if (u.username === adm.me) location.reload(); }); };
+    ul.append(el('div', { className: 'item' }, el('span', { className: 'name', textContent: u.username + (u.username === adm.me ? ' (tu)' : '') }),
+      el('span', { className: 'info', textContent: u.role }), el('span', { className: 'acts' }, pw, role, rm)));
+  });
+  const note = $('users-note');
+  note.className = 'note';
+  note.textContent = 'Admin gestisce tutto. Viewer vede mappa e stato e può chiedere la posizione, ma non gestisce nulla. '
+    + (me.public_map ? 'La mappa è visibile anche senza login (sola lettura).' : 'Senza login la mappa non è visibile.');
+  loadAudit();
+}
+
+async function loadAudit() {
+  let rows; try { rows = await api('/api/audit'); } catch (e) { return; }
+  const box = $('adm-audit'); box.replaceChildren();
+  if (!rows.length) box.append(el('p', { className: 'muted', textContent: 'Nessuna attività registrata.' }));
+  rows.forEach(r => {
+    const d = new Date(r.ts * 1000);
+    const when = d.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' }) + ' ' + d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+    const bad = /fallito|bloccato/.test(r.action);
+    box.append(el('div', {},
+      el('span', { className: 'who', textContent: when }),
+      el('span', { className: 'who', title: r.ip ? `${r.user} da ${r.ip}` : r.user, textContent: r.user || '—' }),
+      el('span', { className: 'what' + (bad ? ' bad' : ''), textContent: r.action + (r.detail ? ' · ' + r.detail : '') + (r.ip ? ` (${r.ip})` : '') })));
+  });
+}
+
+
+function trackerForm(t) {
+  const f = $('form-tracker');
+  contactSelect(f.contact_sel, ['companion', 'sensore', 'altro'], adm.trackers.map(x => x.contact), t && t.contact);
+  f.label.value = t ? t.label : '';
+  f.interval_min.value = t ? t.interval_min : 30;
+  f.moving_interval_min.value = t ? (t.moving_interval_min || 0) : 0;
+  const h = t ? t.active_hours : '05:00-21:00';
+  f.always.checked = !h; if (h) [f.h_from.value, f.h_to.value] = h.split('-');
+  f.offline_alert_min.value = t ? t.offline_alert_min : 90;
+  f.low_battery_v.value = t ? t.low_battery_v : 3.5;
+  openForm(f, () => {
+    const contact = pickedName(f, 'contact_sel', 'contact_free');
+    if (!contact) throw new Error('scegli o scrivi il nome del contatto');
+    const mv = +f.moving_interval_min.value;
+    if (mv && (mv < 5 || mv > +f.interval_min.value)) throw new Error('l\'intervallo in movimento va da 5 minuti a quello normale');
+    const body = { contact, label: f.label.value.trim() || contact, interval_min: +f.interval_min.value, moving_interval_min: mv,
+      active_hours: f.always.checked ? '' : `${f.h_from.value}-${f.h_to.value}`,
+      offline_alert_min: +f.offline_alert_min.value, low_battery_v: +f.low_battery_v.value };
+    return t ? put(`/api/trackers/${t.id}`, body) : post('/api/trackers', body);
+  });
+}
+function repForm(r) {
+  const f = $('form-rep');
+  contactSelect(f.name_sel, ['ripetitore', 'room server'], adm.repeaters.map(x => x.name), r && r.name);
+  f.name_sel.disabled = !!r; f.name_free.disabled = !!r; f.password.value = '';
+  f.password.placeholder = r ? 'nuova password' : '';
+  openForm(f, () => {
+    const name = r ? r.name : pickedName(f, 'name_sel', 'name_free');
+    if (!name) throw new Error('scegli o scrivi il nome del ripetitore');
+    return post('/api/repeaters', { name, password: f.password.value });
+  });
+}
+function userForm(u) {
+  const f = $('form-user');
+  f.username.value = u ? u.username : ''; f.username.disabled = !!u; f.password.value = '';
+  f.role.value = u ? u.role : (adm.users.length ? 'viewer' : 'admin'); f.role.disabled = !!u;
+  openForm(f, async () => {
+    if (f.password.value.length < 6) throw new Error('password di almeno 6 caratteri');
+    if (u) return put('/api/users/' + encodeURIComponent(u.username), { password: f.password.value });
+    const first = !adm.users.length;
+    const r = await post('/api/users', { username: f.username.value.trim(), password: f.password.value, role: f.role.value });
+    if (first) { toast('Primo utente creato: ora accedi'); setTimeout(() => location.reload(), 1200); }
+    return r;
+  });
+}
+
+// ---------- gateway
+let gw = null;
+async function loadGateway() {
+  const box = $('gw-info'), f = $('form-gw');
+  try { gw = await api('/api/gateway'); }
+  catch (e) { if (e.message !== 'login') box.replaceChildren(el('p', { className: 'muted', textContent: 'Gateway non disponibile: ' + e.message })); f.hidden = true; return; }
+  f.hidden = false;
+  const v = (x, suf = '') => x == null || x === '' ? '—' : x + suf;
+  box.replaceChildren(
+    cell('Modello', v(gw.model)), cell('Firmware', v(gw.firmware) + (gw.fw_build ? ' (' + gw.fw_build + ')' : '')),
+    cell('Chiave', gw.public_key ? gw.public_key.slice(0, 12) + '…' : '—'),
+    cell('Alimentazione', gw.battery_mv ? (gw.battery_mv / 1000).toFixed(2) + ' V' : '—'),
+    cell('Uptime', fmtUp(gw.uptime)), cell('Coda TX', v(gw.queue_len)),
+    cell('Rumore', v(gw.noise_floor, ' dBm')), cell('Ultimo RSSI', v(gw.last_rssi, ' dBm')), cell('Ultimo SNR', v(gw.last_snr)),
+    cell('Pacchetti Rx/Tx', `${v(gw.recv)}/${v(gw.sent)}`), cell('Tempo TX', gw.tx_air_secs != null ? Math.round(gw.tx_air_secs / 60) + ' min' : '—'),
+    cell('Contatti', v(gw.contacts)));
+  f.gw_name.value = gw.name || ''; f.tx_power.value = gw.tx_power ?? ''; f.tx_power.max = gw.max_tx_power || 30;
+  f.lat.value = gw.lat ?? ''; f.lon.value = gw.lon ?? ''; f.share_location.checked = !!gw.share_location;
+  f.radio_freq.value = gw.radio_freq ?? ''; f.radio_bw.value = String(gw.radio_bw ?? '');
+  f.radio_sf.value = String(gw.radio_sf ?? ''); f.radio_cr.value = String(gw.radio_cr ?? '');
+}
+$('form-gw').onsubmit = async e => {
+  e.preventDefault();
+  const f = e.target;
+  const body = { name: f.gw_name.value.trim(), tx_power: +f.tx_power.value, share_location: f.share_location.checked,
+    radio_freq: +f.radio_freq.value, radio_bw: +f.radio_bw.value, radio_sf: +f.radio_sf.value, radio_cr: +f.radio_cr.value };
+  if (f.lat.value !== '' && f.lon.value !== '') { body.lat = +f.lat.value; body.lon = +f.lon.value; }
+  const radioChanged = gw && (body.radio_freq !== gw.radio_freq || body.radio_bw !== gw.radio_bw || body.radio_sf !== gw.radio_sf || body.radio_cr !== gw.radio_cr);
+  if (radioChanged) {
+    if (!confirm(`Cambiare i parametri radio del gateway in ${body.radio_freq} MHz, BW ${body.radio_bw}, SF${body.radio_sf}, CR${body.radio_cr}?\nSe non coincidono con la rete, il gateway non sentirà più i nodi.`)) return;
+    body.confirm_radio = true;
+  }
+  const r = await action(f.querySelector('.primary'), () => post('/api/gateway', body),
+    r => r.radio_changed ? 'Salvato. Se la radio non cambia, riavvia il gateway' : 'Gateway aggiornato');
+  if (r) loadGateway();
+};
+$('gw-reload').onclick = () => loadGateway();
+$('gw-advert').onclick = e => action(e.target, () => post('/api/advert'), 'Advert inviato');
+$('gw-reboot').onclick = e => { if (confirm('Riavviare la radio gateway? Torna disponibile in circa 30 secondi.')) action(e.target, () => post('/api/gateway/reboot'), 'Gateway in riavvio').then(() => setTimeout(loadGateway, 30000)); };
+
+
+// ---------- sistema
+async function loadSystem() {
+  let si;
+  try { si = await api('/api/system'); } catch (e) { return; }
+  const v = (x, suf = '') => x == null ? '—' : x + suf;
+  $('sys-info').replaceChildren(
+    cell('Modello', v(si.model)), cell('Temperatura', v(si.temp_c, ' °C')), cell('Acceso da', fmtUp(si.uptime)),
+    cell('Carico CPU', v(si.load)), cell('RAM libera', si.mem_total_mb ? `${si.mem_free_mb}/${si.mem_total_mb} MB` : '—'),
+    cell('Disco libero', `${v(si.disk_free_gb)}/${v(si.disk_total_gb)} GB`),
+    cell('Alimentazione', si.undervoltage_now ? 'TENSIONE BASSA' : si.undervoltage_since_boot ? 'bassa in passato' : si.undervoltage_now === false ? 'ok' : '—'));
+  const w = $('sys-warn');
+  w.hidden = !(si.undervoltage_now || si.undervoltage_since_boot);
+  w.textContent = si.undervoltage_now ? 'L\'alimentatore non dà abbastanza corrente adesso: rischio di blocchi e di danni alla SD. Usa un alimentatore 5,1 V 2,5 A e un cavo corto.'
+    : 'Dall\'ultimo avvio c\'è stata almeno una caduta di tensione: controlla alimentatore e cavo.';
+  const ok = si.can_reboot && si.can_poweroff;
+  $('sys-reboot').disabled = !si.can_reboot; $('sys-poweroff').disabled = !si.can_poweroff;
+  $('sys-note').textContent = ok ? 'Dopo lo spegnimento, per riaccendere il Raspberry stacca e riattacca l\'alimentazione. La Heltec resta alimentata via USB finché c\'è corrente.'
+    : 'Riavvio e spegnimento non sono ancora abilitati: serve un comando una tantum via SSH (vedi istruzioni).';
+}
+$('sys-reload').onclick = () => { loadSystem(); loadGateway(); };
+$('sys-reboot').onclick = e => { if (confirm('Riavviare il Raspberry? La pagina torna disponibile in circa un minuto.')) action(e.target, () => post('/api/system/reboot'), 'Riavvio in corso…'); };
+$('sys-poweroff').onclick = e => { if (confirm('Spegnere il Raspberry?\nPer riaccenderlo dovrai staccare e riattaccare l\'alimentazione.')) action(e.target, () => post('/api/system/poweroff'), 'Spegnimento in corso…'); };
+$('sys-gw-reboot').onclick = e => { if (confirm('Riavviare la radio gateway? Torna disponibile in circa 30 secondi.')) action(e.target, () => post('/api/gateway/reboot'), 'Gateway in riavvio').then(() => setTimeout(loadGateway, 30000)); };
+
+// ---------- aggiornamento programma
+let updPoll = null;
+const UPD_STEPS = { download: 'Download', check: 'Controllo', deps: 'Librerie', install: 'Installazione', restarting: 'Riavvio', error: 'Errore' };
+function renderUpdate(u) {
+  const v = (x, suf = '') => x == null || x === '' ? '—' : x + suf;
+  const sha = x => x ? x.slice(0, 7) : null;
+  const day = d => d ? new Date(d).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '';
+  const inst = u.installed;
+  $('upd-info').replaceChildren(
+    cell('Versione', v(u.version)),
+    cell('Installata', inst.sha ? `${sha(inst.sha)} ${day(inst.date)}` : inst.source === 'sd' ? 'dal kit SD' : '—'),
+    cell('Modalità', u.mode === 'git' ? 'git pull' : 'download GitHub'),
+    cell('Ultima su GitHub', u.latest ? `${sha(u.latest.sha)} ${day(u.latest.date)}` : u.checked_at ? '—' : 'non controllata'));
+  const warn = [];
+  if (u.rolled_back) warn.push(`L'ultimo aggiornamento non partiva: il ${u.rolled_back} è stata ripristinata la versione precedente.`);
+  if (u.problems.length) warn.push('Aggiornamento dalla pagina non disponibile: ' + u.problems.join('; ') + '. '
+    + (u.mode === 'git' ? 'Rilancia install.sh oppure aggiorna con git pull.'
+      : 'Per abilitarlo, una volta sola: sd-kit\\ABILITA-AGGIORNAMENTI.bat da Windows, oppure via SSH: curl -fsSL https://raw.githubusercontent.com/' + u.repo + '/main/tools/abilita-aggiornamenti.sh | sudo bash'));
+  $('upd-warn').hidden = !warn.length; $('upd-warn').textContent = warn.join(' ');
+  const job = u.job, busy = ['download', 'check', 'deps', 'install', 'restarting'].includes(job.state);
+  const log = $('upd-log');
+  log.hidden = !(busy || job.state === 'error' || u.latest);
+  log.className = 'upd-log' + (job.state === 'error' ? ' note warn' : '');
+  log.textContent = busy || job.state === 'error' ? `${UPD_STEPS[job.state]}: ${job.message}`
+    : u.latest ? (u.available ? `Disponibile: ${u.latest.message}` : 'Hai già l\'ultima versione.') : '';
+  $('upd-apply').disabled = busy || !u.available || u.problems.length > 0;
+  $('upd-check').disabled = busy;
+  clearTimeout(updPoll);
+  updateBadge();
+  if (job.state === 'restarting') waitRestart();
+  else if (busy) updPoll = setTimeout(loadUpdate, 2000);
+}
+async function loadUpdate() {
+  try { renderUpdate(await api('/api/update')); } catch (e) { if (e.message !== 'login') $('upd-info').replaceChildren(el('p', { className: 'muted', textContent: 'Non disponibile: ' + e.message })); }
+}
+async function waitRestart() {
+  const log = $('upd-log'); log.hidden = false;
+  log.textContent = 'Riavvio del servizio in corso… la pagina si ricarica da sola.';
+  const t0 = Date.now();
+  await new Promise(r => setTimeout(r, 5000));
+  while (Date.now() - t0 < 30 * 60000) {
+    try { const r = await fetch('/api/me', { cache: 'no-store' }); if (r.ok || r.status === 401) { location.reload(); return; } } catch (e) { }
+    await new Promise(r => setTimeout(r, 3000));
+  }
+  log.textContent = 'Il servizio non risponde ancora: ricarica la pagina tra qualche minuto.';
+}
+$('upd-check').onclick = async e => {
+  const b = e.target; b.disabled = true;
+  try { renderUpdate(await post('/api/update/check')); } catch (err) { if (err.message !== 'login') toast('Errore: ' + err.message, true); }
+  b.disabled = false;
+};
+$('upd-apply').onclick = async e => {
+  if (!confirm('Aggiornare MeshWatch all\'ultima versione?\nIl servizio si riavvia: per circa un minuto la pagina e il bot non rispondono.')) return;
+  const b = e.target; b.disabled = true;
+  try { await post('/api/update/apply'); toast('Aggiornamento avviato'); } catch (err) { if (err.message !== 'login') toast('Errore: ' + err.message, true); }
+  loadUpdate();
+};
+
+// pallino su "Gestione" quando c'è una nuova versione (controllo automatico ogni 12 ore)
+async function updateBadge() {
+  let u; try { u = await api('/api/update'); } catch (e) { return; }
+  document.querySelectorAll('.badge').forEach(b => b.remove());
+  if (!u.available || !u.latest) return;
+  const title = 'Nuova versione disponibile: ' + u.latest.message;
+  [$('tab-admin'), document.querySelector('#mnav [data-t=admin]')].forEach(b => b.append(el('span', { className: 'badge', title })));
+}
+
+// ---------- manutenzione e backup
+const fmtSize = b => b == null ? '—' : b > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.round(b / 1024) + ' kB';
+async function loadMaintenance() {
+  let m; try { m = await api('/api/maintenance'); } catch (e) { return; }
+  $('mnt-info').replaceChildren(
+    cell('Database', fmtSize(m.db_size)), cell('Posizioni salvate', String(m.positions)),
+    cell('Dati dal', m.oldest ? new Date(m.oldest * 1000).toLocaleDateString('it-IT') : '—'),
+    cell('Ultima pulizia', m.last_purge ? fmtTs(m.last_purge) + (m.last_purge_deleted ? ` (${m.last_purge_deleted} righe)` : '') : 'mai'),
+    cell('Ultimo backup Telegram', m.last_backup ? fmtTs(m.last_backup) : 'mai'));
+  const f = $('form-mnt');
+  f.retention_days.value = m.retention_days;
+  f.backup_telegram.checked = m.backup_telegram; f.backup_telegram.disabled = !m.telegram;
+  f.backup_telegram.parentElement.title = m.telegram ? '' : 'Telegram non configurato';
+  $('mnt-telegram').disabled = !m.telegram;
+  $('mnt-purge').disabled = !m.retention_days;
+}
+$('form-mnt').onsubmit = e => {
+  e.preventDefault(); const f = e.target;
+  action(f.querySelector('.primary'), () => put('/api/maintenance', { retention_days: +f.retention_days.value, backup_telegram: f.backup_telegram.checked }), 'Impostazioni salvate')
+    .then(loadMaintenance);
+};
+$('mnt-purge').onclick = e => {
+  if (!confirm(`Cancellare adesso i dati più vecchi di ${$('form-mnt').retention_days.value} giorni?`)) return;
+  action(e.target, () => post('/api/maintenance/purge'), r => r.deleted ? `Eliminate ${r.deleted} righe` : 'Niente da cancellare').then(loadMaintenance);
+};
+$('mnt-telegram').onclick = e => action(e.target, () => post('/api/backup/telegram'), 'Backup inviato').then(loadMaintenance);
+$('mnt-download').onclick = () => setTimeout(loadAdmin, 1500);   // il registro mostra il download
+
+$('sys-radio').onclick = e => action(e.target, () => post('/api/radio/reconnect'), 'Riconnessione avviata: ci vuole qualche secondo');
+
+$('add-tracker').onclick = () => trackerForm(null);
+$('add-rep').onclick = () => repForm(null);
+$('add-user').onclick = () => userForm(null);
+
+// ---------- rubrica del gateway
+let ctc = null;
+async function loadContacts() {
+  try { ctc = await api('/api/contacts'); }
+  catch (e) { if (e.message !== 'login') $('ctc-list').replaceChildren(el('p', { className: 'muted', textContent: 'Rubrica non disponibile: ' + e.message })); return; }
+  $('ctc-manual').checked = ctc.manual_add;
+  renderContacts();
+}
+function renderContacts() {
+  if (!ctc) return;
+  const q = $('ctc-filter').value.trim().toLowerCase(), type = $('ctc-type').value;
+  const list = ctc.contacts.filter(c => (!type || c.type === type) && (!q || c.name.toLowerCase().includes(q) || c.public_key.startsWith(q)))
+    .sort((a, b) => (b.favorite - a.favorite) || (b.last_advert || 0) - (a.last_advert || 0));
+  const box = $('ctc-list'); box.replaceChildren();
+  if (!list.length) box.append(el('p', { className: 'muted', textContent: ctc.contacts.length ? 'Nessun contatto corrisponde alla ricerca.' : 'La rubrica del gateway è vuota.' }));
+  list.forEach(c => {
+    const enc_ = encodeURIComponent(c.public_key);
+    const fav = el('button', { className: 'small', textContent: c.favorite ? '★ Preferito' : '☆ Preferito', title: c.favorite ? 'Togli dai preferiti' : 'Aggiungi ai preferiti' });
+    fav.onclick = () => action(fav, () => post(`/api/contacts/${enc_}/favorite`, { on: !c.favorite }), c.favorite ? 'Tolto dai preferiti' : 'Aggiunto ai preferiti').then(loadContacts);
+    const path = el('button', { className: 'small', textContent: 'Azzera percorso' });
+    path.onclick = () => action(path, () => post(`/api/contacts/${enc_}/reset_path`), 'Percorso azzerato: il prossimo invio cerca la strada in flood').then(loadContacts);
+    const rm = el('button', { className: 'small danger', textContent: 'Rimuovi' });
+    rm.onclick = async () => {
+      const warn = c.used_by.length ? `\nATTENZIONE: è usato da ${c.used_by.join(', ')}: smetterà di funzionare finché il nodo non viene riaggiunto.` : '';
+      if (!confirm(`Rimuovere ${c.name} dalla rubrica del gateway?${warn}\nSe il nodo manda un nuovo advert può tornare in rubrica.`)) return;
+      action(rm, () => del(`/api/contacts/${enc_}` + (c.used_by.length ? '?force=true' : '')), 'Contatto rimosso').then(loadContacts);
+    };
+    const acts = el('span', { className: 'acts' }, fav, path);
+    if (['companion', 'room server'].includes(c.type)) { const w = el('button', { className: 'small', textContent: 'Scrivi' }); w.onclick = () => writeTo(c); acts.append(w); }
+    acts.append(rm);
+    const info = [c.type, hopsText(c.hops), 'advert ' + (c.last_advert ? fmtAgo(c.last_advert) : 'mai'),
+      c.lat != null ? `${c.lat.toFixed(4)}, ${c.lon.toFixed(4)}` : 'senza posizione', c.public_key.slice(0, 12)];
+    if (c.used_by.length) info.push('usato da ' + c.used_by.join(', '));
+    box.append(el('div', { className: 'item' },
+      el('span', { className: 'name' }, c.favorite ? el('span', { className: 'star', textContent: '★' }) : null, c.name),
+      el('span', { className: 'info mono', textContent: info.join(' · ') }), acts));
+  });
+  const pend = ctc.pending || [];
+  $('ctc-pending-box').hidden = !pend.length;
+  $('ctc-pending').replaceChildren(...pend.map(c => {
+    const add = el('button', { className: 'small primary', textContent: 'Aggiungi' });
+    add.onclick = () => action(add, () => post('/api/contacts/pending/' + encodeURIComponent(c.public_key)), `${c.name} aggiunto`).then(loadContacts);
+    return el('div', { className: 'item' }, el('span', { className: 'name', textContent: c.name }),
+      el('span', { className: 'info mono', textContent: `${c.type} · ${c.public_key.slice(0, 12)}` }), el('span', { className: 'acts' }, add));
+  }));
+}
+$('ctc-filter').oninput = renderContacts;
+$('ctc-type').onchange = renderContacts;
+$('ctc-refresh').onclick = e => action(e.target, () => post('/api/contacts/refresh'), 'Rubrica riletta').then(loadContacts);
+$('ctc-nb').onclick = e => action(e.target, () => post('/api/network/neighbours'),
+  r => { const v = Object.values(r.result); return v.length ? `Vicini letti da ${v.filter(Boolean).length} ripetitori su ${v.length}` : 'Nessun ripetitore configurato'; }).then(loadNetwork);
+$('ctc-manual').onchange = e => {
+  const on = e.target.checked;
+  action(null, () => put('/api/contacts/settings', { manual_add: on }), on ? 'Aggiunta manuale attiva' : 'Aggiunta automatica attiva').then(loadContacts);
+};

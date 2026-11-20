@@ -197,7 +197,7 @@ pip install httpx pyflakes
 ```
 
 ```bash
-python tests/test_smoke.py && python tests/test_chat.py && python tests/test_update.py
+python tests/test_smoke.py && python tests/test_chat.py && python tests/test_update.py && python tests/check_page.py
 ``` Repository e ramo si possono cambiare con la sezione `update:` del config.
 
 Ogni 12 ore il programma controlla se c'è una nuova versione: se sì manda un avviso su Telegram (una volta per versione) e mostra un pallino su **Gestione**. Si disattiva con `update.notify: false`.
@@ -243,7 +243,16 @@ meshwatch/            pacchetto Python
   system.py           stato del Raspberry, riavvio/spegnimento
   updater.py          aggiornamento dalla pagina (GitHub), con ripristino
   maintenance.py      pulizia dei dati vecchi e backup
-web/index.html        interfaccia (Leaflet incluso in web/vendor)
+web/index.html        struttura della pagina
+web/assets/app.css    stile
+web/assets/js/        script della pagina, caricati in ordine da index.html:
+  core.js             utilità, chiamate all'API, login, schede
+  map.js              mappa e livelli (tracce, rete)
+  nodes.js            colonna dei nodi: dispositivi, ripetitori, terminale
+  chat.js             chat
+  admin.js            scheda Gestione
+  main.js             avvio (sempre l'ultimo)
+web/vendor/           Leaflet
 tools/                guard.sh (ripristino), configura-servizio.sh, abilita-aggiornamenti.sh
 sd-kit/               preparazione e aggiornamento della SD DietPi da Windows
 install.sh            installazione manuale su Raspberry Pi OS / Debian

@@ -32,7 +32,7 @@ log = logging.getLogger("meshwatch.update")
 APP_DIR = Path(__file__).resolve().parent.parent
 # cosa viene sostituito: config, database e venv restano dove sono
 ITEMS = ("meshwatch", "web", "tools", "requirements.txt", "config.example.yaml", "README.md", "LICENSE")
-REQUIRED = ("meshwatch/__main__.py", "web/index.html", "requirements.txt")
+REQUIRED = ("meshwatch/__main__.py", "web/index.html", "web/assets/js/main.js", "requirements.txt")
 CONFIRM_AFTER = 90
 UA = {"User-Agent": "meshwatch-updater", "Accept": "application/vnd.github+json"}
 

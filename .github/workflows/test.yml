@@ -51,16 +51,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: JavaScript della pagina senza errori di sintassi
-        run: |
-          python3 - <<'PY'
-          import re
-          html = open("web/index.html", encoding="utf-8").read()
-          scripts = re.findall(r"<script>(.*?)</script>", html, re.S)
-          assert scripts, "nessuno script nella pagina"
-          open("/tmp/app.js", "w", encoding="utf-8").write("\n".join(scripts))
-          PY
-          node --check /tmp/app.js
+      - name: Pagina web (file inclusi, id, sintassi JavaScript)
+        run: python3 tests/check_page.py
 
       - name: Script di shell senza errori di sintassi
         run: for f in install.sh tools/*.sh sd-kit/*.sh; do bash -n "$f" && echo "ok $f"; done

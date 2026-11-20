@@ -148,6 +148,9 @@ def create_app(core, auth, web_cfg, updater=None):
         resp.headers["Referrer-Policy"] = "no-referrer"
         if req.url.path.startswith("/api/"):
             resp.headers["Cache-Control"] = "no-store"
+        elif req.url.path == "/" or req.url.path.startswith("/assets/"):
+            # dopo un aggiornamento il browser deve prendere subito pagina, stile e script nuovi
+            resp.headers["Cache-Control"] = "no-cache"
         return resp
 
     @app.get("/")
@@ -633,5 +636,6 @@ def create_app(core, auth, web_cfg, updater=None):
             raise HTTPException(400, str(e))
         return {"ok": reply is not None, "reply": reply}
 
+    app.mount("/assets", StaticFiles(directory=WEB_DIR / "assets"), name="assets")
     app.mount("/vendor", StaticFiles(directory=WEB_DIR / "vendor"), name="vendor")
     return app

@@ -68,6 +68,8 @@ def main():
         check(True, "pacchetto incompleto rifiutato")
     (out / "web").mkdir()
     (out / "web/index.html").write_text("")
+    (out / "web/assets/js").mkdir(parents=True)
+    (out / "web/assets/js/main.js").write_text("")
     (out / "requirements.txt").write_text("")
     (out / "meshwatch/rotto.py").write_text("def x(:\n")
     try:
@@ -81,7 +83,8 @@ def main():
     fake_app(app)
     up = Updater({}, app_dir=app)
     check(up.status()["installed"]["source"] == "sd" and not up.status()["problems"], "stato iniziale (kit SD)")
-    new_files = {"meshwatch/__main__.py": b"V = 'new'\n", "web/index.html": b"new", "requirements.txt": b"fastapi\n",
+    new_files = {"meshwatch/__main__.py": b"V = 'new'\n", "web/index.html": b"new",
+                 "web/assets/js/main.js": b"init();\n", "requirements.txt": b"fastapi\n",
                  "tools/guard.sh": (ROOT / "tools/guard.sh").read_bytes()}
     updater._http = lambda url, timeout=30: make_tar(new_files)
     up.latest = {"sha": "abc123" * 6, "date": "2026-11-20T10:00:00Z", "message": "nuova versione"}
@@ -133,7 +136,7 @@ def main():
     r = c.get("/api/update").json()
     check(r["version"] and r["problems"], "API stato aggiornamento")
     check(c.post("/api/update/apply").status_code == 400, "API rifiuta se non si può aggiornare")
-    check(c.get("/config.yaml").status_code == 404,
+    check(c.get("/config.yaml").status_code == 404 and c.get("/assets/../config.yaml").status_code == 404,
           "nessun file servito fuori da web/")
     print("Tutti i test superati.")
 
