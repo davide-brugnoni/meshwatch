@@ -23,6 +23,7 @@ Gira su un Raspberry Pi con una radio MeshCore in modalità *Companion USB* (Hel
 - **Mappa della rete**: livello "Rete MeshCore" con i nodi che annunciano la posizione e i collegamenti tra ripetitori vicini colorati per SNR.
 - **Rubrica del gateway**: contatti della Heltec con salti, posizione e ultimo advert; preferiti, azzera percorso, rimuovi, aggiunta manuale dei nuovi nodi.
 - **Mappe a scelta**: OpenStreetMap, CyclOSM, OpenTopoMap, satellite Esri (con o senza nomi). La scelta resta salvata nel browser.
+- **Cache delle mappe**: il Raspberry conserva le tessere già viste, così le zone abituali si aprono subito e restano visibili anche senza Internet. Spazio massimo e pulizia dalla Gestione.
 - **Terminale**: comandi CLI ai ripetitori dalla pagina o da Telegram, con conferma per i comandi che modificano o riavviano e registro di tutti i comandi inviati.
 - **Gateway**: stato e configurazione della radio collegata (nome, potenza, posizione, parametri radio), advert, riavvio.
 - **Sistema**: temperatura, memoria, disco, **avviso di tensione bassa**, riavvio e spegnimento del Raspberry.
@@ -222,7 +223,28 @@ Tutte gratuite e senza chiave, si sceglie dal pulsante dei livelli in alto a des
 | Satellite (Esri) | foto aeree |
 | Satellite con nomi | foto aeree con confini e località |
 
-Le tessere arrivano da Internet: il Raspberry non deve scaricare niente, è il browser che le carica.
+### Cache delle mappe sul Raspberry
+
+OpenStreetMap, CyclOSM e OpenTopoMap passano dal Raspberry (`/api/tiles/…`): la prima volta che una zona viene aperta il Raspberry scarica le tessere e le conserva, le volte dopo le dà subito dalla SD. Le zone già viste restano sulla mappa anche se Internet non c'è.
+
+Si gestisce da **Gestione → Cache delle mappe**:
+
+- attiva o disattivata (disattivata: il browser carica le tessere direttamente da Internet, come prima);
+- spazio massimo sulla SD (default 500 MB, circa 15–25 mila tessere): oltre, si cancellano quelle usate meno di recente;
+- tessere salvate, spazio usato, percentuale servita dalla cache, pulsante **Svuota cache**.
+
+Regole rispettate ([uso delle tessere di OpenStreetMap](https://operations.osmfoundation.org/policies/tiles/)):
+
+- si salvano solo le tessere che qualcuno guarda: **niente scaricamento di intere regioni**, che le regole vietano;
+- il Raspberry si presenta come `MeshWatch/<versione>`;
+- ogni tessera vale quanto dice il server; scaduta, il Raspberry chiede se è cambiata e, se no, il server risponde senza rimandarla. Se Internet non c'è viene mostrata quella vecchia;
+- al massimo 4 download contemporanei e 600 al minuto.
+
+Le mappe satellitari Esri non passano dalla cache (le condizioni di Esri non lo prevedono): arrivano sempre direttamente da Internet al browser.
+
+Le tessere stanno in `tiles.db`, accanto a `meshwatch.db` (sulla SD del kit: `/var/lib/meshwatch/`). Non entrano nel backup e si possono cancellare in qualsiasi momento. Sotto i 300 MB di spazio libero sulla SD non se ne salvano di nuove.
+
+Da Internet (Cloudflare Tunnel) le tessere passano dalla connessione di casa: se la mappa risulta più lenta fuori casa, disattiva la cache.
 
 ## Aggiornamenti
 
@@ -248,6 +270,7 @@ A ogni push GitHub Actions esegue i test (Python 3.11 e 3.13, radio simulata), i
 | `test_chat.py` | chat, rubrica del gateway, mappa della rete, coda della radio |
 | `test_update.py` | aggiornamento dalla pagina e ripristino |
 | `test_features.py` | sensori e soglie, percorsi, copertura, tempo reale, comandi del bot |
+| `test_tiles.py` | cache delle mappe con un server delle mappe finto: scadenza, 304, senza Internet, spazio massimo |
 | `test_permissions.py` | **ogni** endpoint dell'API per ospite, viewer e admin; fallisce se se ne aggiunge uno senza dichiarare chi può usarlo |
 | `check_page.py` | file della pagina, id usati dagli script, sintassi JavaScript (serve node) |
 | `test_page_browser.py` | la pagina in Chromium su computer e telefono, tutte le schede, nessun errore JavaScript |
@@ -308,6 +331,7 @@ meshwatch/            pacchetto Python
   updater.py          aggiornamento dalla pagina (GitHub), con ripristino
   maintenance.py      pulizia dei dati vecchi e backup
   events.py           notifiche in tempo reale alla pagina (Server-Sent Events)
+  tiles.py            cache delle tessere delle mappe (tiles.db)
 web/index.html        struttura della pagina
 web/assets/app.css    stile
 web/assets/js/        script della pagina, caricati in ordine da index.html:

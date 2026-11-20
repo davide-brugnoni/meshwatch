@@ -4,10 +4,28 @@ const map = L.map('map').setView([42.5, 12.5], 6);
 // mappe di base, tutte gratuite e senza chiave; la scelta resta salvata nel browser
 const OSM = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
 const esriImg = () => L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: '© Esri, Maxar, Earthstar Geographics' });
+// OpenStreetMap, CyclOSM e OpenTopoMap possono passare dalla cache del Raspberry (Gestione → Cache delle mappe):
+// le zone già viste arrivano dalla SD, senza aspettare Internet
+const CACHED = {
+  osm: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+  cyclosm: 'https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png',
+  topo: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+};
+let tileCache = true;
+try { tileCache = localStorage.getItem('tileCache') !== '0'; } catch (e) { }
+const tileUrl = k => tileCache ? `/api/tiles/${k}/{z}/{x}/{y}` : CACHED[k];
+const cachedLayers = {};
+const cachedLayer = (k, opts) => (cachedLayers[k] = L.tileLayer(tileUrl(k), opts));
+function useTileCache(on) {
+  try { localStorage.setItem('tileCache', on ? '1' : '0'); } catch (e) { }
+  if (on === tileCache) return;
+  tileCache = on;
+  Object.entries(cachedLayers).forEach(([k, l]) => l.setUrl(tileUrl(k)));
+}
 const BASES = {
-  'OpenStreetMap': L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: OSM, referrerPolicy: 'origin' }),
-  'Escursionismo (CyclOSM)': L.tileLayer('https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', { maxZoom: 20, attribution: OSM + ' · CyclOSM', referrerPolicy: 'origin' }),
-  'Topografica (OpenTopoMap)': L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: 17, attribution: OSM + ' · © OpenTopoMap (CC-BY-SA)' }),
+  'OpenStreetMap': cachedLayer('osm', { maxZoom: 19, attribution: OSM, referrerPolicy: 'origin' }),
+  'Escursionismo (CyclOSM)': cachedLayer('cyclosm', { maxZoom: 20, attribution: OSM + ' · CyclOSM', referrerPolicy: 'origin' }),
+  'Topografica (OpenTopoMap)': cachedLayer('topo', { maxZoom: 17, attribution: OSM + ' · © OpenTopoMap (CC-BY-SA)' }),
   'Satellite (Esri)': esriImg(),
   'Satellite con nomi': L.layerGroup([esriImg(), L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 })]),
 };

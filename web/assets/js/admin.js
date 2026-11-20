@@ -285,7 +285,7 @@ async function updateBadge() {
 }
 
 // ---------- manutenzione e backup
-const fmtSize = b => b == null ? '—' : b > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.round(b / 1024) + ' kB';
+const fmtSize = b => b == null ? '—' : b > 1073741824 ? (b / 1073741824).toFixed(1) + ' GB' : b > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.round(b / 1024) + ' kB';
 async function loadMaintenance() {
   let m; try { m = await api('/api/maintenance'); } catch (e) { return; }
   $('mnt-info').replaceChildren(
@@ -311,6 +311,31 @@ $('mnt-purge').onclick = e => {
 };
 $('mnt-telegram').onclick = e => action(e.target, () => post('/api/backup/telegram'), 'Backup inviato').then(loadMaintenance);
 $('mnt-download').onclick = () => setTimeout(loadAdmin, 1500);   // il registro mostra il download
+
+// ---------- cache delle mappe
+async function loadTileCache() {
+  let c; try { c = await api('/api/tilecache'); } catch (e) { return; }
+  const asked = c.hits + c.misses;
+  $('tc-info').replaceChildren(
+    cell('Stato', c.enabled ? 'attiva' : 'disattivata'), cell('Tessere salvate', String(c.tiles)),
+    cell('Spazio usato', `${fmtSize(c.size)} di ${c.max_mb} MB`), cell('Disco libero', fmtSize(c.disk_free)),
+    cell('Dalla cache', asked ? `${Math.round(c.hits * 100 / asked)}% (dall'avvio)` : '—'),
+    cell('Non scaricate', c.errors ? `${c.errors}${c.stale ? `, ${c.stale} vecchie mostrate` : ''}` : '0'));
+  const f = $('form-tc');
+  f.enabled.checked = c.enabled; f.max_mb.value = c.max_mb;
+  $('tc-clear').disabled = !c.tiles;
+  useTileCache(c.enabled);
+}
+$('form-tc').onsubmit = e => {
+  e.preventDefault(); const f = e.target;
+  action(f.querySelector('.primary'), () => put('/api/tilecache', { enabled: f.enabled.checked, max_mb: +f.max_mb.value }), 'Impostazioni salvate')
+    .then(loadTileCache);
+};
+$('tc-clear').onclick = e => {
+  if (!confirm('Cancellare tutte le tessere salvate sul Raspberry?\nLa mappa le riscaricherà man mano.')) return;
+  action(e.target, () => post('/api/tilecache/clear'), r => `Cancellate ${r.deleted} tessere`).then(loadTileCache);
+};
+$('tc-reload').onclick = () => loadTileCache();
 
 $('sys-radio').onclick = e => action(e.target, () => post('/api/radio/reconnect'), 'Riconnessione avviata: ci vuole qualche secondo');
 

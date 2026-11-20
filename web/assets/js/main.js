@@ -16,6 +16,7 @@ async function refresh() {
 async function init() {
   try { me = await api('/api/me'); } catch (e) { return; }
   if (!me.role) { showLogin(); return; }   // mappa non libera: serve il login
+  useTileCache(me.tile_cache !== false);
   const guest = me.role === 'guest';
   document.body.classList.toggle('admin', me.role === 'admin');
   document.body.classList.toggle('guest', guest);

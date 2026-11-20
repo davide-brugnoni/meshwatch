@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from .auth import hash_password
 from . import maintenance, system
+from .tiles import TileCache, TileError, MIN_MB, MAX_MB
 from .core import fmt_sensor, is_dangerous, sensor_info
 from .updater import UpdateError
 
@@ -76,6 +77,11 @@ class MaintenanceIn(BaseModel):
     backup_telegram: bool | None = None
 
 
+class TileCacheIn(BaseModel):
+    enabled: bool | None = None
+    max_mb: int | None = Field(None, ge=MIN_MB, le=MAX_MB)
+
+
 class ChatIn(BaseModel):
     kind: str = Field(..., pattern=r"^(dm|chan)$")
     peer: str = Field(..., min_length=1, max_length=64)
@@ -101,11 +107,12 @@ class UserIn(BaseModel):
     role: str | None = Field(None, pattern=r"^(admin|viewer)$")
 
 
-def create_app(core, auth, web_cfg, updater=None):
+def create_app(core, auth, web_cfg, updater=None, tiles=None):
     public = web_cfg.get("mode", "lan") == "public"
     # mappa visibile senza login (sola lettura): di default sì in casa, no su Internet
     public_map = bool(web_cfg.get("public_map", not public))
     db = core.db
+    tiles = tiles or TileCache(db)
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
     def client_ip(req: Request):
@@ -153,7 +160,7 @@ def create_app(core, auth, web_cfg, updater=None):
         resp.headers["X-Frame-Options"] = "DENY"
         resp.headers["X-Content-Type-Options"] = "nosniff"
         resp.headers["Referrer-Policy"] = "no-referrer"
-        if req.url.path.startswith("/api/"):
+        if req.url.path.startswith("/api/") and "cache-control" not in resp.headers:   # le tessere hanno la loro
             resp.headers["Cache-Control"] = "no-store"
         elif req.url.path == "/" or req.url.path.startswith("/assets/"):
             # dopo un aggiornamento il browser deve prendere subito pagina, stile e script nuovi
@@ -190,7 +197,7 @@ def create_app(core, auth, web_cfg, updater=None):
     async def me(req: Request):
         u = resolve_user(req) or {"username": None, "role": None}
         return {**u, "auth": auth.enabled, "setup": not auth.enabled and not public,
-                "public_map": public_map}
+                "public_map": public_map, "tile_cache": tiles.enabled()}
 
     # Primo avvio: crea l'utente admin. Possibile solo finché non esistono utenti
     # e mai in modalità public (lì il programma non parte senza utenti).
@@ -673,6 +680,42 @@ def create_app(core, auth, web_cfg, updater=None):
         if not await core.send_backup(u["username"]):
             raise HTTPException(400, "Telegram non è configurato")
         return {"ok": True}
+
+    # ---------- cache delle mappe
+    # chi vede la mappa può chiedere le tessere: il Raspberry le scarica solo per chi ha accesso
+    @app.get("/api/tiles/{layer}/{z}/{x}/{y}")
+    async def tile(layer: str, z: int, x: int, y: int, u=Depends(current_user)):
+        try:
+            data, ctype, ttl = await tiles.get(layer, z, x, y)
+        except TileError as e:
+            raise HTTPException(e.status, str(e))
+        return Response(data, media_type=ctype,
+                        headers={"Cache-Control": f"private, max-age={max(60, min(ttl, 7 * 86400))}"})
+
+    @app.get("/api/tilecache")
+    async def tilecache_info(u=Depends(admin)):
+        import shutil
+        info = tiles.info()
+        info["disk_free"] = shutil.disk_usage(Path(tiles.path).resolve().parent).free
+        return info
+
+    @app.put("/api/tilecache")
+    async def tilecache_set(body: TileCacheIn, u=Depends(admin)):
+        import asyncio
+        if body.enabled is not None:
+            db.set("tile_cache", "1" if body.enabled else "0")
+        if body.max_mb is not None:
+            await asyncio.to_thread(tiles.set_limit, body.max_mb)
+        i = tiles.info()
+        audit(u, "cache delle mappe", f"{'attiva' if i['enabled'] else 'disattivata'}, massimo {i['max_mb']} MB")
+        return {"ok": True}
+
+    @app.post("/api/tilecache/clear")
+    async def tilecache_clear(u=Depends(admin)):
+        import asyncio
+        n = await asyncio.to_thread(tiles.clear)
+        audit(u, "cache delle mappe svuotata", f"{n} tessere")
+        return {"ok": True, "deleted": n}
 
     # ---------- varie
     @app.post("/api/advert")
