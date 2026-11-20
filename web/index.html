@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MeshWatch</title>
+<link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
+<style>
+  :root { --bg:#0f1214; --card:#171b1e; --ink:#e6e8e6; --mute:#8a918f; --line:#262c30;
+          --acc:#2fb38a; --warn:#ff7a45; --ok:#3ccf8e; --field:#0f1214; color-scheme: dark;
+          --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  * { box-sizing: border-box; }
+  [hidden] { display:none !important; }
+  body { margin:0; font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background:var(--bg); color:var(--ink); }
+  header { display:flex; align-items:center; gap:14px; padding:10px 18px; border-bottom:1px solid var(--line); background:var(--card); flex-wrap:wrap; }
+  header h1 { font-size:17px; margin:0; letter-spacing:.02em; }
+  .tabs { display:flex; gap:4px; margin-left:8px; }
+  .tabs button { border:none; background:transparent; color:var(--mute); padding:6px 12px; border-radius:7px; }
+  .tabs button.on { background:var(--field); color:var(--ink); box-shadow: inset 0 0 0 1px var(--line); }
+  .dot { width:9px; height:9px; border-radius:50%; display:inline-block; background:var(--mute); margin-right:6px; flex:none; }
+  .dot.ok { background:var(--ok); box-shadow:0 0 6px var(--ok); } .dot.ko { background:var(--warn); box-shadow:0 0 6px var(--warn); }
+  .status { color:var(--mute); font-size:13px; display:flex; align-items:center; }
+  .spacer { flex:1; }
+  main { display:grid; grid-template-columns: 1fr 390px; height: calc(100vh - 55px); }
+  #map { height:100%; background:#0b0e10; }
+  aside { overflow-y:auto; padding:14px; display:flex; flex-direction:column; gap:12px; border-left:1px solid var(--line); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; }
+  .card h2 { font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--mute); margin:0 0 10px; font-weight:600; display:flex; align-items:center; }
+  .big { font-size:19px; font-weight:600; margin:0 0 2px; }
+  .mono { font-family:var(--mono); font-size:13px; }
+  .muted { color:var(--mute); font-size:13px; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:10px; }
+  button, .btn { font:inherit; font-size:14px; border:1px solid var(--line); background:var(--field); padding:7px 12px; border-radius:7px; cursor:pointer; color:var(--ink); text-decoration:none; }
+  button.primary, .btn.primary { background:var(--acc); color:#06130e; border-color:var(--acc); font-weight:600; }
+  button.danger { color:var(--warn); }
+  button.small { font-size:12.5px; padding:4px 9px; }
+  button:hover, .btn:hover { border-color:var(--acc); }
+  button:disabled { opacity:.5; cursor:wait; }
+  input, select { font:inherit; padding:6px 8px; border:1px solid var(--line); border-radius:7px; background:var(--field); color:var(--ink); }
+  input[type=number] { width:78px; }
+  .rep, .trk { border-top:1px solid var(--line); padding:12px 0 4px; }
+  .rep:first-child, .trk:first-child { border-top:none; padding-top:0; }
+  .rep-head { display:flex; justify-content:space-between; align-items:baseline; gap:8px; }
+  .rep-name { font-weight:600; display:flex; align-items:center; }
+  .grid { display:grid; grid-template-columns: repeat(3, 1fr); gap:4px 10px; margin-top:6px; }
+  .grid div span { display:block; color:var(--mute); font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
+  svg.spark { width:100%; height:34px; margin-top:6px; display:block; }
+  .swatch { width:12px; height:12px; border-radius:3px; display:inline-block; margin-right:8px; flex:none; }
+  .admin-only { display:none !important; } body.admin .admin-only { display:flex !important; }
+  .admin-block { display:none; } body.admin .admin-block { display:block; }
+  /* gestione */
+  #view-admin { display:none; padding:18px; max-width:1100px; margin:0 auto; gap:14px; flex-direction:column; }
+  body.tab-admin #view-admin { display:flex; } body.tab-admin main { display:none; }
+  .list { display:flex; flex-direction:column; }
+  .item { display:flex; align-items:center; gap:10px; padding:10px 0; border-top:1px solid var(--line); flex-wrap:wrap; }
+  .item:first-child { border-top:none; }
+  .item .name { font-weight:600; display:flex; align-items:center; min-width:140px; }
+  .item .info { color:var(--mute); font-size:13px; flex:1; min-width:200px; }
+  .item .acts { display:flex; gap:6px; }
+  form.edit { display:grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap:10px 14px; margin-top:12px;
+              padding:12px; border:1px dashed var(--line); border-radius:8px; }
+  form.edit label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--mute); text-transform:uppercase; letter-spacing:.04em; }
+  form.edit label input, form.edit label select { text-transform:none; letter-spacing:normal; font-size:14px; }
+  form.edit .formacts { grid-column: 1 / -1; display:flex; gap:8px; flex-wrap:wrap; }
+  form.edit label input[type=number] { width:auto; min-width:0; }
+  .hours { display:flex; gap:6px; align-items:center; }
+  .note { font-size:13px; color:var(--mute); margin:8px 0 0; }
+  .note.warn { color:var(--warn); }
+  /* terminale */
+  #term-out { background:#080a0b; border:1px solid var(--line); border-radius:7px; height:220px; overflow-y:auto;
+              padding:8px 10px; margin:8px 0; font-family:var(--mono); font-size:12.5px; white-space:pre-wrap; word-break:break-word; }
+  #term-out .cmd { color:var(--acc); } #term-out .err { color:var(--warn); } #term-out .ts { color:var(--mute); }
+  .term-in { display:flex; gap:6px; }
+  .term-in input { flex:1; font-family:var(--mono); font-size:13px; background:#080a0b; }
+  .chips { display:flex; flex-wrap:wrap; gap:5px; margin-top:8px; }
+  .chips button { font-family:var(--mono); font-size:12px; padding:4px 8px; }
+  #term-node { width:100%; }
+  /* login, toast */
+  #login { position:fixed; inset:0; background:var(--bg); display:none; align-items:center; justify-content:center; z-index:2000; }
+  #login form { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:26px; width:300px; display:flex; flex-direction:column; gap:10px; }
+  #login input { padding:9px; }
+  #toast { position:fixed; bottom:16px; left:50%; transform:translateX(-50%); background:var(--acc); color:#06130e; padding:9px 16px; border-radius:8px; display:none; z-index:3000; font-size:14px; }
+  #toast.err { background:var(--warn); }
+  /* leaflet scuro */
+  .leaflet-bar a, .leaflet-control-layers { background:var(--card); color:var(--ink); border-color:var(--line) !important; }
+  .leaflet-bar a:hover { background:#20262a; }
+  .leaflet-control-layers-toggle { filter: invert(1) hue-rotate(180deg); }
+  .leaflet-control-attribution { background:rgba(15,18,20,.75) !important; color:var(--mute); }
+  .leaflet-control-attribution a { color:var(--acc); }
+  .leaflet-popup-content-wrapper, .leaflet-popup-tip { background:var(--card); color:var(--ink); }
+  .leaflet-popup-content a { color:var(--acc); }
+  @media (max-width: 820px) {
+    main { grid-template-columns: 1fr; height:auto; }
+    #map { height: 55vh; }
+    aside { border-left:none; }
+    #view-admin { padding:12px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>MeshWatch</h1>
+  <span class="status" id="radio"><span class="dot"></span>…</span>
+  <nav class="tabs admin-only">
+    <button id="tab-map" class="on">Mappa</button>
+    <button id="tab-admin">Gestione</button>
+  </nav>
+  <span class="spacer"></span>
+  <select id="range" title="Periodo">
+    <option value="12">12 ore</option><option value="24" selected>24 ore</option>
+    <option value="72">3 giorni</option><option value="168">7 giorni</option>
+  </select>
+  <span class="muted" id="whoami"></span>
+  <button id="logout" style="display:none">Esci</button>
+</header>
+
+<main>
+  <div id="map"></div>
+  <aside>
+    <section class="card">
+      <h2>Dispositivi</h2>
+      <div id="trackers"></div>
+    </section>
+
+    <section class="card">
+      <h2>Ripetitori</h2>
+      <div id="reps"></div>
+      <div class="row admin-only">
+        <button id="btn-reps">Aggiorna ora</button>
+        <button id="btn-advert">Advert gateway</button>
+      </div>
+    </section>
+
+    <section class="card admin-block">
+      <h2>Terminale ripetitori</h2>
+      <select id="term-node"></select>
+      <div id="term-out"></div>
+      <form class="term-in" id="term-form">
+        <input id="term-cmd" placeholder="comando, es. ver" autocomplete="off" spellcheck="false">
+        <button class="primary" id="term-send">Invia</button>
+      </form>
+      <div class="chips">
+        <button data-c="ver">ver</button><button data-c="clock">clock</button>
+        <button data-c="get radio">get radio</button><button data-c="get tx">get tx</button>
+        <button data-c="get name">get name</button><button data-c="neighbors">neighbors</button>
+        <button data-c="advert">advert</button><button data-c="reboot" class="danger">reboot</button>
+      </div>
+      <p class="note">Ogni comando passa via radio: la risposta può richiedere 5–30 secondi.</p>
+    </section>
+
+    <section class="card">
+      <h2>Contatti visti dal gateway</h2>
+      <p class="mono" id="contacts" style="margin:0"></p>
+    </section>
+  </aside>
+</main>
+
+<div id="view-admin">
+  <section class="card">
+    <h2>Sistema</h2>
+    <div id="sys-info" class="grid mono" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))"><p class="muted">Caricamento…</p></div>
+    <p class="note warn" id="sys-warn" hidden></p>
+    <div class="row">
+      <button id="sys-reboot">Riavvia Raspberry</button>
+      <button id="sys-poweroff" class="danger">Spegni Raspberry</button>
+      <button id="sys-gw-reboot">Riavvia gateway (Heltec)</button>
+      <button id="sys-reload">Aggiorna</button>
+    </div>
+    <p class="note" id="sys-note"></p>
+  </section>
+  <section class="card">
+    <h2>Gateway (radio collegata al Raspberry)</h2>
+    <div id="gw-info" class="grid mono" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))"><p class="muted">Caricamento…</p></div>
+    <form class="edit" id="form-gw">
+      <label>Nome <input name="gw_name" maxlength="31" required></label>
+      <label>Potenza TX (dBm) <input type="number" name="tx_power" min="1" max="30"></label>
+      <label>Latitudine <input type="number" name="lat" step="0.000001" min="-90" max="90"></label>
+      <label>Longitudine <input type="number" name="lon" step="0.000001" min="-180" max="180"></label>
+      <label>Posizione negli advert <span class="hours" style="text-transform:none"><input type="checkbox" name="share_location"> condividi</span></label>
+      <label>Frequenza (MHz) <input type="number" name="radio_freq" step="0.001" min="137" max="1020"></label>
+      <label>Bandwidth (kHz) <select name="radio_bw">
+        <option>7.8</option><option>10.4</option><option>15.6</option><option>20.8</option><option>31.25</option>
+        <option>41.7</option><option>62.5</option><option>125</option><option>250</option><option>500</option></select></label>
+      <label>Spreading factor <select name="radio_sf"><option>5</option><option>6</option><option>7</option><option>8</option><option>9</option><option>10</option><option>11</option><option>12</option></select></label>
+      <label>Coding rate <select name="radio_cr"><option>5</option><option>6</option><option>7</option><option>8</option></select></label>
+      <div class="formacts">
+        <button class="primary">Salva</button>
+        <button type="button" id="gw-reload">Aggiorna dati</button>
+        <button type="button" id="gw-advert">Advert</button>
+        <button type="button" id="gw-reboot" class="danger">Riavvia gateway</button>
+      </div>
+    </form>
+    <p class="note warn">Frequenza, bandwidth, SF e CR devono essere identici a quelli della tua rete: se li sbagli il gateway non sente più nessun nodo.</p>
+  </section>
+  <section class="card">
+    <h2>Dispositivi tracciati</h2>
+    <div class="list" id="adm-trackers"></div>
+    <div class="row"><button class="primary" id="add-tracker">+ Aggiungi dispositivo</button></div>
+    <form class="edit" id="form-tracker" hidden>
+      <label>Contatto MeshCore <select name="contact_sel"></select></label>
+      <label class="free" hidden>Nome contatto esatto <input name="contact_free" maxlength="64"></label>
+      <label>Nome visualizzato <input name="label" maxlength="40" placeholder="es. Escursionista"></label>
+      <label>Posizione ogni (minuti) <input type="number" name="interval_min" min="5" max="720" value="30"></label>
+      <label>Fascia oraria
+        <span class="hours"><input type="time" name="h_from" value="05:00"> – <input type="time" name="h_to" value="21:00"></span>
+        <span class="hours" style="text-transform:none"><input type="checkbox" name="always"> sempre attivo</span>
+      </label>
+      <label>Avviso se non risponde da (min) <input type="number" name="offline_alert_min" min="10" max="1440" value="90"></label>
+      <label>Avviso batteria sotto (V) <input type="number" name="low_battery_v" min="0" max="5" step="0.05" value="3.5"></label>
+      <div class="formacts"><button class="primary">Salva</button><button type="button" class="cancel">Annulla</button></div>
+    </form>
+    <p class="note">Il dispositivo deve permettere al gateway di leggere la sua telemetria (nell'app MeshCore: gateway tra i preferiti, telemetria posizione "solo preferiti").</p>
+  </section>
+
+  <section class="card">
+    <h2>Ripetitori</h2>
+    <div class="list" id="adm-reps"></div>
+    <div class="row"><button class="primary" id="add-rep">+ Aggiungi ripetitore</button></div>
+    <form class="edit" id="form-rep" hidden>
+      <label>Ripetitore <select name="name_sel"></select></label>
+      <label class="free" hidden>Nome esatto <input name="name_free" maxlength="64"></label>
+      <label>Password admin <input type="password" name="password" maxlength="64" autocomplete="new-password"></label>
+      <div class="formacts"><button class="primary">Salva</button><button type="button" class="cancel">Annulla</button></div>
+    </form>
+    <p class="note">Con la password admin funzionano statistiche e terminale; con quella guest solo le statistiche.</p>
+  </section>
+
+  <section class="card">
+    <h2>Utenti della pagina</h2>
+    <div class="list" id="adm-users"></div>
+    <div class="row"><button class="primary" id="add-user">+ Aggiungi utente</button></div>
+    <form class="edit" id="form-user" hidden>
+      <label>Utente <input name="username" pattern="[A-Za-z0-9_.\-]{2,32}" maxlength="32" autocomplete="off"></label>
+      <label>Password (min 6) <input type="password" name="password" minlength="6" autocomplete="new-password"></label>
+      <label>Ruolo <select name="role"><option value="admin">admin – gestisce tutto</option><option value="viewer">viewer – vede e chiede la posizione</option></select></label>
+      <div class="formacts"><button class="primary">Salva</button><button type="button" class="cancel">Annulla</button></div>
+    </form>
+    <p class="note" id="users-note"></p>
+  </section>
+</div>
+
+<div id="login">
+  <form id="login-form">
+    <strong>MeshWatch</strong>
+    <input name="username" placeholder="Utente" autocomplete="username" required>
+    <input name="password" type="password" placeholder="Password" autocomplete="current-password" required>
+    <button class="primary">Entra</button>
+    <span class="muted" id="login-err"></span>
+  </form>
+</div>
+<div id="toast"></div>
+
+<script src="/vendor/leaflet/leaflet.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const el = (tag, props = {}, ...kids) => { const e = document.createElement(tag); Object.assign(e, props); e.append(...kids.filter(k => k != null)); return e; };
+let me = null, state = null, adm = null, fitDone = false;
+
+// ---------- mappa
+const map = L.map('map').setView([42.5, 12.5], 6);
+const topo = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: 17, attribution: '© OpenTopoMap' });
+const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: '© Esri' });
+topo.addTo(map);
+L.control.layers({ 'Topografica': topo, 'Satellite': sat }).addTo(map);
+const trackLayer = L.layerGroup().addTo(map);
+
+// ---------- utilità
+function toast(msg, err) { const t = $('toast'); t.textContent = msg; t.className = err ? 'err' : ''; t.style.display = 'block'; clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', 3500); }
+function fmtTs(ts) {
+  if (!ts) return 'mai';
+  const d = new Date(ts * 1000), min = Math.round((Date.now() / 1000 - ts) / 60);
+  const ago = min < 1 ? 'adesso' : min < 120 ? `${min} min fa` : min < 2880 ? `${Math.round(min / 60)} ore fa` : `${Math.round(min / 1440)} giorni fa`;
+  return `${d.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' })} ${d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })} · ${ago}`;
+}
+function fmtUp(s) { if (!s) return '—'; const d = Math.floor(s / 86400); return `${d}g ${Math.floor((s % 86400) / 3600)}h`; }
+const mapsUrl = (lat, lon) => `https://www.google.com/maps?q=${lat.toFixed(6)},${lon.toFixed(6)}`;
+const dot = cls => el('span', { className: 'dot ' + (cls || '') });
+const swatch = c => { const s = el('span', { className: 'swatch' }); s.style.background = c; return s; };
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, ...opts });
+  if (r.status === 401) { showLogin(); throw new Error('login'); }
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({}));
+    const d = Array.isArray(j.detail) ? 'valori non validi' : j.detail;
+    throw new Error(d || r.statusText);
+  }
+  return r.json();
+}
+const post = (p, b) => api(p, { method: 'POST', body: JSON.stringify(b || {}) });
+const put = (p, b) => api(p, { method: 'PUT', body: JSON.stringify(b || {}) });
+const del = p => api(p, { method: 'DELETE' });
+async function action(btn, fn, okMsg) {
+  if (btn) btn.disabled = true;
+  try { const r = await fn(); if (okMsg) toast(typeof okMsg === 'function' ? okMsg(r) : okMsg); await refresh(); if (adm) await loadAdmin(); return r; }
+  catch (e) { if (e.message !== 'login') toast('Errore: ' + e.message, true); }
+  finally { if (btn) btn.disabled = false; }
+}
+
+// ---------- login
+function showLogin() { $('login').style.display = 'flex'; }
+$('login-form').onsubmit = async e => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: f.get('username'), password: f.get('password') }) });
+  if (!r.ok) { $('login-err').textContent = 'Credenziali errate'; return; }
+  location.reload();
+};
+$('logout').onclick = async () => { await fetch('/api/logout', { method: 'POST' }); location.reload(); };
+
+// ---------- schede
+function setTab(t) {
+  history.replaceState(null, '', t === 'admin' ? '#gestione' : '#');
+  document.body.classList.toggle('tab-admin', t === 'admin');
+  $('tab-map').classList.toggle('on', t !== 'admin'); $('tab-admin').classList.toggle('on', t === 'admin');
+  if (t === 'admin') { loadAdmin(); loadGateway(); loadSystem(); } else setTimeout(() => map.invalidateSize(), 50);
+}
+$('tab-map').onclick = () => setTab('map');
+$('tab-admin').onclick = () => setTab('admin');
+
+// ---------- vista mappa
+function spark(history, color) {
+  const pts = history.filter(h => h.bat_mv).map(h => [h.ts, h.bat_mv / 1000]);
+  if (pts.length < 2) return null;
+  const ns = 'http://www.w3.org/2000/svg', svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('class', 'spark'); svg.setAttribute('viewBox', '0 0 300 34'); svg.setAttribute('preserveAspectRatio', 'none');
+  const t0 = pts[0][0], t1 = pts.at(-1)[0] || t0 + 1;
+  let vmin = Math.min(...pts.map(p => p[1])), vmax = Math.max(...pts.map(p => p[1]));
+  if (vmax - vmin < 0.1) { vmin -= 0.05; vmax += 0.05; }
+  const d = pts.map(([t, v], i) => `${i ? 'L' : 'M'}${((t - t0) / (t1 - t0 || 1) * 298 + 1).toFixed(1)},${(32 - (v - vmin) / (vmax - vmin) * 30).toFixed(1)}`).join('');
+  const path = document.createElementNS(ns, 'path');
+  path.setAttribute('d', d); path.setAttribute('fill', 'none'); path.setAttribute('stroke', color || '#2fb38a'); path.setAttribute('stroke-width', '1.6');
+  path.setAttribute('vector-effect', 'non-scaling-stroke');
+  const title = document.createElementNS(ns, 'title'); title.textContent = `Batteria ${vmin.toFixed(2)}–${vmax.toFixed(2)} V`;
+  svg.append(title, path); return svg;
+}
+const cell = (label, value) => el('div', {}, el('span', { textContent: label }), value);
+
+function trackerCard(t) {
+  const p = t.last_position;
+  const meta = [];
+  if (p && p.batt_v != null) meta.push(`batteria ${p.batt_v.toFixed(2)} V`);
+  if (p && p.alt != null) meta.push(`quota ${Math.round(p.alt)} m`);
+  meta.push(`ultima risposta ${fmtTs(t.last_ok)}`);
+  meta.push(t.paused ? 'IN PAUSA' : `ogni ${t.interval_min} min${t.active_hours ? ' (' + t.active_hours + ')' : ''}`);
+  const poll = el('button', { className: 'primary', textContent: 'Chiedi posizione' });
+  poll.onclick = () => action(poll, () => post(`/api/trackers/${t.id}/poll`),
+    r => r.ok ? (r.result.lat != null ? `Posizione di ${t.label} ricevuta` : 'Risposta ricevuta, GPS senza fix') : `${t.label} non ha risposto`);
+  const row = el('div', { className: 'row' }, poll);
+  if (p) {
+    row.append(el('a', { className: 'btn', href: mapsUrl(p.lat, p.lon), target: '_blank', rel: 'noopener', textContent: 'Google Maps' }));
+    const c = el('button', { textContent: 'Centra' }); c.onclick = () => map.setView([p.lat, p.lon], 15); row.append(c);
+  }
+  const iv = el('input', { type: 'number', min: 5, max: 720, value: t.interval_min });
+  const save = el('button', { textContent: 'Salva' });
+  save.onclick = () => action(save, () => put(`/api/trackers/${t.id}`, { interval_min: +iv.value }), 'Intervallo salvato');
+  const pause = el('button', { textContent: t.paused ? 'Riprendi' : 'Pausa' });
+  pause.onclick = () => action(pause, () => put(`/api/trackers/${t.id}`, { paused: !t.paused }));
+  const admRow = el('div', { className: 'row admin-only' }, el('label', { className: 'muted' }, 'Ogni ', iv, ' min'), save, pause);
+  return el('div', { className: 'trk' },
+    el('div', { className: 'rep-head' }, el('span', { className: 'rep-name' }, swatch(t.color), t.label), el('span', { className: 'muted', textContent: t.contact !== t.label ? t.contact : '' })),
+    el('p', { className: 'big', textContent: p ? fmtTs(p.ts) : 'Nessuna posizione' }),
+    el('p', { className: 'muted', style: 'margin:0', textContent: meta.join(' · ') }),
+    row, admRow);
+}
+
+function render() {
+  const s = state;
+  $('radio').replaceChildren(dot(s.radio_connected ? 'ok' : 'ko'), s.radio_connected ? 'Radio collegata' : 'Radio NON collegata');
+
+  // dispositivi
+  const tbox = $('trackers'); tbox.replaceChildren();
+  if (!s.trackers.length) tbox.append(el('p', { className: 'muted', style: 'margin:0', textContent: 'Nessun dispositivo. Aggiungilo da Gestione.' }));
+  s.trackers.forEach(t => tbox.append(trackerCard(t)));
+
+  // tracce
+  trackLayer.clearLayers();
+  const all = [];
+  s.trackers.forEach(t => {
+    const pts = t.track.map(q => [q.lat, q.lon]); all.push(...pts);
+    if (pts.length > 1) L.polyline(pts, { color: t.color, weight: 3, opacity: .85 }).addTo(trackLayer);
+    const list = t.track.length ? t.track : (t.last_position ? [t.last_position] : []);
+    list.forEach((q, i) => {
+      const last = i === list.length - 1;
+      L.circleMarker([q.lat, q.lon], { radius: last ? 8 : 4, color: t.color, fillColor: last ? '#fff' : t.color, fillOpacity: last ? .9 : .5, weight: last ? 3 : 1 })
+        .bindPopup(() => el('div', {}, el('strong', { textContent: t.label }), el('br'),
+          fmtTs(q.ts) + (q.batt_v ? ` · ${q.batt_v.toFixed(2)} V` : ''), el('br'),
+          el('a', { href: mapsUrl(q.lat, q.lon), target: '_blank', rel: 'noopener', textContent: 'Google Maps' })))
+        .addTo(trackLayer);
+      if (last && !t.track.length) all.push([q.lat, q.lon]);
+    });
+  });
+  if (!fitDone && all.length) { all.length > 1 ? map.fitBounds(all, { padding: [40, 40], maxZoom: 16 }) : map.setView(all[0], 15); fitDone = true; }
+
+  // ripetitori
+  const box = $('reps'); box.replaceChildren();
+  if (!s.repeaters.length) box.append(el('p', { className: 'muted', style: 'margin:0', textContent: 'Nessun ripetitore. Aggiungilo da Gestione.' }));
+  s.repeaters.forEach(r => {
+    const item = el('div', { className: 'rep' },
+      el('div', { className: 'rep-head' },
+        el('span', { className: 'rep-name' }, dot(r.last_ok ? 'ok' : r.last_poll ? 'ko' : ''), r.name),
+        el('span', { className: 'muted', textContent: r.status ? fmtTs(r.status.ts) : 'nessun dato' })));
+    if (r.status) {
+      const st = r.status;
+      item.append(el('div', { className: 'grid mono' },
+        cell('Batteria', st.bat_mv ? (st.bat_mv / 1000).toFixed(2) + ' V' : '—'), cell('Uptime', fmtUp(st.uptime)),
+        cell('Rumore', (st.noise ?? '—') + ' dBm'), cell('SNR', String(st.snr ?? '—')),
+        cell('RSSI', (st.rssi ?? '—') + ' dBm'), cell('Rx/Tx', `${st.nb_recv ?? 0}/${st.nb_sent ?? 0}`)));
+      const sp = spark(r.history); if (sp) item.append(sp);
+    }
+    box.append(item);
+  });
+
+  $('contacts').textContent = s.contacts.length ? s.contacts.map(c => `${c.name} (${c.type})`).join(' · ') : 'nessuno';
+  fillTermNodes();
+}
+
+$('btn-reps').onclick = e => action(e.target, () => post('/api/repeaters/poll'), 'Ripetitori interrogati');
+$('btn-advert').onclick = e => action(e.target, () => post('/api/advert'), 'Advert inviato');
+$('range').onchange = () => { fitDone = false; refresh(); };
+
+// ---------- terminale
+const DANGER = ['reboot', 'set ', 'password', 'erase', 'start ota', 'clear', 'setperm', 'gps sync', 'time ', 'clock sync', 'region '];
+const isDanger = c => { c = c.trim().toLowerCase(); return DANGER.some(p => c === p.trim() || c.startsWith(p)); };
+const hist = []; let histPos = 0, termBusy = false;
+function termLine(text, cls, ts) {
+  const out = $('term-out'), line = el('div');
+  if (ts) line.append(el('span', { className: 'ts', textContent: new Date(ts * 1000).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }) + ' ' }));
+  line.append(el('span', { className: cls || '', textContent: text }));
+  out.append(line); out.scrollTop = out.scrollHeight;
+}
+function fillTermNodes() {
+  if (!me || me.role !== 'admin') return;
+  const sel = $('term-node'), names = state.repeaters.map(r => r.name);
+  const cur = [...sel.options].map(o => o.value);
+  if (names.join('|') === cur.join('|')) return;
+  const keep = sel.value; sel.replaceChildren(...names.map(n => el('option', { value: n, textContent: n })));
+  if (names.includes(keep)) sel.value = keep; else loadTermHistory();
+}
+async function loadTermHistory() {
+  $('term-out').replaceChildren();
+  if (!$('term-node').value) return termLine('Nessun ripetitore configurato.', 'ts');
+  try {
+    const rows = await api('/api/cli/' + encodeURIComponent($('term-node').value));
+    rows.forEach(r => { termLine('> ' + r.cmd, 'cmd', r.ts); termLine(r.reply ?? '(nessuna risposta)', r.reply == null ? 'err' : ''); });
+    if (!rows.length) termLine('Nessun comando inviato a questo ripetitore.', 'ts');
+  } catch (e) { }
+}
+async function sendCmd(cmd) {
+  cmd = cmd.trim(); const node = $('term-node').value;
+  if (!cmd || !node || termBusy) return;
+  let confirm = false;
+  if (isDanger(cmd)) { if (!window.confirm(`Inviare "${cmd}" a ${node}?\nÈ un comando che modifica o riavvia il ripetitore.`)) return; confirm = true; }
+  termBusy = true; $('term-send').disabled = true;
+  hist.push(cmd); histPos = hist.length; $('term-cmd').value = '';
+  termLine('> ' + cmd, 'cmd', Date.now() / 1000);
+  const wait = el('div', { className: 'ts', textContent: '… in attesa della risposta via radio' }); $('term-out').append(wait);
+  try {
+    const r = await post('/api/cli', { node, cmd, confirm });
+    wait.remove(); termLine(r.ok ? r.reply : '(nessuna risposta: ripetitore non raggiungibile o password errata)', r.ok ? '' : 'err');
+  } catch (e) { wait.remove(); if (e.message !== 'login') termLine('Errore: ' + e.message, 'err'); }
+  termBusy = false; $('term-send').disabled = false; $('term-cmd').focus();
+}
+$('term-form').onsubmit = e => { e.preventDefault(); sendCmd($('term-cmd').value); };
+$('term-node').onchange = loadTermHistory;
+document.querySelectorAll('.chips button').forEach(b => b.onclick = () => sendCmd(b.dataset.c));
+$('term-cmd').onkeydown = e => {
+  if (e.key === 'ArrowUp' && histPos > 0) { histPos--; $('term-cmd').value = hist[histPos]; e.preventDefault(); }
+  if (e.key === 'ArrowDown') { histPos = Math.min(hist.length, histPos + 1); $('term-cmd').value = hist[histPos] ?? ''; e.preventDefault(); }
+};
+
+// ---------- gestione
+const FREE = '__altro__';
+function contactSelect(sel, types, exclude, current) {
+  const opts = adm.contacts.filter(c => types.includes(c.type) && (!exclude.includes(c.name) || c.name === current));
+  sel.replaceChildren(
+    ...opts.map(c => el('option', { value: c.name, textContent: `${c.name} (${c.type})` })),
+    el('option', { value: FREE, textContent: opts.length ? 'Altro, scrivo il nome…' : 'Nessun contatto visto: scrivo il nome…' }));
+  const free = sel.closest('form').querySelector('.free');
+  const upd = () => { free.hidden = sel.value !== FREE; };
+  sel.onchange = upd;
+  if (current && !opts.some(c => c.name === current)) { sel.value = FREE; free.querySelector('input').value = current; }
+  else if (current) sel.value = current;
+  upd();
+}
+const pickedName = (f, sel, free) => f[sel].value === FREE ? f[free].value.trim() : f[sel].value;
+function openForm(form, onSubmit) {
+  document.querySelectorAll('form.edit').forEach(x => x.hidden = true);
+  form.hidden = false; form.querySelector('.cancel').onclick = () => form.hidden = true;
+  form.onsubmit = async e => { e.preventDefault(); const r = await action(form.querySelector('.primary'), onSubmit); if (r) form.hidden = true; };
+  form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+async function loadAdmin() {
+  try { adm = await api('/api/admin'); } catch (e) { return; }
+  // dispositivi
+  const tl = $('adm-trackers'); tl.replaceChildren();
+  if (!adm.trackers.length) tl.append(el('p', { className: 'muted', textContent: 'Nessun dispositivo.' }));
+  adm.trackers.forEach(t => {
+    const edit = el('button', { className: 'small', textContent: 'Modifica' }); edit.onclick = () => trackerForm(t);
+    const rm = el('button', { className: 'small danger', textContent: 'Elimina' });
+    rm.onclick = () => { if (confirm(`Eliminare ${t.label}? Verrà cancellato anche lo storico delle posizioni.`)) action(rm, () => del(`/api/trackers/${t.id}`), 'Dispositivo eliminato'); };
+    tl.append(el('div', { className: 'item' },
+      el('span', { className: 'name' }, swatch(t.color), t.label),
+      el('span', { className: 'info', textContent: `contatto ${t.contact} · ogni ${t.interval_min} min · ${t.active_hours || 'sempre'} · avviso dopo ${t.offline_alert_min} min · batteria < ${t.low_battery_v} V${t.paused ? ' · IN PAUSA' : ''}` }),
+      el('span', { className: 'acts' }, edit, rm)));
+  });
+  // ripetitori
+  const rl = $('adm-reps'); rl.replaceChildren();
+  if (!adm.repeaters.length) rl.append(el('p', { className: 'muted', textContent: 'Nessun ripetitore.' }));
+  adm.repeaters.forEach(r => {
+    const edit = el('button', { className: 'small', textContent: 'Cambia password' }); edit.onclick = () => repForm(r);
+    const rm = el('button', { className: 'small danger', textContent: 'Rimuovi' });
+    rm.onclick = () => { if (confirm(`Rimuovere ${r.name} dal monitoraggio?`)) action(rm, () => del('/api/repeaters/' + encodeURIComponent(r.name)), 'Ripetitore rimosso'); };
+    rl.append(el('div', { className: 'item' }, el('span', { className: 'name' }, r.name),
+      el('span', { className: 'info', textContent: r.has_password ? 'password impostata' : 'senza password' }), el('span', { className: 'acts' }, edit, rm)));
+  });
+  // utenti
+  const ul = $('adm-users'); ul.replaceChildren();
+  if (!adm.users.length) ul.append(el('p', { className: 'muted', textContent: 'Nessun utente: la pagina è aperta a chiunque sia sulla rete di casa.' }));
+  adm.users.forEach(u => {
+    const pw = el('button', { className: 'small', textContent: 'Cambia password' }); pw.onclick = () => userForm(u);
+    const role = el('button', { className: 'small', textContent: u.role === 'admin' ? 'Rendi viewer' : 'Rendi admin' });
+    role.onclick = () => action(role, () => put('/api/users/' + encodeURIComponent(u.username), { role: u.role === 'admin' ? 'viewer' : 'admin' }), 'Ruolo cambiato');
+    const rm = el('button', { className: 'small danger', textContent: 'Elimina' });
+    rm.onclick = () => { if (confirm(`Eliminare l'utente ${u.username}?`)) action(rm, () => del('/api/users/' + encodeURIComponent(u.username)), 'Utente eliminato').then(() => { if (u.username === adm.me) location.reload(); }); };
+    ul.append(el('div', { className: 'item' }, el('span', { className: 'name', textContent: u.username + (u.username === adm.me ? ' (tu)' : '') }),
+      el('span', { className: 'info', textContent: u.role }), el('span', { className: 'acts' }, pw, role, rm)));
+  });
+  const note = $('users-note');
+  note.className = adm.users.length ? 'note' : 'note warn';
+  note.textContent = adm.users.length ? 'Gli utenti viewer vedono mappa e stato e possono chiedere la posizione, ma non gestiscono nulla.'
+    : 'Creando il primo utente (deve essere admin) la pagina chiederà il login anche in casa. È necessario prima di aprirla su Internet.';
+}
+
+function trackerForm(t) {
+  const f = $('form-tracker');
+  contactSelect(f.contact_sel, ['companion', 'sensore', 'altro'], adm.trackers.map(x => x.contact), t && t.contact);
+  f.label.value = t ? t.label : '';
+  f.interval_min.value = t ? t.interval_min : 30;
+  const h = t ? t.active_hours : '05:00-21:00';
+  f.always.checked = !h; if (h) [f.h_from.value, f.h_to.value] = h.split('-');
+  f.offline_alert_min.value = t ? t.offline_alert_min : 90;
+  f.low_battery_v.value = t ? t.low_battery_v : 3.5;
+  openForm(f, () => {
+    const contact = pickedName(f, 'contact_sel', 'contact_free');
+    if (!contact) throw new Error('scegli o scrivi il nome del contatto');
+    const body = { contact, label: f.label.value.trim() || contact, interval_min: +f.interval_min.value,
+      active_hours: f.always.checked ? '' : `${f.h_from.value}-${f.h_to.value}`,
+      offline_alert_min: +f.offline_alert_min.value, low_battery_v: +f.low_battery_v.value };
+    return t ? put(`/api/trackers/${t.id}`, body) : post('/api/trackers', body);
+  });
+}
+function repForm(r) {
+  const f = $('form-rep');
+  contactSelect(f.name_sel, ['ripetitore', 'room server'], adm.repeaters.map(x => x.name), r && r.name);
+  f.name_sel.disabled = !!r; f.name_free.disabled = !!r; f.password.value = '';
+  f.password.placeholder = r ? 'nuova password' : '';
+  openForm(f, () => {
+    const name = r ? r.name : pickedName(f, 'name_sel', 'name_free');
+    if (!name) throw new Error('scegli o scrivi il nome del ripetitore');
+    return post('/api/repeaters', { name, password: f.password.value });
+  });
+}
+function userForm(u) {
+  const f = $('form-user');
+  f.username.value = u ? u.username : ''; f.username.disabled = !!u; f.password.value = '';
+  f.role.value = u ? u.role : (adm.users.length ? 'viewer' : 'admin'); f.role.disabled = !!u;
+  openForm(f, async () => {
+    if (f.password.value.length < 6) throw new Error('password di almeno 6 caratteri');
+    if (u) return put('/api/users/' + encodeURIComponent(u.username), { password: f.password.value });
+    const first = !adm.users.length;
+    const r = await post('/api/users', { username: f.username.value.trim(), password: f.password.value, role: f.role.value });
+    if (first) { toast('Primo utente creato: ora accedi'); setTimeout(() => location.reload(), 1200); }
+    return r;
+  });
+}
+
+// ---------- gateway
+let gw = null;
+async function loadGateway() {
+  const box = $('gw-info'), f = $('form-gw');
+  try { gw = await api('/api/gateway'); }
+  catch (e) { if (e.message !== 'login') box.replaceChildren(el('p', { className: 'muted', textContent: 'Gateway non disponibile: ' + e.message })); f.hidden = true; return; }
+  f.hidden = false;
+  const v = (x, suf = '') => x == null || x === '' ? '—' : x + suf;
+  box.replaceChildren(
+    cell('Modello', v(gw.model)), cell('Firmware', v(gw.firmware) + (gw.fw_build ? ' (' + gw.fw_build + ')' : '')),
+    cell('Chiave', gw.public_key ? gw.public_key.slice(0, 12) + '…' : '—'),
+    cell('Alimentazione', gw.battery_mv ? (gw.battery_mv / 1000).toFixed(2) + ' V' : '—'),
+    cell('Uptime', fmtUp(gw.uptime)), cell('Coda TX', v(gw.queue_len)),
+    cell('Rumore', v(gw.noise_floor, ' dBm')), cell('Ultimo RSSI', v(gw.last_rssi, ' dBm')), cell('Ultimo SNR', v(gw.last_snr)),
+    cell('Pacchetti Rx/Tx', `${v(gw.recv)}/${v(gw.sent)}`), cell('Tempo TX', gw.tx_air_secs != null ? Math.round(gw.tx_air_secs / 60) + ' min' : '—'),
+    cell('Contatti', v(gw.contacts)));
+  f.gw_name.value = gw.name || ''; f.tx_power.value = gw.tx_power ?? ''; f.tx_power.max = gw.max_tx_power || 30;
+  f.lat.value = gw.lat ?? ''; f.lon.value = gw.lon ?? ''; f.share_location.checked = !!gw.share_location;
+  f.radio_freq.value = gw.radio_freq ?? ''; f.radio_bw.value = String(gw.radio_bw ?? '');
+  f.radio_sf.value = String(gw.radio_sf ?? ''); f.radio_cr.value = String(gw.radio_cr ?? '');
+}
+$('form-gw').onsubmit = async e => {
+  e.preventDefault();
+  const f = e.target;
+  const body = { name: f.gw_name.value.trim(), tx_power: +f.tx_power.value, share_location: f.share_location.checked,
+    radio_freq: +f.radio_freq.value, radio_bw: +f.radio_bw.value, radio_sf: +f.radio_sf.value, radio_cr: +f.radio_cr.value };
+  if (f.lat.value !== '' && f.lon.value !== '') { body.lat = +f.lat.value; body.lon = +f.lon.value; }
+  const radioChanged = gw && (body.radio_freq !== gw.radio_freq || body.radio_bw !== gw.radio_bw || body.radio_sf !== gw.radio_sf || body.radio_cr !== gw.radio_cr);
+  if (radioChanged) {
+    if (!confirm(`Cambiare i parametri radio del gateway in ${body.radio_freq} MHz, BW ${body.radio_bw}, SF${body.radio_sf}, CR${body.radio_cr}?\nSe non coincidono con la rete, il gateway non sentirà più i nodi.`)) return;
+    body.confirm_radio = true;
+  }
+  const r = await action(f.querySelector('.primary'), () => post('/api/gateway', body),
+    r => r.radio_changed ? 'Salvato. Se la radio non cambia, riavvia il gateway' : 'Gateway aggiornato');
+  if (r) loadGateway();
+};
+$('gw-reload').onclick = () => loadGateway();
+$('gw-advert').onclick = e => action(e.target, () => post('/api/advert'), 'Advert inviato');
+$('gw-reboot').onclick = e => { if (confirm('Riavviare la radio gateway? Torna disponibile in circa 30 secondi.')) action(e.target, () => post('/api/gateway/reboot'), 'Gateway in riavvio').then(() => setTimeout(loadGateway, 30000)); };
+
+
+// ---------- sistema
+async function loadSystem() {
+  let si;
+  try { si = await api('/api/system'); } catch (e) { return; }
+  const v = (x, suf = '') => x == null ? '—' : x + suf;
+  $('sys-info').replaceChildren(
+    cell('Modello', v(si.model)), cell('Temperatura', v(si.temp_c, ' °C')), cell('Acceso da', fmtUp(si.uptime)),
+    cell('Carico CPU', v(si.load)), cell('RAM libera', si.mem_total_mb ? `${si.mem_free_mb}/${si.mem_total_mb} MB` : '—'),
+    cell('Disco libero', `${v(si.disk_free_gb)}/${v(si.disk_total_gb)} GB`),
+    cell('Alimentazione', si.undervoltage_now ? 'TENSIONE BASSA' : si.undervoltage_since_boot ? 'bassa in passato' : si.undervoltage_now === false ? 'ok' : '—'));
+  const w = $('sys-warn');
+  w.hidden = !(si.undervoltage_now || si.undervoltage_since_boot);
+  w.textContent = si.undervoltage_now ? 'L\'alimentatore non dà abbastanza corrente adesso: rischio di blocchi e di danni alla SD. Usa un alimentatore 5,1 V 2,5 A e un cavo corto.'
+    : 'Dall\'ultimo avvio c\'è stata almeno una caduta di tensione: controlla alimentatore e cavo.';
+  const ok = si.can_reboot && si.can_poweroff;
+  $('sys-reboot').disabled = !si.can_reboot; $('sys-poweroff').disabled = !si.can_poweroff;
+  $('sys-note').textContent = ok ? 'Dopo lo spegnimento, per riaccendere il Raspberry stacca e riattacca l\'alimentazione. La Heltec resta alimentata via USB finché c\'è corrente.'
+    : 'Riavvio e spegnimento non sono ancora abilitati: serve un comando una tantum via SSH (vedi istruzioni).';
+}
+$('sys-reload').onclick = () => { loadSystem(); loadGateway(); };
+$('sys-reboot').onclick = e => { if (confirm('Riavviare il Raspberry? La pagina torna disponibile in circa un minuto.')) action(e.target, () => post('/api/system/reboot'), 'Riavvio in corso…'); };
+$('sys-poweroff').onclick = e => { if (confirm('Spegnere il Raspberry?\nPer riaccenderlo dovrai staccare e riattaccare l\'alimentazione.')) action(e.target, () => post('/api/system/poweroff'), 'Spegnimento in corso…'); };
+$('sys-gw-reboot').onclick = e => { if (confirm('Riavviare la radio gateway? Torna disponibile in circa 30 secondi.')) action(e.target, () => post('/api/gateway/reboot'), 'Gateway in riavvio').then(() => setTimeout(loadGateway, 30000)); };
+
+$('add-tracker').onclick = () => trackerForm(null);
+$('add-rep').onclick = () => repForm(null);
+$('add-user').onclick = () => userForm(null);
+
+// ---------- avvio
+async function refresh() {
+  try { state = await api('/api/state?hours=' + $('range').value); render(); } catch (e) { }
+}
+async function init() {
+  try { me = await api('/api/me'); } catch (e) { return; }
+  document.body.classList.toggle('admin', me.role === 'admin');
+  $('logout').style.display = me.auth ? '' : 'none';
+  $('whoami').textContent = me.auth ? me.username : '';
+  await refresh();
+  if (me.role === 'admin' && location.hash === '#gestione') setTab('admin');
+  setInterval(refresh, 60000);
+}
+init();
+</script>
+</body>
+</html>

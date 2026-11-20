@@ -1,0 +1,55 @@
+MESHWATCH - SCHEDA SD PRONTA ALL'USO
+====================================
+
+(Se hai scaricato la repo da GitHub: "Code -> Download ZIP", estrai e apri la cartella sd-kit.
+ Gli script prendono il programma dalla cartella superiore.)
+
+Sistema: DietPi (Debian ridotta al minimo, circa 40 MB di RAM a riposo).
+Al primo avvio si installa e si configura da solo: niente terminale.
+
+COSA SERVE
+- Raspberry Pi 2, 3, 3B+, 4 o 5 + microSD da 8 GB o piu'
+  (Pi 2 senza WiFi integrato: usa il cavo di rete)
+- Heltec V3 con firmware MeshCore "Companion USB"
+- connessione a Internet (cavo o WiFi) per il primo avvio
+
+1. SCARICA DIETPI
+   dietpi.com -> Download -> Raspberry Pi, poi scegli:
+   - Pi 3, 3B+, 4, 5  -> "ARMv8 64-bit"
+   - Pi 2             -> "ARMv7 32-bit"
+   (file .img.xz)
+
+2. SCRIVILO SULLA SD
+   balenaEtcher (piu' semplice) oppure Raspberry Pi Imager -> "Usa immagine personalizzata".
+   Con Imager NON attivare la personalizzazione del sistema operativo.
+   A fine scrittura scollega e ricollega la SD: compare un disco con dentro dietpi.txt.
+
+3. DOPPIO CLIC SU  PREPARA-SD.bat
+   Trova la SD da solo e chiede:
+   - nome del Raspberry in rete (invio = meshwatch)
+   - password di accesso al Raspberry
+   - WiFi e password (vuoto se usi il cavo)
+   Poi copia MeshWatch sulla SD e apre meshwatch-config.yaml nel Blocco note:
+   compila almeno il token Telegram (SenseCAP e ripetitori puoi metterli qui
+   oppure aggiungerli dopo dalla pagina, scheda Gestione). Salva e chiudi.
+
+4. AVVIA
+   Espelli la SD, mettila nel Raspberry, collega la Heltec via USB, accendi.
+   Il primo avvio dura 10-15 minuti (20-30 su Pi 2/3) (aggiorna il sistema e installa MeshWatch).
+   Poi apri:  http://meshwatch.local:8080
+
+COME SI FA DOPO, SENZA TERMINALE
+- Dispositivi, ripetitori e utenti: dalla pagina, scheda Gestione (non serve togliere la SD).
+- Token Telegram e impostazioni generali: spegni, metti la SD nel PC, modifica meshwatch-config.yaml,
+  rimettila e riaccendi.
+- Aggiornare MeshWatch: spegni, metti la SD nel PC, doppio clic su AGGIORNA-SD.bat
+  (dal kit nuovo), rimetti la SD e riaccendi. Config e dati restano.
+- Qualcosa non va al primo avvio: sulla SD trovi meshwatch-install.log.
+- Accesso da PC (facoltativo): PuTTY o WinSCP, host meshwatch.local, utente meshwatch,
+  con la password scelta al punto 3. Per i comandi da amministratore: sudo.
+  (root e dietpi non possono entrare via SSH)
+
+FARE PIU' COPIE
+Quando una scheda funziona, con Win32 Disk Imager puoi salvarne l'immagine (.img)
+e scriverla su altre SD: avrai copie identiche gia' installate.
+Attenzione: la copia contiene anche config, password e token.
