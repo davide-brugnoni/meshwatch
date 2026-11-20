@@ -1,5 +1,7 @@
 # MeshWatch
 
+[![Test](https://github.com/davide-brugnoni/meshwatch/actions/workflows/test.yml/badge.svg)](https://github.com/davide-brugnoni/meshwatch/actions/workflows/test.yml)
+
 Dashboard self-hosted per reti **MeshCore**: segue la posizione GPS di uno o più dispositivi (per esempio un SenseCAP T1000-E), monitora i ripetitori e si gestisce da una pagina web in rete locale o da un **bot Telegram** quando si è fuori casa.
 
 Gira su un Raspberry Pi con una radio MeshCore in modalità *Companion USB* (Heltec V3, RAK, …) collegata via USB.
@@ -14,6 +16,10 @@ Gira su un Raspberry Pi con una radio MeshCore in modalità *Companion USB* (Hel
 - **Intervallo adattivo**: facoltativo, per dispositivo. Se tra due posizioni si è spostato più di 150 m viene interrogato più spesso; quando si ferma torna all'intervallo normale.
 - **Pulizia tracce**: dal cestino sulla mappa (tutti i dispositivi) o da "Cancella traccia" (uno solo) si eliminano i punti salvati; resta l'ultima posizione. Solo admin.
 - **Ripetitori**: login e statistiche periodiche (batteria, uptime, rumore, SNR, RSSI, pacchetti) con grafici di batteria, rumore, SNR e RSSI.
+- **Chat**: messaggi privati e canali (Public e canali privati) direttamente dalla Heltec collegata al Raspberry, dalla pagina, senza accendere un altro dispositivo. Conferma di consegna, nuovi tentativi automatici, messaggi salvati anche a pagina chiusa.
+- **Mappa della rete**: livello "Rete MeshCore" con i nodi che annunciano la posizione e i collegamenti tra ripetitori vicini colorati per SNR.
+- **Rubrica del gateway**: contatti della Heltec con salti, posizione e ultimo advert; preferiti, azzera percorso, rimuovi, aggiunta manuale dei nuovi nodi.
+- **Mappe a scelta**: CARTO chiara e scura, OpenStreetMap, CyclOSM, OpenTopoMap, satellite Esri (con o senza nomi). La scelta resta salvata nel browser.
 - **Terminale**: comandi CLI ai ripetitori dalla pagina o da Telegram, con conferma per i comandi che modificano o riavviano e registro di tutti i comandi inviati.
 - **Gateway**: stato e configurazione della radio collegata (nome, potenza, posizione, parametri radio), advert, riavvio.
 - **Sistema**: temperatura, memoria, disco, **avviso di tensione bassa**, riavvio e spegnimento del Raspberry.
@@ -134,6 +140,40 @@ sudo systemctl stop meshwatch
 sudo systemctl start meshwatch
 ```
 
+## Chat
+
+Scheda **Chat** (barra in alto o in basso sul telefono). Serve il login: la usano sia gli *admin* sia i *viewer*.
+
+- **Con chi**: i canali configurati nella Heltec (Public e quelli privati) e i contatti *companion* o *room server* della sua rubrica. Per una nuova conversazione scegli dal menu "Nuova conversazione" oppure "Scrivi" dalla rubrica.
+- **Mittente**: chi riceve vede come mittente il **nome del gateway** (Gestione → Gateway), non quello del tuo telefono.
+- **Stato dei messaggi privati**: *in coda* → *inviato* → *✓✓ consegnato* quando arriva la conferma. Senza conferma il gateway riprova (3 tentativi, l'ultimo in flood) e poi segna *nessuna conferma*, con il pulsante **Riprova**. Sui canali non esiste conferma: *✓ trasmesso*.
+- **Precedenza**: la radio fa una cosa alla volta. Un messaggio passa davanti alle richieste di posizione e ai ripetitori in coda; se in quel momento ne è in corso una, aspetta che finisca (fino a circa 40 secondi).
+- **Lunghezza**: circa 150 byte (le lettere accentate e le emoji contano di più); sui canali un po' meno, perché il nome del gateway fa parte del testo. Al massimo 10 messaggi al minuto, per rispettare il duty cycle.
+- **Ricezione**: i messaggi arrivano anche a pagina chiusa e restano nel database (vengono cancellati con la pulizia dei dati vecchi). Il numero sulla scheda Chat indica i non letti. Le risposte del terminale dei ripetitori non finiscono in chat.
+- Su Telegram i messaggi **non** vengono inoltrati. Nel registro attività finisce chi ha scritto e a chi, non il testo.
+
+## Mappa della rete e rubrica
+
+- Sulla mappa, dal selettore dei livelli, attiva **Rete MeshCore** (serve il login): rombi gialli i ripetitori, cerchi blu i companion, quadrato verde il gateway. Le linee uniscono i ripetitori che si sentono tra loro: verde SNR ≥ 5 dB, giallo 0–5, arancione sotto 0. La linea tratteggiata indica un ripetitore che il gateway sente direttamente. Compaiono solo i nodi che annunciano la posizione.
+- I vicini vengono chiesti ai ripetitori configurati al massimo ogni 6 ore (servono la password del ripetitore e un firmware recente). Per aggiornarli subito: **Gestione → Rubrica del gateway → Aggiorna mappa della rete**.
+- **Rubrica del gateway** (solo admin): cerca, segna i preferiti, azzera il percorso di un nodo che non risponde più, rimuovi i contatti inutili (la Heltec ne tiene un numero limitato). Con l'**aggiunta manuale** attiva i nodi nuovi restano in attesa finché non li aggiungi. Se rimuovi un contatto usato da un dispositivo o da un ripetitore, la pagina ti avvisa.
+
+## Mappe
+
+Tutte gratuite e senza chiave, si sceglie dal pulsante dei livelli in alto a destra sulla mappa:
+
+| Mappa | Adatta per |
+|---|---|
+| Chiara (CARTO Voyager) — predefinita | uso generale, strade e nomi leggibili, tracce ben visibili |
+| Scura (CARTO Dark Matter) | si intona alla pagina scura, la traccia colorata risalta |
+| OpenStreetMap | la più dettagliata (sentieri, edifici, numeri civici) |
+| Escursionismo (CyclOSM) | sentieri, piste ciclabili, rilievo |
+| Topografica (OpenTopoMap) | curve di livello, montagna (zoom massimo più basso) |
+| Satellite (Esri) | foto aeree |
+| Satellite con nomi | foto aeree con confini e località |
+
+Le tessere arrivano da Internet: il Raspberry non deve scaricare niente, è il browser che le carica.
+
 ## Aggiornamenti
 
 Dalla pagina: **Gestione → Aggiornamento programma → Controlla aggiornamenti → Aggiorna ora**. Il Raspberry deve raggiungere `api.github.com` e `codeload.github.com`.
@@ -146,7 +186,19 @@ Cosa succede:
 4. mette da parte la versione attuale in `.update/backup`, installa la nuova e riavvia il servizio (circa un minuto: pagina e bot non rispondono);
 5. se la nuova versione non resta accesa 90 secondi per 3 avvii di fila, `tools/guard.sh` (eseguito da systemd prima di ogni avvio) rimette la precedente e la pagina lo segnala.
 
-`config.yaml`, database, utenti e venv non vengono toccati. Repository e ramo si possono cambiare con la sezione `update:` del config.
+`config.yaml`, database, utenti e venv non vengono toccati.
+
+### Test automatici
+
+A ogni push GitHub Actions esegue i test (Python 3.11 e 3.13, radio simulata), il controllo degli errori nel codice e la verifica della sintassi della pagina e degli script: l'esito è il bollino in cima a questo README e la scheda *Actions* del repository. In locale:
+
+```bash
+pip install httpx pyflakes
+```
+
+```bash
+python tests/test_smoke.py && python tests/test_chat.py && python tests/test_update.py
+``` Repository e ramo si possono cambiare con la sezione `update:` del config.
 
 Ogni 12 ore il programma controlla se c'è una nuova versione: se sì manda un avviso su Telegram (una volta per versione) e mostra un pallino su **Gestione**. Si disattiva con `update.notify: false`.
 
