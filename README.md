@@ -16,7 +16,7 @@ Gira su un Raspberry Pi con una radio MeshCore in modalità *Companion USB* (Hel
 - **Gateway**: stato e configurazione della radio collegata (nome, potenza, posizione, parametri radio), advert, riavvio.
 - **Sistema**: temperatura, memoria, disco, **avviso di tensione bassa**, riavvio e spegnimento del Raspberry.
 - **Telegram**: posizione con pin e link Google Maps, ultima posizione, traccia, stato dei nodi, avvisi (dispositivo che non risponde, batteria bassa, ripetitore muto).
-- **Da telefono**: pagina pensata anche per lo smartphone (barra in basso Mappa · Nodi · Gestione), installabile come app con *Aggiungi a schermata Home*.
+- **Da telefono**: pagina pensata anche per lo smartphone (barra in basso Mappa · Nodi · Gestione).
 - **Aggiornamento dalla pagina**: scarica l'ultima versione da GitHub e riavvia, senza togliere la SD; se la nuova versione non parte torna da sola alla precedente.
 - **Utenti**: ruoli *admin* (gestisce tutto) e *viewer* (vede e chiede la posizione), predisposto per l'accesso da Internet tramite Cloudflare Tunnel.
 
@@ -146,7 +146,7 @@ meshwatch/            pacchetto Python
   auth.py             login e sessioni
   system.py           stato del Raspberry, riavvio/spegnimento
   updater.py          aggiornamento dalla pagina (GitHub), con ripristino
-web/index.html        interfaccia (Leaflet incluso in web/vendor), manifest e icone
+web/index.html        interfaccia (Leaflet incluso in web/vendor)
 tools/                guard.sh (ripristino), configura-servizio.sh, abilita-aggiornamenti.sh
 sd-kit/               preparazione e aggiornamento della SD DietPi da Windows
 install.sh            installazione manuale su Raspberry Pi OS / Debian

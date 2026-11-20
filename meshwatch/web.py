@@ -105,15 +105,9 @@ def create_app(core, auth, web_cfg, updater=None):
     async def index():
         return FileResponse(WEB_DIR / "index.html")
 
-    # icone e manifest per "Aggiungi a schermata Home" (pubblici: non contengono dati)
-    STATIC = {"manifest.webmanifest": "application/manifest+json", "icon.svg": "image/svg+xml",
-              "icon-180.png": "image/png", "icon-192.png": "image/png", "icon-512.png": "image/png"}
-
-    @app.get("/{name}", include_in_schema=False)
-    async def static_file(name: str):
-        if name not in STATIC:
-            raise HTTPException(404)
-        return FileResponse(WEB_DIR / name, media_type=STATIC[name], headers={"Cache-Control": "max-age=86400"})
+    @app.get("/icon.svg", include_in_schema=False)
+    async def icon():
+        return FileResponse(WEB_DIR / "icon.svg", media_type="image/svg+xml", headers={"Cache-Control": "max-age=86400"})
 
     # ---------- sessione
     @app.post("/api/login")

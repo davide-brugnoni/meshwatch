@@ -131,8 +131,8 @@ def main():
     r = c.get("/api/update").json()
     check(r["version"] and r["problems"], "API stato aggiornamento")
     check(c.post("/api/update/apply").status_code == 400, "API rifiuta se non si può aggiornare")
-    check(c.get("/manifest.webmanifest").status_code == 200 and c.get("/icon-192.png").status_code == 200
-          and c.get("/config.yaml").status_code == 404, "manifest e icone pubblici, nient'altro")
+    check(c.get("/icon.svg").status_code == 200 and c.get("/config.yaml").status_code == 404,
+          "icona pubblica, nient'altro")
     print("Tutti i test superati.")
 
 
