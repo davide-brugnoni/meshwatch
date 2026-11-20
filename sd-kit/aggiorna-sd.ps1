@@ -12,7 +12,7 @@ function Copy-App([string]$dest) {
         $root = Split-Path -Parent $here
         if (-not (Test-Path (Join-Path $root 'meshwatch\__main__.py'))) { throw "Non trovo i file di MeshWatch accanto a questo script." }
         New-Item -ItemType Directory $dest | Out-Null
-        foreach ($i in 'meshwatch', 'web', 'requirements.txt', 'config.example.yaml', 'README.md') {
+        foreach ($i in 'meshwatch', 'web', 'tools', 'requirements.txt', 'config.example.yaml', 'README.md', 'LICENSE') {
             Copy-Item (Join-Path $root $i) $dest -Recurse
         }
     }
@@ -37,7 +37,11 @@ $sd = $drive.Root
 $dst = Join-Path $sd 'meshwatch'
 if (Test-Path $dst) { Remove-Item $dst -Recurse -Force }
 Copy-App $dst
+# segnale per il Raspberry: al prossimo avvio copia il programma dalla SD (poi lo cancella da solo)
+[IO.File]::WriteAllText((Join-Path $dst 'AGGIORNA'), "aggiornamento da SD`n")
 Copy-Item (Join-Path $here 'Automation_Custom_Script.sh') $sd -Force
 Write-Host "Programma aggiornato su $sd" -ForegroundColor Green
 Write-Host "meshwatch-config.yaml e i dati sul Raspberry non sono stati toccati."
+Write-Host "`nSuggerimento: dalla versione 1.1 puoi aggiornare anche dalla pagina web"
+Write-Host "(Gestione -> Sistema -> Aggiornamento), senza togliere la SD."
 Write-Host "`nEspelli la scheda, rimettila nel Raspberry e accendilo: al riavvio usa la nuova versione."

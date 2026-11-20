@@ -12,7 +12,7 @@ function Copy-App([string]$dest) {
         $root = Split-Path -Parent $here
         if (-not (Test-Path (Join-Path $root 'meshwatch\__main__.py'))) { throw "Non trovo i file di MeshWatch accanto a questo script." }
         New-Item -ItemType Directory $dest | Out-Null
-        foreach ($i in 'meshwatch', 'web', 'requirements.txt', 'config.example.yaml', 'README.md') {
+        foreach ($i in 'meshwatch', 'web', 'tools', 'requirements.txt', 'config.example.yaml', 'README.md', 'LICENSE') {
             Copy-Item (Join-Path $root $i) $dest -Recurse
         }
     }

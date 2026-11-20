@@ -6,6 +6,7 @@ Wants=network-online.target
 [Service]
 User=__USER__
 WorkingDirectory=__DIR__
+ExecStartPre=-/bin/sh __DIR__/tools/guard.sh
 ExecStart=__DIR__/venv/bin/python -m meshwatch -c config.yaml
 Restart=always
 RestartSec=10

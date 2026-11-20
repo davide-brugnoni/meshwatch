@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from .auth import hash_password
 from . import system
 from .core import is_dangerous
+from .updater import UpdateError
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 COOKIE = "meshwatch_session"
@@ -61,7 +62,7 @@ class UserIn(BaseModel):
     role: str | None = Field(None, pattern=r"^(admin|viewer)$")
 
 
-def create_app(core, auth, web_cfg):
+def create_app(core, auth, web_cfg, updater=None):
     public = web_cfg.get("mode", "lan") == "public"
     db = core.db
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
@@ -103,6 +104,16 @@ def create_app(core, auth, web_cfg):
     @app.get("/")
     async def index():
         return FileResponse(WEB_DIR / "index.html")
+
+    # icone e manifest per "Aggiungi a schermata Home" (pubblici: non contengono dati)
+    STATIC = {"manifest.webmanifest": "application/manifest+json", "icon.svg": "image/svg+xml",
+              "icon-180.png": "image/png", "icon-192.png": "image/png", "icon-512.png": "image/png"}
+
+    @app.get("/{name}", include_in_schema=False)
+    async def static_file(name: str):
+        if name not in STATIC:
+            raise HTTPException(404)
+        return FileResponse(WEB_DIR / name, media_type=STATIC[name], headers={"Cache-Control": "max-age=86400"})
 
     # ---------- sessione
     @app.post("/api/login")
@@ -294,6 +305,31 @@ def create_app(core, auth, web_cfg):
             raise HTTPException(403, "permesso mancante: esegui una volta il comando indicato nel README")
         import asyncio
         asyncio.create_task(system.run_later(action))
+        return {"ok": True}
+
+    # ---------- aggiornamento del programma
+    def get_updater():
+        if updater is None:
+            raise HTTPException(503, "aggiornamento non disponibile")
+        return updater
+
+    @app.get("/api/update")
+    async def update_status(u=Depends(admin)):
+        return get_updater().status()
+
+    @app.post("/api/update/check")
+    async def update_check(u=Depends(admin)):
+        try:
+            return await get_updater().check()
+        except UpdateError as e:
+            raise HTTPException(502, str(e))
+
+    @app.post("/api/update/apply")
+    async def update_apply(u=Depends(admin)):
+        try:
+            await get_updater().start()
+        except UpdateError as e:
+            raise HTTPException(400, str(e))
         return {"ok": True}
 
     # ---------- varie

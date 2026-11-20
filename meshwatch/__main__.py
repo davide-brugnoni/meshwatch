@@ -12,6 +12,7 @@ from .auth import Auth, hash_password
 from .core import Core
 from .db import DB
 from .mesh import Mesh
+from .updater import Updater, restart_event
 from .web import create_app
 
 log = logging.getLogger("meshwatch")
@@ -35,8 +36,9 @@ async def run(cfg):
     else:
         log.info("Telegram non configurato: bot disattivato")
 
+    updater = Updater(cfg.get("update") or {})
     server = uvicorn.Server(uvicorn.Config(
-        create_app(core, auth, web_cfg),
+        create_app(core, auth, web_cfg, updater),
         host=web_cfg.get("host", "0.0.0.0"), port=int(web_cfg.get("port", 8080)),
         log_level="warning", proxy_headers=web_cfg.get("mode") == "public"))
 
@@ -44,7 +46,16 @@ async def run(cfg):
         await mesh.connect()
         await asyncio.gather(core.tracker_loop(), core.repeater_loop())
 
-    await asyncio.gather(server.serve(), radio())
+    serve = asyncio.create_task(server.serve())
+    others = [asyncio.create_task(radio()), asyncio.create_task(updater.confirm_later())]
+    restart = asyncio.create_task(restart_event.wait())
+    await asyncio.wait([serve, restart], return_when=asyncio.FIRST_COMPLETED)
+    if restart.done():
+        log.info("Riavvio richiesto (aggiornamento): chiudo il servizio, systemd lo fa ripartire")
+        server.should_exit = True
+        await serve
+    for t in others + [restart]:
+        t.cancel()
 
 
 def main():
