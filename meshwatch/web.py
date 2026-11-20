@@ -43,6 +43,7 @@ class TrackerIn(BaseModel):
     offline_alert_min: int | None = Field(None, ge=10, le=1440)
     low_battery_v: float | None = Field(None, ge=0, le=5)
     paused: bool | None = None
+    moving_interval_min: int | None = Field(None, ge=0, le=720)
 
 
 class RepeaterIn(BaseModel):
@@ -199,8 +200,8 @@ def create_app(core, auth, web_cfg, updater=None):
         db.update_tracker(tid, **f)
         if "paused" in f and old["paused"] and not f["paused"]:
             core.schedule_now(tid)                 # ripreso: chiede subito
-        elif "interval_min" in f:
-            core.next_due[tid] = time.time() + f["interval_min"] * 60
+        elif "interval_min" in f or "moving_interval_min" in f:
+            core.next_due[tid] = time.time() + core.interval_min(db.tracker(tid)) * 60
         return {"ok": True}
 
     @app.delete("/api/trackers/{tid}")

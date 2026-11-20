@@ -126,6 +126,21 @@ def main():
           "il viewer chiede la posizione ma non gestisce")
     check(v.delete("/api/track").status_code == 403, "un viewer non cancella le tracce")
 
+    # intervallo adattivo
+    from meshwatch.core import distance_m
+    check(abs(distance_m({"lat": 45.0, "lon": 9.0}, {"lat": 45.001, "lon": 9.0}) - 111) < 2, "distanza in metri")
+    db.update_tracker(1, interval_min=60, moving_interval_min=10)
+    t1 = db.tracker(1)
+    check(core.interval_min(t1) == 60, "fermo: intervallo normale")
+    core._update_moving(t1, {"lat": 45.0, "lon": 9.0}, {"lat": 45.01, "lon": 9.0})
+    check(core.interval_min(t1) == 10 and core.next_due[1] <= time.time() + 600, "in movimento: intervallo veloce")
+    core._update_moving(t1, {"lat": 45.01, "lon": 9.0}, {"lat": 45.0101, "lon": 9.0})
+    check(core.interval_min(t1) == 60, "di nuovo fermo")
+    db.update_tracker(1, moving_interval_min=0)
+    core._update_moving(t1, {"lat": 45.0, "lon": 9.0}, {"lat": 45.01, "lon": 9.0})
+    check(core.interval_min(db.tracker(1)) == 60, "intervallo adattivo disattivato")
+    core.moving.clear()
+
     async def sched():
         core.next_due.clear()
         task = asyncio.create_task(core.tracker_loop())

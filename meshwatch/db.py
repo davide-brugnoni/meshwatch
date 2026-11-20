@@ -52,6 +52,10 @@ class DB:
                 if "tracker_id" not in cols:
                     self.conn.execute(f"ALTER TABLE {table} ADD COLUMN tracker_id INTEGER")
             self.conn.execute("CREATE INDEX IF NOT EXISTS i_pos_tr ON positions(tracker_id, ts)")
+            # intervallo adattivo: 0 = disattivato
+            cols = [r[1] for r in self.conn.execute("PRAGMA table_info(trackers)")]
+            if "moving_interval_min" not in cols:
+                self.conn.execute("ALTER TABLE trackers ADD COLUMN moving_interval_min INTEGER DEFAULT 0")
             self.conn.commit()
 
     def _exec(self, sql, args=()):
@@ -95,7 +99,7 @@ class DB:
 
     # ---------- tracker
     TRACKER_FIELDS = ("contact", "label", "interval_min", "active_hours", "offline_alert_min",
-                      "low_battery_v", "paused", "color")
+                      "low_battery_v", "paused", "color", "moving_interval_min")
 
     def trackers(self):
         return self._all("SELECT * FROM trackers ORDER BY id")

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import math
 import time
 from datetime import datetime
 
@@ -26,6 +27,20 @@ def in_active_hours(spec):
         return True
 
 
+# Intervallo adattivo: se tra due posizioni il dispositivo si è spostato più di
+# MOVE_M metri è "in movimento" e viene interrogato più spesso.
+MOVE_M = 150
+
+
+def distance_m(a, b):
+    """Distanza in metri tra due punti {lat, lon} (formula dell'emisenoverso)."""
+    r = 6371000
+    p1, p2 = math.radians(a["lat"]), math.radians(b["lat"])
+    dp, dl = p2 - p1, math.radians(b["lon"] - a["lon"])
+    h = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(h))
+
+
 def maps_link(lat, lon):
     return f"https://www.google.com/maps?q={lat:.6f},{lon:.6f}"
 
@@ -41,6 +56,7 @@ class Core:
         self.wakeup = asyncio.Event()
         self.next_due = {}           # tracker_id -> timestamp prossima richiesta
         self.alerts = {}             # chiave -> set di avvisi attivi
+        self.moving = {}             # tracker_id -> True se all'ultima posizione si stava spostando
         db.seed_from_config(cfg)
 
     # ---------- avvisi
@@ -75,11 +91,30 @@ class Core:
         self.db.add_tracker_poll(tid, ok)
         if ok:
             if res["lat"] is not None:
+                prev = self.db.last_position(tid)
                 self.db.add_position(tid, res["lat"], res["lon"], res["alt"], res["batt_v"])
+                self._update_moving(t, prev, res)
             await self._tracker_ok(t, res)
         else:
             await self._tracker_fail(t)
         return res
+
+    def _update_moving(self, t, prev, res):
+        was = self.moving.get(t["id"], False)
+        now = bool(prev) and distance_m(prev, res) > MOVE_M
+        self.moving[t["id"]] = now
+        if now and not was and t.get("moving_interval_min"):
+            # appena partito: la prossima richiesta arriva prima
+            due = time.time() + t["moving_interval_min"] * 60
+            if self.next_due.get(t["id"], due + 1) > due:
+                self.next_due[t["id"]] = due
+
+    def interval_min(self, t):
+        """Intervallo in uso: quello "in movimento" se attivo e il dispositivo si sposta."""
+        fast = t.get("moving_interval_min") or 0
+        if fast and self.moving.get(t["id"]):
+            return max(5, min(fast, t["interval_min"]))
+        return max(5, t["interval_min"])
 
     async def _tracker_ok(self, t, res):
         f = self._flags(("t", t["id"]))
@@ -175,13 +210,15 @@ class Core:
                 due = self.next_due.get(tid, 0)
                 if now < due:
                     continue
-                self.next_due[tid] = now + max(5, t["interval_min"]) * 60
+                self.next_due[tid] = now + self.interval_min(t) * 60
                 if t["paused"] or not in_active_hours(t["active_hours"]):
                     continue
                 try:
                     await self.poll_tracker(tid)
                 except Exception as e:
                     log.exception("Errore poll %s: %s", t["label"], e)
+                # la richiesta può aver cambiato lo stato "in movimento"
+                self.next_due[tid] = now + self.interval_min(t) * 60
             self.wakeup.clear()
             try:
                 await asyncio.wait_for(self.wakeup.wait(), timeout=30)
@@ -202,6 +239,8 @@ class Core:
         return {
             **t,
             "paused": bool(t["paused"]),
+            "moving": self.moving.get(t["id"], False),
+            "current_interval_min": self.interval_min(t),
             "last_ok": self.db.last_tracker_ok(t["id"]),
             "last_position": self.db.last_position(t["id"]),
             "track": self.db.positions_since(t["id"], since),

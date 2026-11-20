@@ -265,6 +265,7 @@
       <label class="free" hidden>Nome contatto esatto <input name="contact_free" maxlength="64"></label>
       <label>Nome visualizzato <input name="label" maxlength="40" placeholder="es. Escursionista"></label>
       <label>Posizione ogni (minuti) <input type="number" name="interval_min" min="5" max="720" value="30"></label>
+      <label>In movimento ogni (min, 0 = come sopra) <input type="number" name="moving_interval_min" min="0" max="720" value="0"></label>
       <label>Fascia oraria
         <span class="hours"><input type="time" name="h_from" value="05:00"> – <input type="time" name="h_to" value="21:00"></span>
         <span class="hours" style="text-transform:none"><input type="checkbox" name="always"> sempre attivo</span>
@@ -476,7 +477,8 @@ function trackerCard(t) {
   if (p && p.batt_v != null) meta.push(`batteria ${p.batt_v.toFixed(2)} V`);
   if (p && p.alt != null) meta.push(`quota ${Math.round(p.alt)} m`);
   meta.push(`ultima risposta ${fmtTs(t.last_ok)}`);
-  meta.push(t.paused ? 'IN PAUSA' : `ogni ${t.interval_min} min${t.active_hours ? ' (' + t.active_hours + ')' : ''}`);
+  meta.push(t.paused ? 'IN PAUSA' : (t.moving && t.current_interval_min < t.interval_min ? `in movimento, ogni ${t.current_interval_min} min` : `ogni ${t.interval_min} min`)
+    + (t.active_hours ? ' (' + t.active_hours + ')' : ''));
   const poll = el('button', { className: 'primary', textContent: 'Chiedi posizione' });
   poll.onclick = () => action(poll, () => post(`/api/trackers/${t.id}/poll`),
     r => r.ok ? (r.result.lat != null ? `Posizione di ${t.label} ricevuta` : 'Risposta ricevuta, GPS senza fix') : `${t.label} non ha risposto`);
@@ -655,7 +657,7 @@ async function loadAdmin() {
     rm.onclick = () => { if (confirm(`Eliminare ${t.label}? Verrà cancellato anche lo storico delle posizioni.`)) action(rm, () => del(`/api/trackers/${t.id}`), 'Dispositivo eliminato'); };
     tl.append(el('div', { className: 'item' },
       el('span', { className: 'name' }, swatch(t.color), t.label),
-      el('span', { className: 'info', textContent: `contatto ${t.contact} · ogni ${t.interval_min} min · ${t.active_hours || 'sempre'} · avviso dopo ${t.offline_alert_min} min · batteria < ${t.low_battery_v} V${t.paused ? ' · IN PAUSA' : ''}` }),
+      el('span', { className: 'info', textContent: `contatto ${t.contact} · ogni ${t.interval_min} min${t.moving_interval_min ? ` (${t.moving_interval_min} in movimento)` : ''} · ${t.active_hours || 'sempre'} · avviso dopo ${t.offline_alert_min} min · batteria < ${t.low_battery_v} V${t.paused ? ' · IN PAUSA' : ''}` }),
       el('span', { className: 'acts' }, edit, rm)));
   });
   // ripetitori
@@ -691,6 +693,7 @@ function trackerForm(t) {
   contactSelect(f.contact_sel, ['companion', 'sensore', 'altro'], adm.trackers.map(x => x.contact), t && t.contact);
   f.label.value = t ? t.label : '';
   f.interval_min.value = t ? t.interval_min : 30;
+  f.moving_interval_min.value = t ? (t.moving_interval_min || 0) : 0;
   const h = t ? t.active_hours : '05:00-21:00';
   f.always.checked = !h; if (h) [f.h_from.value, f.h_to.value] = h.split('-');
   f.offline_alert_min.value = t ? t.offline_alert_min : 90;
@@ -698,7 +701,9 @@ function trackerForm(t) {
   openForm(f, () => {
     const contact = pickedName(f, 'contact_sel', 'contact_free');
     if (!contact) throw new Error('scegli o scrivi il nome del contatto');
-    const body = { contact, label: f.label.value.trim() || contact, interval_min: +f.interval_min.value,
+    const mv = +f.moving_interval_min.value;
+    if (mv && (mv < 5 || mv > +f.interval_min.value)) throw new Error('l\'intervallo in movimento va da 5 minuti a quello normale');
+    const body = { contact, label: f.label.value.trim() || contact, interval_min: +f.interval_min.value, moving_interval_min: mv,
       active_hours: f.always.checked ? '' : `${f.h_from.value}-${f.h_to.value}`,
       offline_alert_min: +f.offline_alert_min.value, low_battery_v: +f.low_battery_v.value };
     return t ? put(`/api/trackers/${t.id}`, body) : post('/api/trackers', body);
