@@ -77,6 +77,11 @@ class MaintenanceIn(BaseModel):
     backup_telegram: bool | None = None
 
 
+class BatteryAlertsIn(BaseModel):
+    batt_repeat_h: int | None = Field(None, ge=0, le=168)
+    batt_quiet: str | None = None
+
+
 class TileCacheIn(BaseModel):
     enabled: bool | None = None
     max_mb: int | None = Field(None, ge=MIN_MB, le=MAX_MB)
@@ -679,6 +684,25 @@ def create_app(core, auth, web_cfg, updater=None, tiles=None):
     async def backup_telegram(u=Depends(admin)):
         if not await core.send_backup(u["username"]):
             raise HTTPException(400, "Telegram non è configurato")
+        return {"ok": True}
+
+    # ---------- avvisi batteria bassa
+    @app.get("/api/alerts/battery")
+    async def battery_alerts_info(u=Depends(admin)):
+        return core.battery_alert_settings()
+
+    @app.put("/api/alerts/battery")
+    async def battery_alerts_set(body: BatteryAlertsIn, u=Depends(admin)):
+        if body.batt_quiet is not None:
+            q = body.batt_quiet.strip()
+            if not HOURS_RE.match(q) or (q and q[:5] == q[6:]):
+                raise HTTPException(400, "fascia di silenzio non valida (es. 22:00-07:00)")
+            db.set("batt_quiet", q)
+        if body.batt_repeat_h is not None:
+            db.set("batt_repeat_h", body.batt_repeat_h)
+        st = core.battery_alert_settings()
+        audit(u, "avvisi batteria", (f"ripeti ogni {st['batt_repeat_h']} ore" if st["batt_repeat_h"] else "una volta sola")
+              + (f", silenzio {st['batt_quiet']}" if st["batt_quiet"] else ""))
         return {"ok": True}
 
     # ---------- cache delle mappe

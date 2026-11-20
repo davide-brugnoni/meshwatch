@@ -312,6 +312,26 @@ $('mnt-purge').onclick = e => {
 $('mnt-telegram').onclick = e => action(e.target, () => post('/api/backup/telegram'), 'Backup inviato').then(loadMaintenance);
 $('mnt-download').onclick = () => setTimeout(loadAdmin, 1500);   // il registro mostra il download
 
+// ---------- avvisi batteria bassa
+async function loadBatteryAlerts() {
+  let b; try { b = await api('/api/alerts/battery'); } catch (e) { return; }
+  const f = $('form-batt');
+  const v = String(b.batt_repeat_h);
+  if (![...f.batt_repeat_h.options].some(o => o.value === v)) f.batt_repeat_h.append(el('option', { value: v, textContent: `${v} ore` }));
+  f.batt_repeat_h.value = v;
+  f.quiet_on.checked = !!b.batt_quiet;
+  if (b.batt_quiet) [f.q_from.value, f.q_to.value] = b.batt_quiet.split('-');
+}
+$('form-batt').onsubmit = e => {
+  e.preventDefault(); const f = e.target;
+  action(f.querySelector('.primary'), () => {
+    if (f.quiet_on.checked && (!f.q_from.value || !f.q_to.value || f.q_from.value === f.q_to.value))
+      throw new Error('scegli due orari diversi per il silenzio');
+    return put('/api/alerts/battery', { batt_repeat_h: +f.batt_repeat_h.value,
+      batt_quiet: f.quiet_on.checked ? `${f.q_from.value}-${f.q_to.value}` : '' });
+  }, 'Impostazioni salvate').then(loadBatteryAlerts);
+};
+
 // ---------- cache delle mappe
 async function loadTileCache() {
   let c; try { c = await api('/api/tilecache'); } catch (e) { return; }

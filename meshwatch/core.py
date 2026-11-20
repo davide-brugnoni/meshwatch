@@ -88,6 +88,7 @@ class Core:
         self.wakeup = asyncio.Event()
         self.next_due = {}           # tracker_id -> timestamp prossima richiesta
         self.alerts = {}             # chiave -> set di avvisi attivi
+        self.batt_sent = {}          # chiave -> ultimo avviso di batteria bassa inviato
         self.moving = {}             # tracker_id -> True se all'ultima posizione si stava spostando
         self.file_senders = []       # funzioni async(data, filename, caption) per i backup (Telegram)
         self.tasks = set()           # invii della chat in corso
@@ -112,6 +113,33 @@ class Core:
                 await n(text)
             except Exception as e:
                 log.error("Notifica fallita: %s", e)
+
+    def battery_alert_settings(self):
+        """Avvisi di batteria bassa: ogni quante ore ripeterli (0 = una volta sola, finché la
+        batteria non risale) e fascia oraria in cui stare zitti ("22:00-07:00", vuoto = mai)."""
+        try:
+            repeat = max(0, int(self.db.get("batt_repeat_h", 0) or 0))
+        except ValueError:
+            repeat = 0
+        return {"batt_repeat_h": repeat, "batt_quiet": self.db.get("batt_quiet", "") or ""}
+
+    async def _battery_alert(self, key, v, lim, text):
+        """Batteria sotto la soglia: avvisa subito, poi di nuovo ogni batt_repeat_h ore. Durante
+        la fascia di silenzio non manda nulla: se la batteria è ancora bassa l'avviso arriva
+        alla prima lettura dopo la fine della fascia. Risale di 0,1 V sopra la soglia: si riparte."""
+        if v >= lim + 0.1:
+            self.batt_sent.pop(key, None)
+            return
+        if v >= lim:
+            return
+        st = self.battery_alert_settings()
+        if st["batt_quiet"] and in_active_hours(st["batt_quiet"]):
+            return
+        last = self.batt_sent.get(key)
+        if last is not None and (not st["batt_repeat_h"] or time.time() - last < st["batt_repeat_h"] * 3600):
+            return
+        self.batt_sent[key] = time.time()
+        await self.notify(text)
 
     def _flags(self, key):
         return self.alerts.setdefault(key, set())
@@ -196,11 +224,8 @@ class Core:
             await self.notify(msg)
         lim = t["low_battery_v"]
         if lim and res["batt_v"] is not None:
-            if res["batt_v"] < lim and "batt" not in f:
-                f.add("batt")
-                await self.notify(f"🔋 Batteria bassa su {t['label']}: {res['batt_v']:.2f} V")
-            elif res["batt_v"] >= lim + 0.1:
-                f.discard("batt")
+            await self._battery_alert(("t", t["id"]), res["batt_v"], lim,
+                                      f"🔋 Batteria bassa su {t['label']}: {res['batt_v']:.2f} V")
 
     async def _sensor_alerts(self, t, sensors):
         """Soglie impostate dalla pagina: un avviso quando il valore supera la soglia, uno
@@ -335,11 +360,7 @@ class Core:
         lim = self.cfg.get("repeater_low_battery_v")
         v = (st.get("bat") or 0) / 1000
         if lim and v:
-            if v < lim and "batt" not in f:
-                f.add("batt")
-                await self.notify(f"🔋 Batteria bassa sul ripetitore {name}: {v:.2f} V")
-            elif v >= lim + 0.1:
-                f.discard("batt")
+            await self._battery_alert(("r", name), v, lim, f"🔋 Batteria bassa sul ripetitore {name}: {v:.2f} V")
 
     # ---------- terminale
     async def run_cli(self, name, cmd, user):

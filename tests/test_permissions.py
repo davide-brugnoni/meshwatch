@@ -76,6 +76,8 @@ POLICY = {
     ("GET", "/api/backup"): "admin",
     ("POST", "/api/backup/telegram"): "admin",
     ("GET", "/api/tiles/{layer}/{z}/{x}/{y}"): "guest",
+    ("GET", "/api/alerts/battery"): "admin",
+    ("PUT", "/api/alerts/battery"): "admin",
     ("GET", "/api/tilecache"): "admin",
     ("PUT", "/api/tilecache"): "admin",
     ("POST", "/api/tilecache/clear"): "admin",
