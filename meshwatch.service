@@ -10,6 +10,8 @@ ExecStartPre=-/bin/sh __DIR__/tools/guard.sh
 ExecStart=__DIR__/venv/bin/python -m meshwatch -c config.yaml
 Restart=always
 RestartSec=10
+# se la pagina non risponde per 5 minuti (programma bloccato) systemd lo riavvia: meshwatch/watchdog.py
+WatchdogSec=300
 Environment=PYTHONUNBUFFERED=1
 
 [Install]

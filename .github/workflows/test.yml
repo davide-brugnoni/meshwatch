@@ -55,6 +55,9 @@ jobs:
       - name: Permessi di tutti gli endpoint per ogni ruolo
         run: python tests/test_permissions.py
 
+      - name: Watchdog di systemd (riavvio se la pagina non risponde)
+        run: python tests/test_watchdog.py
+
   pagina-e-script:
     runs-on: ubuntu-latest
     steps:

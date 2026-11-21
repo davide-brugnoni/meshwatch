@@ -176,6 +176,12 @@ def create_app(core, auth, web_cfg, updater=None, tiles=None):
     async def index():
         return FileResponse(WEB_DIR / "index.html")
 
+    # Per il watchdog di systemd (meshwatch/watchdog.py): risponde se il server è vivo.
+    # Non tocca database né radio, così una pulizia lunga del database non fa scattare il riavvio.
+    @app.get("/api/health")
+    async def health():
+        return {"ok": True}
+
     # ---------- sessione
     @app.post("/api/login")
     async def login(body: LoginIn, req: Request, resp: Response):
