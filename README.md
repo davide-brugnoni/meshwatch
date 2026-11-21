@@ -4,7 +4,7 @@
 
 Dashboard self-hosted per reti **MeshCore**: segue la posizione GPS di uno o più dispositivi (per esempio un SenseCAP T1000-E), monitora i ripetitori e si gestisce da una pagina web in rete locale o da un **bot Telegram** quando si è fuori casa.
 
-Gira su un Raspberry Pi con una radio MeshCore in modalità *Companion USB* (Heltec V3, RAK, …) collegata via USB.
+Gira su un Raspberry Pi con una radio MeshCore in modalità *Companion USB* (Heltec, RAK, LilyGO, XIAO, …) collegata via USB, oppure col firmware *Companion WiFi* in rete.
 
 *Self-hosted dashboard for MeshCore networks: GPS tracking of companion devices via telemetry requests, repeater monitoring and remote CLI, local web UI and Telegram bot. Runs on a Raspberry Pi with a USB companion radio. Documentation is in Italian.*
 
@@ -76,14 +76,14 @@ sudo systemctl start meshwatch
 ### Requisiti
 
 - Raspberry Pi 2/3/4/5 (o qualsiasi Linux con Python 3.11+)
-- radio MeshCore con firmware **Companion USB**
+- radio MeshCore con firmware **Companion USB**: qualsiasi scheda supportata da MeshCore (Heltec V3/V4, RAK4631/WisMesh, LilyGO T-Beam/T-Echo/T-Deck, Seeed XIAO, Station G2, …). In alternativa firmware **Companion WiFi** con `connection: wifi` e `wifi_host` nel config
 - alimentatore adeguato (5,1 V 2,5 A per il Pi 3): con tensione bassa la rete e la USB diventano instabili
 
 ## Configurazione
 
 Copia `config.example.yaml` in `config.yaml` (con il kit SD il file è `meshwatch-config.yaml` sulla scheda).
 
-- `serial_port: auto` trova da solo la radio.
+- `serial_port: auto` trova da solo la radio, qualunque sia la scheda: se ci sono più dispositivi USB li prova uno alla volta, cominciando da quelli con i chip delle radio più diffuse.
 - `telegram.token`: crealo con @BotFather. `allowed_chat_ids`: chi può usare il bot e riceve gli avvisi; `admin_chat_ids`: chi può usare il terminale. Il tuo ID te lo dà @userinfobot.
 - Le sezioni `tracker` e `repeaters` vengono importate solo al primo avvio: poi dispositivi, ripetitori e utenti si gestiscono dalla pagina (scheda **Gestione**).
 

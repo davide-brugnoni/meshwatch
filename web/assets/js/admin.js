@@ -209,7 +209,7 @@ async function loadSystem() {
     : 'Dall\'ultimo avvio c\'è stata almeno una caduta di tensione: controlla alimentatore e cavo.';
   const ok = si.can_reboot && si.can_poweroff;
   $('sys-reboot').disabled = !si.can_reboot; $('sys-poweroff').disabled = !si.can_poweroff;
-  $('sys-note').textContent = ok ? 'Dopo lo spegnimento, per riaccendere il Raspberry stacca e riattacca l\'alimentazione. La Heltec resta alimentata via USB finché c\'è corrente.'
+  $('sys-note').textContent = ok ? 'Dopo lo spegnimento, per riaccendere il Raspberry stacca e riattacca l\'alimentazione. La radio resta alimentata via USB finché c\'è corrente.'
     : 'Riavvio e spegnimento non sono ancora abilitati: serve un comando una tantum via SSH (vedi istruzioni).';
 }
 $('sys-reload').onclick = () => { loadSystem(); loadGateway(); };

@@ -37,7 +37,7 @@ sudo systemctl enable meshwatch
 
 echo
 echo "Fatto. Porte seriali trovate:"
-ls /dev/serial/by-id/ 2>/dev/null || echo "  (nessuna: collega la Heltec)"
+ls /dev/serial/by-id/ 2>/dev/null || echo "  (nessuna: collega la radio MeshCore)"
 echo
 echo "1) nano config.yaml        (porta seriale, nomi nodi, password, token Telegram)"
 echo "2) sudo systemctl start meshwatch"
