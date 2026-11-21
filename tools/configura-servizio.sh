@@ -7,7 +7,7 @@
 #   meshwatch/AGGIORNA sulla SD, anche il programma;
 # - tools/guard.sh ripristina la versione precedente se un aggiornamento non parte;
 # - watchdog: se la pagina non risponde per 5 minuti systemd riavvia il programma;
-# - WiFi senza risparmio energetico (tools/wifi-no-powersave.sh).
+# - WiFi senza risparmio energetico e spento quando c'è il cavo di rete (tools/configura-wifi.sh).
 set -e
 [ "$(id -u)" = 0 ] || { echo "Lancia con sudo"; exit 1; }
 APP=/opt/meshwatch
@@ -65,7 +65,7 @@ WantedBy=multi-user.target
 UNIT
 
 # WiFi sempre sveglio (di notte il risparmio energetico lo fa smettere di rispondere)
-bash "$APP/tools/wifi-no-powersave.sh" || echo "ATTENZIONE: risparmio energetico del WiFi non disattivato"
+bash "$APP/tools/configura-wifi.sh" || echo "ATTENZIONE: configurazione del WiFi non riuscita"
 
 # Riavvio e spegnimento dalla pagina (solo questi due comandi)
 echo "$SVC ALL=(root) NOPASSWD: /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff" > /etc/sudoers.d/meshwatch

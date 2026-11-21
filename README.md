@@ -26,7 +26,7 @@ Gira su un Raspberry Pi con una radio MeshCore in modalità *Companion USB* (Hel
 - **Cache delle mappe**: il Raspberry conserva le tessere già viste, così le zone abituali si aprono subito e restano visibili anche senza Internet. Spazio massimo e pulizia dalla Gestione.
 - **Terminale**: comandi CLI ai ripetitori dalla pagina o da Telegram, con conferma per i comandi che modificano o riavviano e registro di tutti i comandi inviati.
 - **Gateway**: stato e configurazione della radio collegata (nome, potenza, posizione, parametri radio), advert, riavvio.
-- **Sistema**: temperatura, memoria, disco, **avviso di tensione bassa**, riavvio e spegnimento del Raspberry. Se la pagina si blocca il programma si riavvia da solo; il WiFi resta sempre sveglio.
+- **Sistema**: temperatura, memoria, disco, **avviso di tensione bassa**, riavvio e spegnimento del Raspberry. Se la pagina si blocca il programma si riavvia da solo; il WiFi resta sempre sveglio e si spegne da solo quando è collegato il cavo di rete.
 - **Radio**: se la radio si scollega arriva un avviso su Telegram e dopo 3 minuti il programma la ricollega da solo, ritrovando la porta USB anche se è cambiata.
 - **Manutenzione e backup**: pulizia automatica dei dati più vecchi di N giorni (default 180); backup di database e config scaricabile dalla pagina o inviato ogni settimana su Telegram.
 - **Registro attività**: login, tentativi falliti e ogni azione di gestione, dalla pagina e da Telegram.
@@ -129,7 +129,8 @@ echo 'meshwatch-svc ALL=(root) NOPASSWD: /usr/bin/systemctl reboot, /usr/bin/sys
 ### Se la pagina non si apre più (watchdog e WiFi)
 
 - **Watchdog**: ogni 20 secondi il programma controlla che la propria pagina risponda e lo dice a systemd. Se per 5 minuti non risponde (programma acceso ma bloccato) systemd lo riavvia da solo (`WatchdogSec=300` nel servizio). Nel registro: `journalctl -u meshwatch | grep -i watchdog`.
-- **WiFi sempre sveglio**: il risparmio energetico del WiFi del Raspberry, di notte, fa smettere di rispondere il chip finché non si riavvia. L'installazione lo disattiva (`tools/wifi-no-powersave.sh`): all'avvio e a ogni riconnessione del WiFi. Verifica: `iw dev wlan0 get power_save` → `Power save: off`.
+- **WiFi sempre sveglio**: il risparmio energetico del WiFi del Raspberry, di notte, fa smettere di rispondere il chip finché non si riavvia. L'installazione lo disattiva (`tools/configura-wifi.sh`): all'avvio e a ogni riconnessione del WiFi. Verifica: `iw dev wlan0 get power_save` → `Power save: off`.
+- **Cavo di rete → WiFi spento**: se il cavo è collegato e ha un indirizzo IP il WiFi si spegne da solo; staccato il cavo, entro 20 secondi si riaccende e si ricollega. Un cavo collegato senza rete non spegne il WiFi, e un WiFi spento a mano non viene riacceso. Per tenerlo sempre acceso: `sudo touch /etc/meshwatch-wifi-sempre-acceso`. Registro: `journalctl -u meshwatch-wifi-auto`.
 
 Su una SD già installata l'aggiornamento dalla pagina non cambia il servizio di sistema: dopo aver aggiornato, una volta sola via SSH:
 
@@ -137,7 +138,7 @@ Su una SD già installata l'aggiornamento dalla pagina non cambia il servizio di
 sudo bash /opt/meshwatch/tools/configura-servizio.sh && sudo systemctl restart meshwatch
 ```
 
-(con `install.sh`: `sudo bash tools/wifi-no-powersave.sh`, poi rilancia `bash install.sh` per il servizio). Config e dati non vengono toccati.
+(con `install.sh`: `sudo bash tools/configura-wifi.sh`, poi rilancia `bash install.sh` per il servizio). Config e dati non vengono toccati.
 
 ## Manutenzione e backup
 
@@ -357,7 +358,7 @@ web/assets/js/        script della pagina, caricati in ordine da index.html:
   admin.js            scheda Gestione
   main.js             avvio (sempre l'ultimo)
 web/vendor/           Leaflet
-tools/                guard.sh (ripristino), configura-servizio.sh, abilita-aggiornamenti.sh, wifi-no-powersave.sh
+tools/                guard.sh (ripristino), configura-servizio.sh, abilita-aggiornamenti.sh, configura-wifi.sh (risparmio energetico, WiFi spento col cavo)
 sd-kit/               preparazione e aggiornamento della SD DietPi da Windows
 install.sh            installazione manuale su Raspberry Pi OS / Debian
 tests/                test con radio simulata
