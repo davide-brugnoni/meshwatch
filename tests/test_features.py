@@ -217,6 +217,45 @@ def test_route():
     check(REP.startswith("b2") and REP2.startswith("c3"), "dati di prova coerenti")
 
 
+def test_radio_ports():
+    """Qualsiasi scheda: porte ordinate per chip USB, prova una porta dopo l'altra, WiFi."""
+    from types import SimpleNamespace as P
+    from unittest import mock
+    from serial.tools import list_ports
+    from meshwatch import mesh as m
+    ports = [P(device="/dev/ttyAMA0", vid=None), P(device="/dev/ttyUSB0", vid=0x067B),
+             P(device="/dev/ttyACM0", vid=0x239A), P(device="/dev/ttyACM1", vid=0x303A)]
+    with mock.patch.object(list_ports, "comports", return_value=ports), \
+            mock.patch("glob.glob", return_value=[]):
+        check(m.serial_candidates() == ["/dev/ttyACM0", "/dev/ttyACM1", "/dev/ttyUSB0"],
+              "porte: prima i chip delle radio note (RAK, ESP32-S3), poi le altre USB, mai la seriale interna")
+
+        tried = []
+
+        class FakeMC:
+            contacts, is_connected = {}, True
+            auto_update_contacts = False
+            async def ensure_contacts(self, **k): pass
+            def subscribe(self, *a): pass
+            async def start_auto_message_fetching(self): pass
+
+        async def create_serial(port, *a, **k):
+            tried.append(port)
+            return FakeMC() if port == "/dev/ttyACM1" else None
+
+        radio = Mesh()
+        radio.load_channels = lambda: asyncio.sleep(0)
+        with mock.patch.object(m.MeshCore, "create_serial", create_serial):
+            asyncio.run(radio.connect())
+        check(tried == ["/dev/ttyACM0", "/dev/ttyACM1"] and radio.connected,
+              "in automatico prova le porte una alla volta finché una risponde")
+
+    w = Mesh.from_config({"connection": "wifi", "wifi_host": "192.168.1.50"})
+    u = Mesh.from_config({"serial_port": "/dev/ttyUSB3"})
+    check(w.tcp == ("192.168.1.50", 5000) and u.tcp is None and u.port == "/dev/ttyUSB3",
+          "config: radio via WiFi o porta USB fissa")
+
+
 def test_coverage():
     import sqlite3
     # migrazione: richieste riuscite delle versioni precedenti prendono la posizione salvata con loro
@@ -481,6 +520,7 @@ def main():
     test_sensors()
     test_battery_alerts()
     test_route()
+    test_radio_ports()
     test_coverage()
     test_events()
     test_bot()

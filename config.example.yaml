@@ -1,11 +1,17 @@
 # MeshWatch — configurazione
 # Copia questo file in config.yaml e modificalo.
 
-# Porta seriale della Heltec (firmware MeshCore "Companion USB").
-# "auto" la trova da sola. Se hai più dispositivi USB, metti il percorso
-# esatto che trovi con: ls /dev/serial/by-id/
+# Radio gateway: qualsiasi scheda MeshCore col firmware "Companion USB"
+# (Heltec V3/V4, RAK4631/WisMesh, LilyGO T-Beam/T-Echo/T-Deck, XIAO, Station G2, ...).
+# "auto" trova la porta da sola e, se ci sono più dispositivi USB, li prova uno
+# per uno finché trova quello che risponde. Per fissarla: ls /dev/serial/by-id/
 serial_port: auto
 baudrate: 115200
+
+# In alternativa, una radio col firmware "Companion WiFi" raggiungibile in rete:
+# connection: wifi
+# wifi_host: 192.168.1.50
+# wifi_port: 5000
 
 # ---------------------------------------------------------------------------
 # Dispositivi da seguire, ripetitori e utenti si gestiscono dalla pagina web

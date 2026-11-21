@@ -111,20 +111,61 @@ def decode_path(path_hex, hash_mode=0):
     return [path_hex[i:i + size] for i in range(0, len(path_hex) - size + 1, size)]
 
 
-def find_serial_port():
-    """Trova la porta della radio: prima /dev/serial/by-id, poi ttyUSB*/ttyACM*."""
+# Chip USB delle radio MeshCore più diffuse (VID USB → descrizione). Le porte con questi chip
+# vengono provate per prime; le altre porte USB dopo, nel caso di schede meno comuni.
+KNOWN_USB = {
+    0x10C4: "CP210x (Heltec V3, T-Beam, Station G2…)",
+    0x1A86: "CH340/CH9102 (LilyGO, T-Beam…)",
+    0x303A: "ESP32-S3/C3 USB nativa (Heltec V4, T-Deck, XIAO ESP32…)",
+    0x239A: "nRF52 (RAK4631, WisMesh, T-Echo, XIAO nRF52…)",
+    0x2886: "Seeed (SenseCAP T1000-E, Wio Tracker…)",
+    0x1915: "Nordic nRF52",
+    0x2E8A: "RP2040 (RAK11310, Pico…)",
+    0x0403: "FTDI",
+}
+
+
+def serial_candidates():
+    """Porte seriali dove può esserci la radio, le più probabili prima.
+    Usa il percorso stabile /dev/serial/by-id quando c'è (non cambia se la porta si sposta)."""
     import glob
-    for pattern in ("/dev/serial/by-id/*", "/dev/ttyUSB*", "/dev/ttyACM*"):
-        found = sorted(glob.glob(pattern))
-        if found:
-            return found[0]
-    return None
+    import os
+    by_id = {}
+    for link in glob.glob("/dev/serial/by-id/*"):
+        by_id[os.path.realpath(link)] = link
+    ports = []
+    try:
+        from serial.tools import list_ports
+        for p in list_ports.comports():
+            if p.vid is None:          # porte interne del Raspberry (ttyAMA, ttyS): mai una radio
+                continue
+            rank = 0 if p.vid in KNOWN_USB else 1
+            ports.append((rank, by_id.get(os.path.realpath(p.device), p.device)))
+    except Exception as e:
+        log.debug("Elenco porte seriali: %s", e)
+    if not ports:                      # senza pyserial o senza informazioni USB
+        ports = [(0, x) for x in sorted(by_id.values())]
+        ports += [(1, x) for pat in ("/dev/ttyUSB*", "/dev/ttyACM*") for x in sorted(glob.glob(pat))
+                  if x not in by_id]
+    seen, out = set(), []
+    for _, dev in sorted(ports):
+        if dev not in seen:
+            seen.add(dev)
+            out.append(dev)
+    return out
+
+
+def find_serial_port():
+    """La porta più probabile della radio (None se non c'è nessuna porta USB)."""
+    found = serial_candidates()
+    return found[0] if found else None
 
 
 class Mesh:
-    def __init__(self, port, baudrate=115200):
+    def __init__(self, port="auto", baudrate=115200, tcp=None):
         self.port = port
         self.baudrate = baudrate
+        self.tcp = tcp               # (host, porta) per le radio col firmware "Companion WiFi"
         self.mc = None
         self.lock = RadioLock()      # una richiesta radio alla volta (la chat ha la precedenza)
         self.connecting = False
@@ -142,7 +183,7 @@ class Mesh:
 
     async def reconnect(self):
         """Chiude la connessione e la rifà da capo, cercando di nuovo la porta USB
-        (scollegando e ricollegando la radio la porta può cambiare, es. ttyUSB0 → ttyUSB1)."""
+        (scollegando e ricollegando la radio la porta può cambiare, es. ttyUSB0 → ttyACM0)."""
         if self.connecting:
             return
         self.connecting = True
@@ -158,32 +199,54 @@ class Mesh:
         finally:
             self.connecting = False
 
+    @classmethod
+    def from_config(cls, cfg):
+        """connection: usb (default, qualsiasi scheda) oppure wifi (firmware Companion WiFi)."""
+        if str(cfg.get("connection", "usb")).lower() in ("wifi", "tcp"):
+            host = cfg.get("wifi_host")
+            if not host:
+                raise SystemExit("connection è 'wifi' ma manca wifi_host nel config")
+            return cls(tcp=(str(host), int(cfg.get("wifi_port", 5000))))
+        return cls(cfg.get("serial_port", "auto"), cfg.get("baudrate", 115200))
+
+    async def _open(self, port):
+        if self.tcp:
+            log.info("Connessione alla radio via WiFi su %s:%d", *self.tcp)
+            return await MeshCore.create_tcp(*self.tcp, auto_reconnect=True, max_reconnect_attempts=1000)
+        log.info("Connessione alla radio su %s", port)
+        return await MeshCore.create_serial(port, self.baudrate, auto_reconnect=True, max_reconnect_attempts=1000)
+
     async def _connect(self):
         while True:
-            try:
-                port = self.port
-                if not port or port == "auto":
-                    port = find_serial_port()
-                    if not port:
-                        log.warning("Nessuna radio USB trovata: collega la Heltec")
-                        await asyncio.sleep(15)
-                        continue
-                log.info("Connessione alla radio su %s", port)
-                self.mc = await MeshCore.create_serial(
-                    port, self.baudrate, auto_reconnect=True, max_reconnect_attempts=1000)
-                if self.mc:
-                    self.mc.auto_update_contacts = True
-                    await self.mc.ensure_contacts()
-                    # i listener vanno registrati prima di leggere i messaggi in coda nella radio
-                    self.mc.subscribe(EventType.CONTACT_MSG_RECV, self._on_contact_msg)
-                    self.mc.subscribe(EventType.CHANNEL_MSG_RECV, self._on_channel_msg)
-                    await self.load_channels()
-                    await self.mc.start_auto_message_fetching()   # chat e risposte CLI
-                    log.info("Radio connessa, %d contatti, %d canali", len(self.mc.contacts), len(self.channels))
-                    return
-            except Exception as e:
-                log.error("Connessione fallita: %s", e)
+            if self.tcp:
+                targets = [None]
+            elif self.port and self.port != "auto":
+                targets = [self.port]
+            else:
+                targets = serial_candidates()
+                if not targets:
+                    log.warning("Nessuna radio USB trovata: collega la radio MeshCore (firmware Companion USB)")
+            for port in targets:      # in automatico prova le porte una per una finché una risponde
+                try:
+                    self.mc = await self._open(port)
+                    if self.mc:
+                        await self._ready()
+                        return
+                    log.warning("Nessuna risposta MeshCore su %s", port or "%s:%d" % self.tcp)
+                except Exception as e:
+                    log.error("Connessione fallita (%s): %s", port or "WiFi", e)
+                    self.mc = None
             await asyncio.sleep(15)
+
+    async def _ready(self):
+        self.mc.auto_update_contacts = True
+        await self.mc.ensure_contacts()
+        # i listener vanno registrati prima di leggere i messaggi in coda nella radio
+        self.mc.subscribe(EventType.CONTACT_MSG_RECV, self._on_contact_msg)
+        self.mc.subscribe(EventType.CHANNEL_MSG_RECV, self._on_channel_msg)
+        await self.load_channels()
+        await self.mc.start_auto_message_fetching()   # chat e risposte CLI
+        log.info("Radio connessa, %d contatti, %d canali", len(self.mc.contacts), len(self.channels))
 
     @property
     def connected(self):
@@ -478,7 +541,7 @@ class Mesh:
             return [{"prefix": n.get("pubkey", ""), "snr": n.get("snr"), "secs_ago": n.get("secs_ago")}
                     for n in res.get("neighbours", [])]
 
-    # ---------- gateway (la Heltec collegata via USB)
+    # ---------- gateway (la radio collegata al Raspberry)
     async def _safe(self, coro):
         try:
             ev = await coro

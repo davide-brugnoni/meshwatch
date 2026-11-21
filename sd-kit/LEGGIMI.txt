@@ -10,7 +10,8 @@ Al primo avvio si installa e si configura da solo: niente terminale.
 COSA SERVE
 - Raspberry Pi 2, 3, 3B+, 4 o 5 + microSD da 8 GB o piu'
   (Pi 2 senza WiFi integrato: usa il cavo di rete)
-- Heltec V3 con firmware MeshCore "Companion USB"
+- una radio MeshCore con firmware "Companion USB" (Heltec V3/V4, RAK4631,
+  LilyGO T-Beam/T-Echo, XIAO, Station G2, ...)
 - connessione a Internet (cavo o WiFi) per il primo avvio
 
 1. SCARICA DIETPI
@@ -34,7 +35,7 @@ COSA SERVE
    oppure aggiungerli dopo dalla pagina, scheda Gestione). Salva e chiudi.
 
 4. AVVIA
-   Espelli la SD, mettila nel Raspberry, collega la Heltec via USB, accendi.
+   Espelli la SD, mettila nel Raspberry, collega la radio via USB, accendi.
    Il primo avvio dura 10-15 minuti (20-30 su Pi 2/3) (aggiorna il sistema e installa MeshWatch).
    Poi apri:  http://meshwatch.local:8080
 

@@ -117,5 +117,5 @@ Write-Host "Ora apro meshwatch-config.yaml: inserisci nome del SenseCAP, ripetit
 if ($IsWindows -ne $false) { Start-Process notepad.exe $cfgDst -Wait }
 
 Write-Host "`nFatto." -ForegroundColor Green
-Write-Host "Espelli la scheda, mettila nel Raspberry con la Heltec collegata e accendilo."
+Write-Host "Espelli la scheda, mettila nel Raspberry con la radio collegata e accendilo."
 Write-Host "Dopo 10-15 minuti la pagina e' su  http://$hostname.local:8080"

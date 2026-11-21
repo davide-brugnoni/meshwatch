@@ -635,7 +635,9 @@ class Core:
                 alerted = True
                 self.audit("sistema", "radio scollegata")
                 await self.notify("📻 Radio gateway scollegata: niente posizioni né ripetitori finché non torna. "
-                                  "Provo a ricollegarla da solo; se non torna controlla il cavo USB e l'alimentazione.")
+                                  "Provo a ricollegarla da solo; se non torna controlla "
+                                  + ("il WiFi della radio e l'alimentazione." if getattr(self.mesh, "tcp", None)
+                                     else "il cavo USB e l'alimentazione."))
             if (now - down_since >= self.RADIO_RECONNECT_S and not self.mesh.connecting
                     and now - last_try >= self.RADIO_RECONNECT_S):
                 last_try = now

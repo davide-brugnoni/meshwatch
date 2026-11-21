@@ -27,7 +27,7 @@ async def run(cfg):
     dog = asyncio.create_task(watchdog.run(host, port, lambda: bool(server and server.started)))
 
     db = DB(cfg.get("database", "meshwatch.db"))
-    mesh = Mesh(cfg.get("serial_port", "auto"), cfg.get("baudrate", 115200))
+    mesh = Mesh.from_config(cfg)
     core = Core(cfg, db, mesh)
 
     auth = Auth(db)
