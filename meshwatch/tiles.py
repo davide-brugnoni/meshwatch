@@ -47,7 +47,8 @@ MIN_MB, MAX_MB = 50, 20000
 DEFAULT_TTL = 7 * 86400        # se il server non dice nulla sulla scadenza
 MIN_TTL = 3600
 MIN_FREE_BYTES = 300 * 2**20   # sotto questo spazio libero sulla SD non salva più
-PARALLEL = 4                   # richieste contemporanee verso i server delle mappe
+PARALLEL = 6                   # richieste contemporanee verso i server delle mappe (come un browser)
+STALE_TTL = 60                 # tessera scaduta servita mentre si aggiorna: il browser la richiede dopo 1 minuto
 PER_MINUTE = 600               # tetto di tessere scaricate al minuto
 TOUCH_EVERY = 86400            # "ultimo uso" aggiornato al massimo una volta al giorno (meno scritture sulla SD)
 
@@ -232,8 +233,19 @@ class TileCache:
         if task is None:
             task = asyncio.ensure_future(self._refresh(key, old))
             self.inflight[key] = task
-            task.add_done_callback(lambda _t: self.inflight.pop(key, None))
+            task.add_done_callback(self._refresh_done(key))
+        if old:
+            # scaduta ma già in cache: subito quella vecchia, la nuova arriva in sottofondo.
+            # Così la mappa si apre senza aspettare Internet; il browser la richiede tra poco.
+            return old["data"], old["ctype"], STALE_TTL
         return await asyncio.shield(task)
+
+    def _refresh_done(self, key):
+        def done(task):
+            self.inflight.pop(key, None)
+            if not task.cancelled() and task.exception() is not None:   # in sottofondo nessuno la aspetta
+                log.debug("tessera %s non aggiornata: %s", key, task.exception())
+        return done
 
     async def _refresh(self, key, old):
         layer, z, x, y = key

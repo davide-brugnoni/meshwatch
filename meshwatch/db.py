@@ -106,6 +106,8 @@ class DB:
                 self.conn.execute(f"UPDATE tracker_polls SET lat=(SELECT p.lat {same} LIMIT 1), "
                                   f"lon=(SELECT p.lon {same} LIMIT 1), est=0 WHERE ok=1 AND EXISTS (SELECT 1 {same})")
             self.conn.execute("CREATE INDEX IF NOT EXISTS i_polls_tr ON tracker_polls(tracker_id, ts)")
+            # ultimi valori di ogni sensore senza leggere tutto lo storico (vedi sensor_latest)
+            self.conn.execute("CREATE INDEX IF NOT EXISTS i_sens_key ON sensor_readings(tracker_id, type, channel)")
             # intervallo adattivo: 0 = disattivato
             cols = [r[1] for r in self.conn.execute("PRAGMA table_info(trackers)")]
             if "moving_interval_min" not in cols:
@@ -241,11 +243,30 @@ class DB:
             self.conn.commit()
 
     def sensor_latest(self, tid):
-        """Ultimo valore di ogni sensore del dispositivo: [{type, channel, value, ts}]."""
-        return self._all(
-            "SELECT type, channel, value, ts FROM sensor_readings WHERE rowid IN "
-            "(SELECT MAX(rowid) FROM sensor_readings WHERE tracker_id=? GROUP BY type, channel) ORDER BY channel, type",
-            (tid,))
+        """Ultimo valore di ogni sensore del dispositivo: [{type, channel, value, ts}].
+        Salta da un sensore al successivo sull'indice i_sens_key: poche letture anche con mesi
+        di storico (un GROUP BY leggerebbe ogni riga del dispositivo a ogni apertura della pagina)."""
+        sel = "SELECT type, channel FROM sensor_readings WHERE tracker_id=? AND "
+        last = ("SELECT type, channel, value, ts FROM sensor_readings WHERE rowid="
+                "(SELECT MAX(rowid) FROM sensor_readings WHERE tracker_id=? AND type IS ? AND channel IS ?)")
+
+        def after(col, val):   # valori dopo val nell'ordine dell'indice (NULL viene per primo)
+            return (f"{col} IS NOT NULL", ()) if val is None else (f"{col}>?", (val,))
+
+        out = []
+        with self.lock:
+            key = self.conn.execute(sel + "1 ORDER BY type, channel LIMIT 1", (tid,)).fetchone()
+            while key:
+                typ, ch = key["type"], key["channel"]
+                r = self.conn.execute(last, (tid, typ, ch)).fetchone()
+                if r:
+                    out.append(dict(r))
+                c_sql, c_arg = after("channel", ch)
+                t_sql, t_arg = after("type", typ)
+                key = (self.conn.execute(sel + f"type IS ? AND {c_sql} ORDER BY channel LIMIT 1",
+                                         (tid, typ, *c_arg)).fetchone()
+                       or self.conn.execute(sel + f"{t_sql} ORDER BY type, channel LIMIT 1", (tid, *t_arg)).fetchone())
+        return sorted(out, key=lambda x: (x["channel"] is not None, x["channel"] or 0, x["type"] or ""))
 
     def sensor_history(self, tid, since):
         return self._all("SELECT ts, type, channel, value FROM sensor_readings WHERE tracker_id=? AND ts>=? ORDER BY ts",

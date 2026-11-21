@@ -1,3 +1,4 @@
+import asyncio
 import re
 import time
 from pathlib import Path
@@ -5,6 +6,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel, Field
 
 from .auth import hash_password
@@ -112,6 +114,22 @@ class UserIn(BaseModel):
     role: str | None = Field(None, pattern=r"^(admin|viewer)$")
 
 
+class Compress:
+    """Comprime pagina, script, stile e risposte JSON (leaflet.js: 148 KB → 43 KB sul WiFi del Raspberry).
+    Restano fuori il tempo reale (va spedito subito, non accumulato), le tessere (PNG/JPEG
+    già compressi) e il backup."""
+    SKIP = ("/api/events", "/api/tiles/", "/api/backup")
+
+    def __init__(self, app):
+        self.app = app
+        self.gzip = GZipMiddleware(app, minimum_size=1000, compresslevel=5)
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and not scope["path"].startswith(self.SKIP):
+            return await self.gzip(scope, receive, send)
+        return await self.app(scope, receive, send)
+
+
 def create_app(core, auth, web_cfg, updater=None, tiles=None):
     public = web_cfg.get("mode", "lan") == "public"
     # mappa visibile senza login (sola lettura): di default sì in casa, no su Internet
@@ -119,6 +137,7 @@ def create_app(core, auth, web_cfg, updater=None, tiles=None):
     db = core.db
     tiles = tiles or TileCache(db)
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    app.add_middleware(Compress)
 
     def client_ip(req: Request):
         if public:   # dietro Cloudflare Tunnel / reverse proxy
@@ -225,13 +244,15 @@ def create_app(core, auth, web_cfg, updater=None, tiles=None):
     # ---------- stato
     @app.get("/api/state")
     async def state(hours: int = 24, u=Depends(current_user)):
-        s = core.state(max(1, min(hours, 24 * 30)))
+        # le query girano in un thread: intanto il server continua a servire tessere e script
+        s = await asyncio.to_thread(core.state, max(1, min(hours, 24 * 30)),
+                                    core.mesh.contacts(), core.gateway_node())
         if u["role"] == "guest":
             s["contacts"] = []   # l'ospite vede la mappa, non la rubrica della radio
             for t in s["trackers"]:
                 t["route"] = None   # né i ripetitori attraversati
         else:
-            s["unread"] = db.unread_count()
+            s["unread"] = await asyncio.to_thread(db.unread_count)
         return s
 
     # ---------- aggiornamenti in tempo reale (Server-Sent Events)
@@ -297,7 +318,6 @@ def create_app(core, auth, web_cfg, updater=None, tiles=None):
     async def coverage(days: int = 30, tracker: int | None = None, cell: int = 250, u=Depends(viewer)):
         if tracker is not None:
             get_tracker(tracker)
-        import asyncio
         return await asyncio.to_thread(core.coverage, max(1, min(days, 365)), tracker, max(50, min(cell, 5000)))
 
     @app.post("/api/network/neighbours")
@@ -597,7 +617,6 @@ def create_app(core, auth, web_cfg, updater=None, tiles=None):
         if core.mesh.connecting:
             raise HTTPException(409, "riconnessione già in corso")
         audit(u, "riconnessione radio")
-        import asyncio
         asyncio.create_task(core.mesh.reconnect())
         return {"ok": True}
 
@@ -620,7 +639,6 @@ def create_app(core, auth, web_cfg, updater=None, tiles=None):
             raise HTTPException(404, "azione sconosciuta")
         if not await system.can_sudo(action):
             raise HTTPException(403, "permesso mancante: esegui una volta il comando indicato nel README")
-        import asyncio
         audit(u, "riavvio Raspberry" if action == "reboot" else "spegnimento Raspberry")
         asyncio.create_task(system.run_later(action))
         return {"ok": True}
@@ -680,7 +698,6 @@ def create_app(core, auth, web_cfg, updater=None, tiles=None):
 
     @app.get("/api/backup")
     async def backup_download(u=Depends(admin)):
-        import asyncio
         data, name = await asyncio.to_thread(maintenance.make_backup, db, core.cfg.get("_config_path"))
         audit(u, "backup scaricato", name)
         return Response(data, media_type="application/zip",
@@ -731,7 +748,6 @@ def create_app(core, auth, web_cfg, updater=None, tiles=None):
 
     @app.put("/api/tilecache")
     async def tilecache_set(body: TileCacheIn, u=Depends(admin)):
-        import asyncio
         if body.enabled is not None:
             db.set("tile_cache", "1" if body.enabled else "0")
         if body.max_mb is not None:
@@ -742,7 +758,6 @@ def create_app(core, auth, web_cfg, updater=None, tiles=None):
 
     @app.post("/api/tilecache/clear")
     async def tilecache_clear(u=Depends(admin)):
-        import asyncio
         n = await asyncio.to_thread(tiles.clear)
         audit(u, "cache delle mappe svuotata", f"{n} tessere")
         return {"ok": True, "deleted": n}

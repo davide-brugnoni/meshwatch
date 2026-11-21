@@ -5,6 +5,7 @@ import asyncio
 import os
 import sys
 import tempfile
+import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -67,9 +68,14 @@ async def unit(tmp):
     with tc.lock:
         tc.conn.execute("UPDATE tiles SET expires=0 WHERE layer='osm'")
         tc.conn.commit()
+    n = len(srv.calls)
     data, _, ttl = await tc.get("osm", 5, 10, 11)
-    check(srv.calls[-1].headers.get("if-none-match") == '"v1"' and data == PNG and ttl >= 3600, "scaduta: 304 e resta valida")
-    check(tc._get(("osm", 5, 10, 11))["expires"] > 0, "nuova scadenza salvata")
+    check(data == PNG and ttl == T.STALE_TTL, "scaduta: subito la tessera vecchia, senza aspettare Internet")
+    await asyncio.gather(*tc.inflight.values())   # aggiornamento in sottofondo
+    check(len(srv.calls) == n + 1 and srv.calls[-1].headers.get("if-none-match") == '"v1"', "scaduta: chiede se è cambiata (304)")
+    check(tc._get(("osm", 5, 10, 11))["expires"] > time.time(), "nuova scadenza salvata")
+    data, _, ttl = await tc.get("osm", 5, 10, 11)
+    check(data == PNG and ttl > 3000 and len(srv.calls) == n + 1, "dopo l'aggiornamento: di nuovo valida, nessun download")
 
     # senza Internet: la tessera vecchia è meglio di niente; una mai vista dà errore
     with tc.lock:
@@ -77,7 +83,8 @@ async def unit(tmp):
         tc.conn.commit()
     srv.online = False
     data, _, ttl = await tc.get("osm", 5, 10, 11)
-    check(data == PNG and ttl == 300 and tc.stale == 1, "senza Internet: mostra la tessera vecchia")
+    await asyncio.gather(*tc.inflight.values())
+    check(data == PNG and ttl == T.STALE_TTL and tc.stale == 1, "senza Internet: mostra la tessera vecchia")
     try:
         await tc.get("osm", 5, 0, 0)
         check(False, "tessera mai vista senza Internet")
@@ -144,6 +151,8 @@ def api(tmp):
     r = admin.get("/api/tiles/osm/3/2/1")
     check(r.status_code == 200 and r.content == PNG and r.headers["content-type"] == "image/png", "tessera dall'API")
     check(r.headers["cache-control"].startswith("private, max-age="), "il browser la tiene (non no-store)")
+    r = admin.get("/api/tiles/osm/3/2/1", headers={"Accept-Encoding": "gzip"})
+    check("content-encoding" not in r.headers, "tessere non ricompresse (sono già PNG)")
     check(admin.get("/api/state").headers["cache-control"] == "no-store", "il resto dell'API resta no-store")
     check(admin.get("/api/tiles/esri/3/2/1").status_code == 404, "satellite non passa dalla cache")
 
