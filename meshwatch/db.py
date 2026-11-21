@@ -224,6 +224,15 @@ class DB:
             r["path"] = r["path"].split(",") if r["path"] else []
         return r
 
+    def last_poll(self, tid):
+        """Ultima richiesta, riuscita o no: {ts, ok, hops, path: [prefissi]} o None.
+        Per quelle senza risposta hops/path sono il percorso provato per primo."""
+        r = self._one("SELECT ts, ok, hops, path FROM tracker_polls WHERE tracker_id=? "
+                      "ORDER BY ts DESC, rowid DESC LIMIT 1", (tid,))
+        if r:
+            r["path"] = r["path"].split(",") if r["path"] else []
+        return r
+
     def last_position(self, tid):
         return self._one("SELECT * FROM positions WHERE tracker_id=? ORDER BY ts DESC LIMIT 1", (tid,))
 

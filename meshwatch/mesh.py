@@ -168,6 +168,7 @@ class Mesh:
         self.tcp = tcp               # (host, porta) per le radio col firmware "Companion WiFi"
         self.mc = None
         self.lock = RadioLock()      # una richiesta radio alla volta (la chat ha la precedenza)
+        self.tried = {}              # nome → (salti, percorso) provato nell'ultima richiesta di telemetria
         self.connecting = False
         self.on_message = None       # funzione async(dict) chiamata per ogni messaggio ricevuto
         self.channels = []           # [{idx, name}] canali configurati nella radio
@@ -293,17 +294,25 @@ class Mesh:
             return None
         return self.mc.get_contact_by_key_prefix(key)
 
-    async def request_telemetry(self, name, attempts=2):
-        """Chiede la telemetria al nodo. Ritorna dict (lat, lon, alt, batt_v, sensors, hops, path) o None."""
+    RETRY_DELAY_S = 5   # pausa prima dell'ultimo tentativo: in movimento i buchi di copertura durano pochi secondi
+
+    async def request_telemetry(self, name, attempts=3):
+        """Chiede la telemetria al nodo. Ritorna dict (lat, lon, alt, batt_v, sensors, hops, path) o None.
+        Primo tentativo sul percorso salvato, poi in flood; l'ultimo dopo una breve pausa.
+        Il percorso provato per primo resta in self.tried[name] (hops, path), anche se non risponde."""
         async with self.lock:
             c = await self.contact(name)
             if not c:
                 log.warning("Contatto '%s' non trovato", name)
                 return None
+            info = self.contact_info(c)
+            self.tried[name] = (info["hops"], info["path"])
             for i in range(attempts):
                 try:
                     if i > 0:
-                        await self.mc.commands.reset_path(c)   # secondo tentativo in flood
+                        if i == attempts - 1:
+                            await asyncio.sleep(self.RETRY_DELAY_S)
+                        await self.mc.commands.reset_path(c)   # tentativi successivi in flood
                     lpp = await self.mc.commands.req_telemetry_sync(c, min_timeout=20)
                     if lpp is not None:
                         res = parse_lpp(lpp)
@@ -311,6 +320,8 @@ class Mesh:
                         info = self.contact_info(self.mc.get_contact_by_name(name) or c)
                         res["hops"], res["path"] = info["hops"], info["path"]
                         return res
+                    log.info("Telemetria %s: nessuna risposta al tentativo %d/%d (%s)", name, i + 1, attempts,
+                             "flood" if i > 0 or info["hops"] < 0 else f"{info['hops']} salti via {','.join(info['path']) or 'diretto'}")
                 except Exception as e:
                     log.error("Telemetria %s: %s", name, e)
             return None

@@ -516,6 +516,68 @@ def test_bot():
     check("posizione in diretta" in acts and "intervallo" in acts, "comandi del bot nel registro attività")
 
 
+def test_telemetry_retries():
+    """Tre tentativi (percorso salvato, flood, flood dopo una pausa), percorso provato salvato
+    anche senza risposta e mostrato dal bot."""
+    from meshwatch.bot import Bot
+
+    class Cmds:
+        def __init__(self, answer_at):
+            self.answer_at, self.calls, self.resets = answer_at, 0, 0
+
+        async def reset_path(self, c):
+            self.resets += 1
+            c.update(out_path_len=-1, out_path="")
+
+        async def req_telemetry_sync(self, c, min_timeout=0):
+            self.calls += 1
+            if self.calls == self.answer_at:
+                return [{"channel": 1, "type": "gps", "value": {"latitude": 43.35, "longitude": 12.57, "altitude": 500}}]
+            return None
+
+    class MC:
+        def __init__(self, cmds, raw):
+            self.commands, self.raw = cmds, raw
+
+        async def ensure_contacts(self, follow=False):
+            pass
+
+        def get_contact_by_name(self, name):
+            return next((c for c in self.raw.values() if c["adv_name"] == name), None)
+
+    def radio(answer_at):
+        m = Mesh()
+        m.RETRY_DELAY_S = 0
+        raw = {ALICE: {**contact(ALICE, "Alice", 1), "out_path_len": 1, "out_path": "b2", "out_path_hash_mode": 0}}
+        m.mc = MC(Cmds(answer_at), raw)
+        return m
+
+    m = radio(answer_at=3)
+    res = asyncio.run(m.request_telemetry("Alice"))
+    check(res and res["lat"] == 43.35 and m.mc.commands.calls == 3 and m.mc.commands.resets == 2,
+          "risposta al terzo tentativo, dopo due tentativi in flood")
+    check(m.tried["Alice"] == (1, ["b2"]), "percorso provato per primo ricordato")
+    m = radio(answer_at=0)
+    check(asyncio.run(m.request_telemetry("Alice")) is None and m.mc.commands.calls == 3, "nessuna risposta dopo tre tentativi")
+
+    db, mesh, core, c, v, anon, tid = setup()
+    bot = Bot({"token": "123456:TEST", "allowed_chat_ids": [1]}, core)
+    chat = FakeChat(1)
+    t = db.tracker(tid)
+    asyncio.run(bot.position_now(chat, t))
+    check("Escursionista adesso" in chat.sent[-1] and "2 salti: Casa → Rip-Monte → Rip-Valle → Escursionista" in chat.sent[-1],
+          "posizione adesso con il percorso della risposta")
+    mesh.answer = False
+    mesh.tried = {"Alice": (1, ["c3"])}
+    asyncio.run(bot.position_now(chat, t))
+    fail = next(x for x in chat.sent if "non ha risposto" in x)
+    check("sul percorso salvato (1 salto: Casa → Rip-Valle → Escursionista)" in fail and "due volte in flood" in fail,
+          "senza risposta: il bot dice quale percorso è stato provato")
+    p = db.last_poll(tid)
+    check(not p["ok"] and p["hops"] == 1 and p["path"] == ["c3"] and db.last_route(tid)["hops"] == 2,
+          "percorso provato salvato senza cambiare quello dell'ultima risposta")
+
+
 def main():
     test_sensors()
     test_battery_alerts()
@@ -524,6 +586,7 @@ def main():
     test_coverage()
     test_events()
     test_bot()
+    test_telemetry_retries()
     print("Tutti i test superati.")
 
 

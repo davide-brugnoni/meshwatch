@@ -256,18 +256,22 @@ class Bot:
             lines.append(f"{x['label']}: {fmt_sensor(x['type'], x['channel'], x['value'])} ({fmt_ts(x['ts'])})")
         return "\n".join(lines)
 
+    def route_desc(self, t, hops, path):
+        """Percorso in parole: diretto, in flood o gateway → ripetitori → nodo."""
+        if hops is None or hops < 0:
+            return "percorso sconosciuto: la richiesta è stata diffusa in flood"
+        nodes = self.core.resolve_path(path)
+        if hops == 0 or not nodes:
+            return "diretto: il gateway lo sente senza ripetitori"
+        names = [(n["name"] or n["hash"]) + ("?" if n["ambiguous"] else "") for n in nodes]
+        gw = self.core.gateway_node()["name"]
+        return f"{hops} salt{'o' if hops == 1 else 'i'}: {gw} → " + " → ".join(names) + f" → {t['label']}"
+
     def route_text(self, t):
         r = self.core.route(t["id"])
         if not r:
             return f"Nessun percorso registrato per {t['label']}."
-        if r["hops"] < 0:
-            how = "percorso sconosciuto: la richiesta è stata diffusa in flood"
-        elif r["hops"] == 0 or not r["nodes"]:
-            how = "diretto: il gateway lo sente senza ripetitori"
-        else:
-            names = [(n["name"] or n["hash"]) + ("?" if n["ambiguous"] else "") for n in r["nodes"]]
-            how = f"{r['hops']} salt{'o' if r['hops'] == 1 else 'i'}: {r['gateway']['name']} → " + " → ".join(names) + f" → {t['label']}"
-        return f"🛰 Percorso di {t['label']} ({fmt_ts(r['ts'])})\n{how}"
+        return f"🛰 Percorso di {t['label']} ({fmt_ts(r['ts'])})\n{self.route_desc(t, r['hops'], [n['hash'] for n in r['nodes']])}"
 
     async def stats(self, update: Update, ctx):
         args = list(ctx.args or [])
@@ -345,27 +349,37 @@ class Bot:
               "oppure scegliere con i pulsanti.",
             reply_markup=KEYBOARD)
 
-    async def _send_pos(self, chat, p, title):
+    async def _send_pos(self, chat, p, title, route=None):
         await chat.send_location(latitude=p["lat"], longitude=p["lon"])
         txt = f"{title}\n{fmt_ts(p['ts'])}\n{maps_link(p['lat'], p['lon'])}"
         if p.get("alt") is not None:
             txt += f"\nQuota {p['alt']:.0f} m"
         if p.get("batt_v") is not None:
             txt += f" · batteria {p['batt_v']:.2f} V"
+        if route:
+            txt += f"\n🛰 {route}"
         await chat.send_message(txt, disable_web_page_preview=True)
 
     async def position_now(self, chat, t):
-        await chat.send_message(f"Chiedo la posizione a {t['label']}… (può volerci fino a un minuto)")
+        await chat.send_message(f"Chiedo la posizione a {t['label']}… (può volerci un paio di minuti)")
+        start = int(time.time())
         res = await self.core.poll_tracker(t["id"])
         if res and res["lat"] is not None:
             res["ts"] = int(time.time())
-            await self._send_pos(chat, res, f"📍 {t['label']} adesso")
+            await self._send_pos(chat, res, f"📍 {t['label']} adesso", route=self.route_desc(t, res.get("hops"), res.get("path")))
             return
         if res:
             await chat.send_message(f"{t['label']} ha risposto ma il GPS non ha ancora il fix."
-                                    + (f" Batteria {res['batt_v']:.2f} V." if res.get("batt_v") else ""))
+                                    + (f" Batteria {res['batt_v']:.2f} V." if res.get("batt_v") else "")
+                                    + f"\n🛰 {self.route_desc(t, res.get('hops'), res.get('path'))}")
         else:
-            await chat.send_message(f"❌ {t['label']} non ha risposto.")
+            txt = f"❌ {t['label']} non ha risposto."
+            p = self.core.db.last_poll(t["id"])
+            if p and not p["ok"] and p["ts"] >= start:
+                first = ("in flood" if p["hops"] is None or p["hops"] < 0
+                         else "sul percorso salvato (" + self.route_desc(t, p["hops"], p["path"]) + ")")
+                txt += f"\nTentativi: prima {first}, poi due volte in flood."
+            await chat.send_message(txt)
         await self.last_position(chat, t)
 
     async def last_position(self, chat, t):
