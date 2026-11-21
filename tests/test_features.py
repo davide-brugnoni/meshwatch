@@ -92,6 +92,16 @@ def test_sensors():
     asyncio.run(core.poll_tracker(tid))
     check(len(db.positions_since(tid, 0)) == 1 and db.sensor_latest(tid)[0]["value"] in (4.02, 22.5),
           "senza fix GPS i sensori (e la batteria) vengono salvati lo stesso")
+    # ultimi valori: uguali a un GROUP BY su tutto lo storico, anche con canali o tipi mancanti
+    db.add_sensor_readings(tid, [{"channel": None, "type": "x", "value": 1}, {"channel": 7, "type": None, "value": 2},
+                                 {"channel": 0, "type": "x", "value": 3}])
+    db.add_sensor_readings(tid, [{"channel": None, "type": "x", "value": 4}])
+    full = db._all("SELECT type, channel, value, ts FROM sensor_readings WHERE rowid IN (SELECT MAX(rowid) "
+                   "FROM sensor_readings WHERE tracker_id=? GROUP BY type, channel) ORDER BY channel, type", (tid,))
+    check(db.sensor_latest(tid) == full and len(full) == 9, "ultimi valori dei sensori dall'indice, come leggendo tutto")
+    with db.lock:
+        db.conn.execute("DELETE FROM sensor_readings WHERE type IS NULL OR type='x'")
+        db.conn.commit()
     st = anon.get("/api/state").json()["trackers"][0]
     temp = next(x for x in st["sensors"] if x["key"] == "temperature:2")
     check(temp["value"] == 22.5 and temp["label"] == "Temperatura" and temp["unit"] == "°C"

@@ -79,6 +79,10 @@ def main():
     me = c.get("/api/me").json()
     check(me["role"] == "guest" and me["setup"], "senza utenti: mappa libera, gestione da impostare")
     check(c.get("/api/state").status_code == 200, "mappa libera in lan")
+    js = c.get("/vendor/leaflet/leaflet.js", headers={"Accept-Encoding": "gzip"})
+    check(js.headers.get("content-encoding") == "gzip" and int(js.headers.get("content-length", 0)) < 60000,
+          "script compressi (leaflet.js sotto i 60 KB)")
+    check(c.get("/", headers={"Accept-Encoding": "gzip"}).headers.get("content-encoding") == "gzip", "pagina compressa")
     check(c.get("/api/admin").status_code == 401 and c.post("/api/update/apply").status_code == 401
           and c.post("/api/system/reboot").status_code == 401, "gestione chiusa anche senza utenti")
     check(c.post("/api/trackers/1/poll").status_code == 401, "l'ospite non chiede la posizione")

@@ -481,12 +481,12 @@ class Core:
                         "ambiguous": len(reps) > 1})
         return out
 
-    def route(self, tid, contacts=None):
+    def route(self, tid, contacts=None, gateway=None):
         r = self.db.last_route(tid)
         if not r:
             return None
         return {"ts": r["ts"], "hops": r["hops"], "nodes": self.resolve_path(r["path"], contacts),
-                "gateway": self.gateway_node()}
+                "gateway": gateway or self.gateway_node()}
 
     # ---------- mappa della copertura
     def coverage(self, days=30, tid=None, cell_m=250):
@@ -676,10 +676,10 @@ class Core:
             await asyncio.sleep(3600)
 
     # ---------- dati per interfacce
-    def tracker_state(self, t, since, contacts=None):
+    def tracker_state(self, t, since, contacts=None, gateway=None):
         sensors, history = self.sensors_state(t["id"], since)
         return {
-            "route": self.route(t["id"], contacts),
+            "route": self.route(t["id"], contacts, gateway),
             "sensors": sensors,
             "sensor_history": history,
             **t,
@@ -691,9 +691,12 @@ class Core:
             "track": self.db.positions_since(t["id"], since),
         }
 
-    def state(self, hours=24):
+    def state(self, hours=24, contacts=None, gateway=None):
+        """Tutto quello che serve alla pagina. Dalla pagina gira in un thread (solo database):
+        contatti e gateway, che vivono nella radio, vanno letti prima e passati qui."""
         since = int(time.time()) - hours * 3600
-        contacts = self.mesh.contacts()
+        contacts = self.mesh.contacts() if contacts is None else contacts
+        gateway = gateway or self.gateway_node()
         reps = []
         for r in self.db.repeaters():
             last, good = self.db.repeater_latest(r["name"])
@@ -706,7 +709,7 @@ class Core:
             })
         return {
             "radio_connected": self.mesh.connected,
-            "trackers": [self.tracker_state(t, since, contacts) for t in self.db.trackers()],
+            "trackers": [self.tracker_state(t, since, contacts, gateway) for t in self.db.trackers()],
             "repeaters": reps,
             "contacts": contacts,
         }
