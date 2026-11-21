@@ -26,6 +26,7 @@ POLICY = {
     ("POST", "/api/login"): "public",
     ("POST", "/api/logout"): "public",
     ("GET", "/api/me"): "public",
+    ("GET", "/api/health"): "public",
     ("POST", "/api/setup"): "public",
     ("GET", "/api/state"): "guest",
     ("GET", "/api/events"): "guest",

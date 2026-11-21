@@ -27,6 +27,9 @@ echo "$USER_NAME ALL=(root) NOPASSWD: /usr/bin/systemctl reboot, /usr/bin/system
 sudo chmod 440 /etc/sudoers.d/meshwatch
 sudo visudo -cf /etc/sudoers.d/meshwatch >/dev/null || sudo rm -f /etc/sudoers.d/meshwatch
 
+echo "→ WiFi senza risparmio energetico"
+sudo bash "$DIR/tools/configura-wifi.sh" || echo "  (non riuscito: controlla a mano)"
+
 echo "→ Servizio systemd"
 sed -e "s|__DIR__|$DIR|g" -e "s|__USER__|$USER_NAME|g" meshwatch.service | sudo tee /etc/systemd/system/meshwatch.service >/dev/null
 sudo systemctl daemon-reload

@@ -82,7 +82,7 @@ $settings = [ordered]@{
     'AUTO_SETUP_NET_WIFI_COUNTRY_CODE'= 'IT'
     'AUTO_SETUP_SSH_SERVER_INDEX'     = '-2'
     'CONFIG_SERIAL_CONSOLE_ENABLE'    = '0'
-    'AUTO_SETUP_APT_INSTALLS'         = 'python3 python3-venv python3-pip python3-yaml avahi-daemon'
+    'AUTO_SETUP_APT_INSTALLS'         = 'python3 python3-venv python3-pip python3-yaml avahi-daemon iw'
     'AUTO_SETUP_CUSTOM_SCRIPT_EXEC'   = '0'
     'SURVEY_OPTED_IN'                 = '0'
 }

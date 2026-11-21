@@ -13,7 +13,7 @@ exec > >(tee -a "$FAT/meshwatch-install.log") 2>&1
 echo "=== MeshWatch: installazione $(date) — file in $FAT ==="
 [ -d "$FAT/meshwatch" ] || { echo "ERRORE: cartella meshwatch non trovata"; exit 1; }
 
-apt-get install -y python3 python3-venv python3-pip python3-yaml avahi-daemon sudo
+apt-get install -y python3 python3-venv python3-pip python3-yaml avahi-daemon sudo iw
 
 # Utente del servizio (senza login)
 id meshwatch-svc >/dev/null 2>&1 || useradd -r -m -d /var/lib/meshwatch -s /usr/sbin/nologin -G dialout meshwatch-svc

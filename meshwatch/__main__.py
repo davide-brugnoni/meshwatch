@@ -12,6 +12,7 @@ from .auth import Auth, hash_password
 from .core import Core
 from .db import DB
 from .mesh import Mesh
+from . import watchdog
 from .updater import Updater, restart_event
 from .web import create_app
 
@@ -19,11 +20,16 @@ log = logging.getLogger("meshwatch")
 
 
 async def run(cfg):
+    web_cfg = cfg.get("web", {})
+    host, port = web_cfg.get("host", "0.0.0.0"), int(web_cfg.get("port", 8080))
+    server = None
+    # parte subito: durante l'avvio tiene vivo il servizio, poi controlla che la pagina risponda
+    dog = asyncio.create_task(watchdog.run(host, port, lambda: bool(server and server.started)))
+
     db = DB(cfg.get("database", "meshwatch.db"))
     mesh = Mesh(cfg.get("serial_port", "auto"), cfg.get("baudrate", 115200))
     core = Core(cfg, db, mesh)
 
-    web_cfg = cfg.get("web", {})
     auth = Auth(db)
     if web_cfg.get("mode") == "public" and not auth.enabled:
         sys.exit("web.mode è 'public' ma non ci sono utenti: crea prima un utente admin dalla pagina "
@@ -39,7 +45,7 @@ async def run(cfg):
     updater = Updater(cfg.get("update") or {})
     server = uvicorn.Server(uvicorn.Config(
         create_app(core, auth, web_cfg, updater),
-        host=web_cfg.get("host", "0.0.0.0"), port=int(web_cfg.get("port", 8080)),
+        host=host, port=port,
         log_level="warning", proxy_headers=web_cfg.get("mode") == "public",
         timeout_graceful_shutdown=5))   # le pagine collegate in tempo reale non bloccano il riavvio
 
@@ -59,7 +65,7 @@ async def run(cfg):
         core.events.close()
         server.should_exit = True
         await serve
-    for t in others + [restart]:
+    for t in others + [restart, dog]:
         t.cancel()
 
 
