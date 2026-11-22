@@ -634,8 +634,11 @@ class Core:
             return False
         from . import maintenance
         data, name = await asyncio.to_thread(maintenance.make_backup, self.db, self.cfg.get("_config_path"))
+        caption = ("💾 Backup di MeshWatch (dati e config) 🔒 protetto da password: si apre con 7-Zip."
+                   if maintenance.settings(self.db)["backup_protected"]
+                   else "💾 Backup di MeshWatch (dati e config). Contiene password: conservalo con cura.")
         for send in self.file_senders:
-            await send(data, name, "💾 Backup di MeshWatch (dati e config). Contiene password: conservalo con cura.")
+            await send(data, name, caption)
         self.db.set("last_backup", int(time.time()))
         self.audit(user, "backup inviato su Telegram", name)
         return True
@@ -705,7 +708,12 @@ class Core:
                 if now - (st["last_purge"] or 0) > 86400:
                     await self.run_purge()
                 if st["backup_telegram"] and now - (st["last_backup"] or 0) > maintenance.BACKUP_EVERY_DAYS * 86400:
-                    await self.send_backup()
+                    try:
+                        await self.send_backup()
+                    except maintenance.BackupError as e:
+                        if self.db.get("backup_error_day") != datetime.now().strftime("%Y-%m-%d"):   # un avviso al giorno
+                            self.db.set("backup_error_day", datetime.now().strftime("%Y-%m-%d"))
+                            await self.notify(f"💾 Backup settimanale non inviato: {e}")
             except Exception as e:
                 log.exception("Errore manutenzione: %s", e)
             await asyncio.sleep(3600)

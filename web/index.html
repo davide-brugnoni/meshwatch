@@ -284,12 +284,24 @@
       <label>Conserva i dati per (giorni, 0 = per sempre) <input type="number" name="retention_days" min="0" max="3650"></label>
       <div class="formacts"><button class="primary">Salva</button></div>
     </form>
+    <form class="edit" id="form-bkpw">
+      <div class="formacts"><span class="lock" id="bkpw-state">…</span></div>
+      <label>Nuova password del backup <input type="password" name="pw" minlength="8" maxlength="128" autocomplete="new-password" placeholder="almeno 8 caratteri" required></label>
+      <label>Ripeti la password <input type="password" name="pw2" minlength="8" maxlength="128" autocomplete="new-password" required></label>
+      <div class="formacts">
+        <button class="primary">Proteggi i backup</button>
+        <button type="button" id="bkpw-remove" class="danger" hidden>Togli la password</button>
+      </div>
+    </form>
     <div class="row">
       <a class="btn" id="mnt-download" href="/api/backup">Scarica backup</a>
       <button id="mnt-purge">Pulisci ora</button>
     </div>
     <details class="help"><summary>Come funziona</summary><p>La pulizia gira da sola una volta al giorno: cancella posizioni, statistiche dei ripetitori, comandi e registro più vecchi del limite. Restano sempre l'ultima posizione di ogni dispositivo e l'ultimo stato di ogni ripetitore.
       Il backup è uno zip con database e config.yaml: contiene password e posizioni, conservalo con cura. Come ripristinarlo è spiegato nel file LEGGIMI.txt dentro lo zip.</p></details>
+    <details class="help"><summary>Backup con password</summary><p>Con la password, database e config nello zip sono cifrati (AES-256): vale per il backup scaricato e per quello su Telegram. Il file LEGGIMI.txt resta leggibile.
+      Su Windows lo zip si apre con <strong>7-Zip</strong> (gratuito): Esplora risorse non apre questo tipo di zip. Su Linux: <span class="mono">7z x</span> (pacchetto p7zip-full).
+      Il Raspberry conserva la password per i backup automatici: protegge le copie che escono dal Raspberry, non la SD. Se la dimentichi i backup fatti con quella password non si aprono più: annotala in un posto sicuro.</p></details>
   </section>
 <section class="card">
     <h2>Cache delle mappe</h2>

@@ -106,6 +106,8 @@ label.switch input:checked::after { transform:translateX(18px); background:#0613
 label.switch input:disabled { opacity:.45; cursor:not-allowed; }
 #ctc-manual { margin:0; }
 .card > label.switch { margin-top:10px; display:flex; }
+.lock { font-size:14px; display:inline-flex; align-items:center; gap:6px; }
+.lock.on { color:var(--ok); } .lock.off { color:var(--warn); }
 .cmds { display:grid; grid-template-columns:repeat(auto-fill, minmax(230px, 1fr)); gap:8px 16px; }
 .cmds div { display:flex; flex-direction:column; padding:6px 0; border-bottom:1px solid var(--line); }
 .cmds b { font-weight:600; font-size:14px; }

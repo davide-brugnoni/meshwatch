@@ -316,8 +316,29 @@ async function loadMaintenance() {
   b.querySelector('.primary').disabled = !m.telegram;
   $('mnt-telegram').disabled = !m.telegram;
   $('tgb-last').textContent = !m.telegram ? 'Telegram non configurato.'
-    : 'Ultimo backup inviato: ' + (m.last_backup ? fmtTs(m.last_backup) : 'mai') + '.';
+    : 'Ultimo backup inviato: ' + (m.last_backup ? fmtTs(m.last_backup) : 'mai') + '.'
+      + (m.backup_protected ? ' 🔒 Protetto da password.' : ' Senza password (si imposta in Sistema → Manutenzione e backup).');
+  const st = $('bkpw-state');
+  st.className = 'lock ' + (m.backup_protected ? 'on' : 'off');
+  st.textContent = !m.backup_crypto ? 'Per proteggere i backup serve la libreria pyzipper: aggiorna MeshWatch.'
+    : m.backup_protected ? '🔒 Backup protetti da password (AES-256)' : '🔓 Backup senza password';
+  const p = $('form-bkpw');
+  p.pw.value = p.pw2.value = '';
+  [p.pw, p.pw2, p.querySelector('.primary')].forEach(x => x.disabled = !m.backup_crypto);
+  p.querySelector('.primary').textContent = m.backup_protected ? 'Cambia password' : 'Proteggi i backup';
+  $('bkpw-remove').hidden = !m.backup_protected;
 }
+$('form-bkpw').onsubmit = e => {
+  e.preventDefault(); const f = e.target;
+  action(f.querySelector('.primary'), () => {
+    if (f.pw.value !== f.pw2.value) throw new Error('le due password non coincidono');
+    return put('/api/maintenance', { backup_password: f.pw.value });
+  }, 'Backup protetti da password: annotala in un posto sicuro').then(loadMaintenance);
+};
+$('bkpw-remove').onclick = e => {
+  if (!confirm('Togliere la password? I prossimi backup saranno zip normali, leggibili da chiunque li abbia.')) return;
+  action(e.target, () => put('/api/maintenance', { backup_password: '' }), 'Password del backup tolta').then(loadMaintenance);
+};
 $('form-mnt').onsubmit = e => {
   e.preventDefault(); const f = e.target;
   action(f.querySelector('.primary'), () => put('/api/maintenance', { retention_days: +f.retention_days.value }), 'Impostazioni salvate')

@@ -177,7 +177,18 @@ In **Gestione → Sistema → Manutenzione e backup** (il backup su Telegram è 
 - **Scarica backup**: uno zip con `meshwatch.db`, `config.yaml` e le istruzioni di ripristino (`LEGGIMI.txt`).
 - **Backup settimanale su Telegram**: va attivato. Arriva solo alle chat in `admin_chat_ids` (o, se vuoto, a quelle in `allowed_chat_ids`).
 
-Il backup contiene password (token Telegram, ripetitori) e posizioni: conservalo con cura.
+- **Password del backup** (facoltativa): database e config nello zip vengono cifrati con AES-256, sia nel backup scaricato sia in quello su Telegram. `LEGGIMI.txt` resta leggibile e spiega come aprirlo. Su Windows serve **7-Zip** (Esplora risorse non apre questi zip), su Linux `7z x` (pacchetto `p7zip-full`; `unzip` non li apre). La pagina non mostra mai la password e il registro segna solo che è stata impostata o tolta.
+
+Il backup contiene password (token Telegram, ripetitori) e posizioni: conservalo con cura, meglio se con la password.
+
+Come sono salvate le password:
+
+| Cosa | Dove | Come |
+|---|---|---|
+| utenti della pagina | database | solo hash PBKDF2-SHA256 (200.000 iterazioni, sale casuale): non si possono rileggere |
+| ripetitori | database | in chiaro: MeshWatch le manda al ripetitore a ogni login. La pagina non le mostra |
+| token Telegram | `config.yaml` | in chiaro: serve a ogni avvio |
+| password del backup | database | in chiaro: serve per i backup automatici. Protegge le copie che escono dal Raspberry, non la SD |
 
 **Ripristino**: ferma il servizio, rimetti i due file al loro posto e riavvia.
 
