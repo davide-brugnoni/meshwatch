@@ -8,6 +8,7 @@ import os
 import sqlite3
 import sys
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 
@@ -74,7 +75,11 @@ def main():
     src_cfg = install(src_dir, token="TOKEN-DEL-BACKUP", port=9090)
     sdb, score, sc, _ = app_for(src_cfg)
     t_old = sdb.add_tracker(contact="Bob", label="Dal backup")
-    sdb.add_position(t_old, 44.0, 8.0, 100, 4.0)
+    now = int(time.time())
+    # orari fissi: il backup è di un'ora fa, le posizioni attuali sono dopo (su una macchina veloce
+    # tutto succederebbe nello stesso secondo e "dopo il backup" non si potrebbe distinguere)
+    sdb._exec("INSERT INTO positions (ts, lat, lon, alt, batt_v, tracker_id) VALUES (?,?,?,?,?,?)",
+              (now - 3600, 44.0, 8.0, 100, 4.0, t_old))
     sdb.set_repeater("Rip-Backup", "pw")
     sdb.set("tg_report_time", "07:15")
     plain = sc.get("/api/backup").content
@@ -87,7 +92,8 @@ def main():
     db, core, c, v = app_for(cfg)
     t_now = db.add_tracker(contact="Alice", label="Attuale")
     for i in range(3):
-        db.add_position(t_now, 45.0 + i / 100, 9.0, 300, 4.1)
+        db._exec("INSERT INTO positions (ts, lat, lon, alt, batt_v, tracker_id) VALUES (?,?,?,?,?,?)",
+                 (now - 600 + i * 60, 45.0 + i / 100, 9.0, 300, 4.1, t_now))
 
     # controllo: niente cambia, riassunto corretto
     r = upload(c, plain)
@@ -240,7 +246,6 @@ def main():
     check([t["label"] for t in DB(sd_cfg["database"]).trackers()] == ["Dal backup"], "SD: dati ripristinati")
 
     # pulizia dei vecchi caricamenti e file scaduti
-    import time as _t
     d4 = DB(str(Path(tempfile.mkdtemp()) / "m.db"))
     d4.set_user("a", hash_password("segreto1"), "admin")
     c4 = {**cfg, "database": d4.path}
@@ -248,7 +253,7 @@ def main():
     b = restore.check(_tmpzip(plain), "", d4, c4)
     check(not (restore.base_dir(c4) / "upload" / a["token"]).exists(), "un caricamento alla volta: il vecchio si cancella")
     meta = restore.base_dir(c4) / "upload" / b["token"] / "meta.json"
-    meta.write_text('{"ts": %d}' % (_t.time() - 7200))
+    meta.write_text('{"ts": %d}' % (time.time() - 7200))
     try:
         restore.apply(b["token"], True, False, d4, c4)
         expired = False
