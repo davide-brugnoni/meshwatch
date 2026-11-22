@@ -9,7 +9,7 @@ Dashboard self-hosted per reti **MeshCore**: segue la posizione GPS di uno o pi�
 
 Gira su un Raspberry Pi con una radio MeshCore in modalità *Companion USB* (Heltec, RAK, LilyGO, XIAO, …) collegata via USB, oppure col firmware *Companion WiFi* in rete.
 
-*Self-hosted dashboard for MeshCore networks: GPS tracking of companion devices via telemetry requests, repeater monitoring and remote CLI, local web UI and Telegram bot. Runs on a Raspberry Pi with a USB companion radio. Documentation is in Italian.*
+*In breve: dashboard per reti MeshCore da ospitare in casa, con tracciamento GPS dei dispositivi tramite richieste di telemetria, monitoraggio dei ripetitori con terminale remoto, pagina web in rete locale e bot Telegram. Gira su un Raspberry Pi con una radio companion collegata via USB.*
 
 ![Mappa](docs/screenshots/mappa.png)
 
@@ -43,6 +43,7 @@ Gira su un Raspberry Pi con una radio MeshCore in modalità *Companion USB* (Hel
 - [Struttura del codice](#struttura-del-codice)
 - [Sviluppo e test](#sviluppo-e-test)
 - [Licenza](#licenza)
+- [Contatti](#contatti)
 
 ## Cosa fa
 
@@ -789,3 +790,9 @@ A ogni push e pull request GitHub Actions ([`.github/workflows/test.yml`](.githu
 ## Licenza
 
 MIT — vedi [LICENSE](LICENSE).
+
+## Contatti
+
+- **Autore**: Davide Brugnoni
+- **Email**: [davide.brugnoni@gmail.com](mailto:davide.brugnoni@gmail.com)
+- **Sito**: [davidebrugnoni.dev](https://davidebrugnoni.dev)
