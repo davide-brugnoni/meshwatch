@@ -12,22 +12,19 @@ from telegram.ext import (Application, CallbackQueryHandler, CommandHandler, Con
                           filters)
 
 from . import __version__, charts, maintenance, system
-from .core import is_dangerous, maps_link, sensor_info
+from .core import is_dangerous, maps_link
 
 log = logging.getLogger("meshwatch.bot")
 
 BTN_POS, BTN_LAST, BTN_TRACK, BTN_NODES = "📍 Posizione ora", "🕓 Ultima posizione", "🧭 Traccia oggi", "📡 Nodi"
-BTN_MAP, BTN_CHART = "🗺 Mappa", "📈 Grafici"
+BTN_MAP = "🗺 Mappa"
 KEYBOARD = ReplyKeyboardMarkup(
     [[KeyboardButton(BTN_POS), KeyboardButton(BTN_LAST)],
-     [KeyboardButton(BTN_MAP), KeyboardButton(BTN_CHART)],
-     [KeyboardButton(BTN_TRACK), KeyboardButton(BTN_NODES)]],
+     [KeyboardButton(BTN_MAP), KeyboardButton(BTN_TRACK)],
+     [KeyboardButton(BTN_NODES)]],
     resize_keyboard=True)
-NO_PIL = ("Per mappe e grafici serve la libreria Pillow: aggiorna MeshWatch dalla pagina "
+NO_PIL = ("Per la mappa serve la libreria Pillow: aggiorna MeshWatch dalla pagina "
           "(Gestione → Aggiornamento programma) oppure installala con  venv/bin/pip install Pillow")
-# sensori che in un grafico nel tempo dicono poco
-CHART_SKIP = ("accelerometer", "gyrometer", "digital input", "digital output", "presence", "switch", "time")
-CHART_ORDER = ("voltage", "temperature", "humidity", "barometer", "illuminance")
 
 
 COMMANDS = [
@@ -37,13 +34,10 @@ COMMANDS = [
     ("segui", "posizione in diretta per qualche ora: /segui 2"),
     ("basta", "smette di mandare la posizione in diretta"),
     ("mappa", "mappa con la traccia: /mappa 7 per una settimana"),
-    ("grafici", "grafici di batteria e sensori: /grafici 7"),
     ("stats", "km, movimento e risposte: /stats 7 per una settimana"),
     ("sensori", "ultimi valori dei sensori"),
     ("percorso", "ripetitori attraversati dall'ultima risposta"),
-    ("copertura", "mappa di dove il dispositivo risponde: /copertura 30"),
     ("nodi", "stato di dispositivi e ripetitori"),
-    ("ripetitori", "grafici di batteria, rumore e segnale: /ripetitori 7"),
     ("aggiorna", "interroga subito i ripetitori"),
     ("sistema", "stato del Raspberry, della radio e del database"),
     ("riepilogo", "riepilogo della giornata; /riepilogo 21:00 ogni sera, /riepilogo no"),
@@ -52,8 +46,6 @@ COMMANDS = [
     ("riprendi", "riattiva il tracciamento"),
     ("advert", "il gateway si annuncia sulla mesh"),
     ("terminale", "comandi CLI ai ripetitori"),
-    ("registro", "ultime voci del registro attività"),
-    ("backup", "manda subito il backup di dati e config"),
     ("aiuto", "elenco dei comandi"),
 ]
 FOLLOW_MAX_H = 8
@@ -138,13 +130,9 @@ class Bot:
             a.add_handler(CommandHandler(cmd, self._by_name(action)))
         a.add_handler(CommandHandler("stats", self.stats))
         a.add_handler(CommandHandler("mappa", self._with_days("map", 1)))
-        a.add_handler(CommandHandler("grafici", self._with_days("chart", 1)))
-        a.add_handler(CommandHandler("copertura", self._with_days("cov", 30)))
-        a.add_handler(CommandHandler("ripetitori", self.repeaters_cmd))
         a.add_handler(CommandHandler("sistema", self.system_cmd))
         a.add_handler(CommandHandler("riepilogo", self.report_cmd))
-        a.add_handler(CommandHandler("registro", self.audit_cmd))
-        a.add_handler(CommandHandler("backup", self.backup_cmd))
+
         a.add_handler(CommandHandler("segui", self.follow))
         a.add_handler(CommandHandler("basta", self.unfollow))
         a.add_handler(CommandHandler("intervallo", self.interval))
@@ -158,7 +146,6 @@ class Bot:
         a.add_handler(MessageHandler(filters.Text([BTN_TRACK]), lambda u, c: self.pick(u, "track")))
         a.add_handler(MessageHandler(filters.Text([BTN_NODES]), self.nodes))
         a.add_handler(MessageHandler(filters.Text([BTN_MAP]), lambda u, c: self.pick(u, "map", "1")))
-        a.add_handler(MessageHandler(filters.Text([BTN_CHART]), lambda u, c: self.pick(u, "chart", "1")))
         a.add_handler(CallbackQueryHandler(self.on_button))
         a.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.term_text))
         a.add_error_handler(self.on_error)
@@ -253,13 +240,13 @@ class Bot:
             await self.do(update.effective_chat, action, ts[0]["id"], arg)
             return
         kb = [[InlineKeyboardButton(t["label"], callback_data=f"{action}:{t['id']}:{arg}")] for t in ts]
-        if action in ("pos", "last", "stats", "sens", "map", "chart", "cov") and not name:
+        if action in ("pos", "last", "stats", "sens", "map") and not name:
             kb.append([InlineKeyboardButton("Tutti", callback_data=f"{action}:all:{arg}")])
         await update.message.reply_text("Quale dispositivo?", reply_markup=InlineKeyboardMarkup(kb))
 
     async def do(self, chat, action, tid, arg=""):
-        if tid == "all" and action in ("map", "cov"):   # una sola mappa con tutti
-            await (self.send_map if action == "map" else self.send_coverage)(chat, None, int(arg or 1))
+        if tid == "all" and action == "map":   # una sola mappa con tutti
+            await self.send_map(chat, None, int(arg or 1))
             return
         if tid == "all":
             for t in self.core.trackers():
@@ -283,10 +270,6 @@ class Bot:
             await chat.send_message(self.route_text(t))
         elif action == "map":
             await self.send_map(chat, t, int(arg or 1))
-        elif action == "chart":
-            await self.send_chart(chat, t, int(arg or 1))
-        elif action == "cov":
-            await self.send_coverage(chat, t, int(arg or 30))
         elif action == "follow":
             await self.follow_start(chat, t, int(arg or 2))
         elif action == "pause":
@@ -418,7 +401,7 @@ class Bot:
             await self._stop_live(self.live.pop(k)[0])
         await update.message.reply_text("Posizione in diretta fermata." if mine else "Nessuna posizione in diretta attiva.")
 
-    # ---------- mappe e grafici (immagini)
+    # ---------- mappa (immagine)
     async def _photo(self, chat, data, caption):
         await chat.send_photo(photo=data, caption=caption[:1024], read_timeout=60, write_timeout=60)
 
@@ -488,108 +471,7 @@ class Bot:
         title = f"🗺 {t['label'] if t else 'Tutti i dispositivi'} – {period_text(days)}"
         await self._photo(chat, img, title + "\n" + "\n".join(lines))
 
-    def _tracker_panels(self, t, since):
-        _, history = self.core.sensors_state(t["id"], since)
-        panels = []
-        for key, pts in history.items():
-            typ, _, ch = key.rpartition(":")
-            base = typ.partition(".")[0]
-            if base in CHART_SKIP or len(pts) < 1:
-                continue
-            i = sensor_info(typ, int(ch))
-            rank = CHART_ORDER.index(base) if base in CHART_ORDER else len(CHART_ORDER)
-            if base == "voltage" and int(ch) != 1:
-                rank += 1
-            panels.append((rank, i["label"], {**i, "points": thin([(a, b) for a, b in pts], 1200)}))
-        pos = self.core.db.positions_since(t["id"], since)
-        if not any(p[1] == "Batteria" for p in panels):
-            b = [(p["ts"], p["batt_v"]) for p in pos if p.get("batt_v") is not None]
-            if b:
-                panels.append((0, "Batteria", {"label": "Batteria", "unit": "V", "dec": 2, "points": thin(b, 1200)}))
-        alt = [(p["ts"], p["alt"]) for p in pos if p.get("alt") is not None]
-        if len(alt) > 1:
-            panels.append((99, "Quota", {"label": "Quota", "unit": "m", "dec": 0, "points": thin(alt, 1200)}))
-        panels.sort(key=lambda p: (p[0], p[1]))
-        return [p[2] for p in panels[:6]]
-
-    async def send_chart(self, chat, t, days=1):
-        if not charts.available():
-            await chat.send_message(self.sensors_text(t) + "\n\n" + NO_PIL)
-            return
-        now = int(time.time())
-        since = now - days * 86400
-        panels = self._tracker_panels(t, since)
-        if not panels:
-            await chat.send_message(f"Nessun valore di batteria o sensori di {t['label']} nelle {period_text(days)}.")
-            return
-        await self._busy(chat)
-        img = await asyncio.to_thread(charts.line_chart, t["label"], panels, since, now,
-                                      period_text(days).capitalize())
-        await self._photo(chat, img, f"📈 {t['label']} – {period_text(days)}\n" + self.stats_text(t, days).split("\n", 1)[-1])
-
-    async def send_repeater_chart(self, chat, name, days=7):
-        now = int(time.time())
-        since = now - days * 86400
-        h = self.core.db.repeater_history(name, since)
-        if not h:
-            await chat.send_message(f"📡 {name}: nessun dato nei {period_text(days)}.")
-            return
-        if not charts.available():
-            await chat.send_message(NO_PIL)
-            return
-        await self._busy(chat)
-        series = [("Batteria", "V", 2, "bat_mv", 0.001), ("Rumore", "dBm", 0, "noise", 1),
-                  ("SNR", "dB", 1, "snr", 1), ("RSSI", "dBm", 0, "rssi", 1)]
-        panels = [{"label": lab, "unit": unit, "dec": dec,
-                   "points": thin([(r["ts"], r[col] * k) for r in h if r[col] is not None], 1200)}
-                  for lab, unit, dec, col, k in series]
-        img = await asyncio.to_thread(charts.line_chart, name, panels, since, now,
-                                      f"{period_text(days).capitalize()} · {len(h)} letture")
-        last, good = self.core.db.repeater_latest(name)
-        state = "risponde" if last and last["ok"] else f"non risponde (ultima risposta {fmt_ts(good['ts'] if good else None)})"
-        await self._photo(chat, img, f"📡 {name} – {period_text(days)}\n{state}")
-
-    async def repeaters_cmd(self, update: Update, ctx):
-        if not self.ok(update):
-            return
-        days, name = self._days_args(ctx, 7)
-        reps = [r["name"] for r in self.core.db.repeaters()]
-        if name:
-            reps = [r for r in reps if name.lower() in r.lower()]
-        if not reps:
-            await update.message.reply_text("Nessun ripetitore" + (f" si chiama \"{name}\"." if name else " configurato."))
-            return
-        if len(reps) == 1:
-            await self.send_repeater_chart(update.effective_chat, reps[0], days)
-            return
-        kb = [[InlineKeyboardButton(n, callback_data=f"rep:{n[:45]}:{days}")] for n in reps]
-        kb.append([InlineKeyboardButton("Tutti", callback_data=f"rep:*:{days}")])
-        await update.message.reply_text("Quale ripetitore?", reply_markup=InlineKeyboardMarkup(kb))
-
-    async def send_coverage(self, chat, t, days=30):
-        cov = self.core.coverage(days, t["id"] if t else None)
-        who = t["label"] if t else "tutti i dispositivi"
-        if not cov["cells"]:
-            await chat.send_message(f"Nessuna richiesta con posizione per {who} negli {period_text(days)}.")
-            return
-        if not charts.available():
-            await chat.send_message(NO_PIL)
-            return
-        await self._busy(chat)
-        cells = [{"bounds": c["bounds"], "color": charts.coverage_color(c["ok"], c["fail"]),
-                  "alpha": min(170, 70 + 10 * (c["ok"] + c["fail"]))} for c in cov["cells"]]
-        img = await charts.static_map(self._get_tile, cells=cells, markers=self._net_markers())
-        ok = sum(c["ok"] for c in cov["cells"])
-        total = ok + sum(c["fail"] for c in cov["cells"])
-        hops = [c["hops"] for c in cov["cells"] if c["hops"] is not None]
-        await self._photo(chat, img,
-                          f"📶 Copertura di {who} – {period_text(days)}\n"
-                          f"{total} richieste, {ok} con risposta ({round(100 * ok / total) if total else 0}%) "
-                          f"in {len(cells)} zone di {cov['cell_m']} m"
-                          + (f" · salti medi {sum(hops) / len(hops):.1f}" if hops else "")
-                          + "\n🟩 risponde quasi sempre · 🟨 a volte · 🟧 di rado · 🟥 mai")
-
-    # ---------- sistema, registro, backup
+    # ---------- sistema
     def system_text(self):
         i = system.info()
         lines = ["🖥 Sistema"]
@@ -632,27 +514,6 @@ class Bot:
     async def system_cmd(self, update: Update, ctx):
         if self.ok(update):
             await update.message.reply_text(self.system_text())
-
-    async def audit_cmd(self, update: Update, ctx):
-        if not (self.ok(update) and self.is_admin(update)):
-            return
-        rows = self.core.db.audit(limit=20)
-        if not rows:
-            await update.message.reply_text("Registro attività vuoto.")
-            return
-        lines = ["📒 Registro attività (ultime 20)"]
-        for r in rows:
-            who = r["user"] or "?"
-            ip = f" [{r['ip']}]" if r.get("ip") else ""
-            det = f": {r['detail']}" if r.get("detail") else ""
-            lines.append(f"{datetime.fromtimestamp(r['ts']).strftime('%d/%m %H:%M')} {who}{ip} – {r['action']}{det}")
-        await update.message.reply_text("\n".join(lines)[:4000])
-
-    async def backup_cmd(self, update: Update, ctx):
-        if not (self.ok(update) and self.is_admin(update)):
-            return
-        await update.message.reply_text("Preparo il backup…")
-        await self.core.send_backup(f"telegram:{update.effective_chat.id}")
 
     # ---------- riepilogo giornaliero
     def report_time(self):
@@ -888,17 +749,10 @@ class Bot:
             return
         action, _, rest = q.data.partition(":")
         if action in ("pos", "last", "track", "pause", "resume", "interval", "stats", "sens", "route", "follow",
-                      "map", "chart", "cov"):
+                      "map"):
             tid, _, arg = rest.partition(":")
             await q.edit_message_reply_markup(None)
             await self.do(chat, action, tid, arg)
-            return
-        if action == "rep":
-            name, _, days = rest.rpartition(":")
-            await q.edit_message_reply_markup(None)
-            names = [r["name"] for r in self.core.db.repeaters()] if name == "*" else [name]
-            for n in names:
-                await self.send_repeater_chart(chat, n, int(days or 7))
             return
         if chat.id not in self.admins:
             return

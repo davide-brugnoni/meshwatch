@@ -30,7 +30,7 @@ Gira su un Raspberry Pi con una radio MeshCore in modalità *Companion USB* (Hel
 - **Radio**: se la radio si scollega arriva un avviso su Telegram e dopo 3 minuti il programma la ricollega da solo, ritrovando la porta USB anche se è cambiata.
 - **Manutenzione e backup**: pulizia automatica dei dati più vecchi di N giorni (default 180); backup di database e config scaricabile dalla pagina o inviato ogni settimana su Telegram.
 - **Registro attività**: login, tentativi falliti e ogni azione di gestione, dalla pagina e da Telegram.
-- **Telegram**: posizione con pin e link Google Maps, ultima posizione, traccia, **mappe e grafici come immagini** (traccia, batteria, sensori, ripetitori, copertura), stato del Raspberry, **riepilogo giornaliero** automatico, avvisi (dispositivo che non risponde, batteria bassa, ripetitore muto, radio scollegata, nuova versione disponibile).
+- **Telegram**: posizione con pin e link Google Maps, ultima posizione, traccia, **mappa come immagine** con la traccia, stato del Raspberry, **riepilogo giornaliero** automatico, avvisi (dispositivo che non risponde, batteria bassa, ripetitore muto, radio scollegata, nuova versione disponibile).
 - **Avvisi batteria bassa** (Gestione → Avvisi batteria bassa): ogni quanto ripeterli finché la batteria resta bassa (o una volta sola) e una fascia oraria di silenzio (es. 22:00-07:00). Vale per i dispositivi seguiti e per i ripetitori.
 - **Tempo reale**: posizioni, ripetitori, stato della radio e messaggi compaiono sulla pagina appena arrivano, senza ricaricare.
 - **Da telefono**: pagina pensata anche per lo smartphone (barra in basso Mappa · Nodi · Gestione).
@@ -108,26 +108,22 @@ Copia `config.example.yaml` in `config.yaml` (con il kit SD il file è `meshwatc
 | `/stats` · `/stats 7` | km percorsi, ore in movimento, risposte, quota e batteria delle ultime 24 ore · degli ultimi 7 giorni |
 | `/sensori` · `/percorso` | ultimi valori dei sensori · ripetitori attraversati dall'ultima risposta |
 | `/mappa` · `/mappa 7` | **immagine della mappa** con la traccia delle ultime 24 ore · degli ultimi 7 giorni, l'ultima posizione, gateway e ripetitori della zona |
-| `/grafici` · `/grafici 7` | **grafici** di batteria, sensori (temperatura, umidità, …) e quota |
-| `/copertura` · `/copertura 90` | mappa della copertura degli ultimi 30 · 90 giorni |
 | `/nodi` · `/aggiorna` | stato di dispositivi e ripetitori · interroga subito i ripetitori |
-| `/ripetitori` · `/ripetitori 30` | grafici di batteria, rumore, SNR e RSSI dei ripetitori negli ultimi 7 · 30 giorni |
 | `/sistema` | Raspberry (temperatura, memoria, disco, tensione bassa), radio, database, ultimo backup |
 | `/riepilogo` | riepilogo della giornata con la mappa; `/riepilogo 21:00` ogni giorno a quell'ora, `/riepilogo no` lo spegne |
 | `/intervallo 30` · `/pausa` · `/riprendi` | gestione del tracciamento |
 | `/advert` | il gateway si annuncia sulla mesh |
 | `/terminale` · `/fine` | comandi CLI a un ripetitore |
-| `/registro` · `/backup` | ultime 20 voci del registro attività · backup subito (solo chat admin) |
 
 Con più dispositivi si scrive il nome dopo il comando, anche solo l'inizio e senza badare alle maiuscole: `/dove escursionista`, `/stats 7 esc`, `/intervallo 15 ciclista`, `/segui 3 esc`. Senza nome il bot chiede quale con dei pulsanti. Scrivendo `/` Telegram mostra l'elenco dei comandi.
 
 Con `/segui` conviene attivare l'intervallo adattivo del dispositivo: in movimento le posizioni arrivano più spesso e il pin si sposta di conseguenza.
 
-#### Mappe e grafici su Telegram
+#### Mappa e riepilogo su Telegram
 
-Servono a vedere da fuori casa quello che mostra la pagina, senza metterla su Internet. Anche i pulsanti **🗺 Mappa** e **📈 Grafici** della tastiera del bot li mostrano.
+Servono a vedere da fuori casa quello che mostra la pagina, senza metterla su Internet. La mostra anche il pulsante **🗺 Mappa** della tastiera del bot.
 
-- Le immagini le disegna il Raspberry (libreria Pillow, installata con l'aggiornamento) in qualche secondo. Senza Pillow il bot risponde in testo e dice come installarla.
+- La mappa la disegna il Raspberry (libreria Pillow, installata con l'aggiornamento) in qualche secondo. Senza Pillow il bot risponde in testo e dice come installarla.
 - Le tessere OpenStreetMap passano dalla [cache delle mappe](#cache-delle-mappe-sul-raspberry), anche quando è disattivata per la pagina: le zone già viste non vengono scaricate di nuovo. Senza Internet la mappa arriva lo stesso, su fondo grigio.
 - Gateway e ripetitori compaiono solo se hanno una posizione e cadono nella zona della traccia: un ripetitore lontano non rimpicciolisce la mappa.
 - Con più dispositivi, **Tutti** mette le tracce di tutti in un'unica mappa, ognuna con il suo colore.
@@ -358,7 +354,7 @@ meshwatch/            pacchetto Python
   db.py               SQLite: dispositivi, posizioni, ripetitori, utenti, impostazioni
   web.py              API FastAPI e pagina
   bot.py              bot Telegram
-  charts.py           immagini per Telegram: grafici e mappe con traccia e copertura
+  charts.py           mappa come immagine per Telegram (traccia, gateway, ripetitori)
   auth.py             login e sessioni
   system.py           stato del Raspberry, riavvio/spegnimento
   updater.py          aggiornamento dalla pagina (GitHub), con ripristino

@@ -544,7 +544,7 @@ class FakeTiles:
 
 
 def test_bot_images():
-    """Mappe, grafici, copertura, sistema, registro, backup e riepilogo giornaliero su Telegram."""
+    """Mappa, sistema e riepilogo giornaliero su Telegram."""
     from datetime import datetime
     from meshwatch import bot as botmod, charts
     from meshwatch.bot import Bot, thin
@@ -583,70 +583,15 @@ def test_bot_images():
     check(chat.photos[-1][0][:3] == b"\xff\xd8\xff", "mappa anche senza tessere")
     tiles.fail = False
 
-    # /grafici: batteria (dalle posizioni), temperatura e quota; accelerometro escluso
-    panels = bot._tracker_panels(db.tracker(tid), now - 86400)
-    labels = [p["label"] for p in panels]
-    check(labels[0] == "Batteria" and "Temperatura" in labels and labels[-1] == "Quota"
-          and not any("Accelerometro" in x for x in labels), f"pannelli del grafico in ordine: {labels}")
-    run(bot._with_days("chart", 1)(FakeUpdate(chat), Ctx("escursionista")))
-    img, cap = chat.photos[-1]
-    check(img[:8] == b"\x89PNG\r\n\x1a\n" and "📈 Escursionista" in cap and "Percorsi" in cap, "/grafici nome: PNG")
-    run(bot.do(chat, "chart", str(tid2), "1"))
-    check("Nessun valore" in chat.sent[-1], "/grafici senza dati")
-    png = charts.line_chart("Vuoto", [], now - 3600, now)
-    check(png[:4] == b"\x89PNG", "grafico senza dati: immagine con la scritta")
-    png = charts.line_chart("Uno", [{"label": "T", "unit": "°C", "dec": 1, "points": [(now, 5.0)]}], now - 86400 * 30, now)
-    check(png[:4] == b"\x89PNG", "grafico con un solo valore e 30 giorni")
-
-    # /ripetitori: pulsanti con più ripetitori, grafico con batteria, rumore, SNR, RSSI
-    db.set_repeater("Rip-Monte", "x")
-    db.set_repeater("Rip-Valle", "x")
-    for i in range(5):
-        db._exec("INSERT INTO repeater_status VALUES (?,?,?,?,?,?,?,?,?,?)",
-                 (now - 3600 * (5 - i), "Rip-Monte", 1, 4100 - i * 10, 1000, -110 + i, -80, 7.5, 1, 1))
-    upd = FakeUpdate(chat)
-    asked = []
-
-    async def reply(text, reply_markup=None, **kw):
-        asked.append(reply_markup)
-    upd.message.reply_text = reply
-    run(bot.repeaters_cmd(upd, Ctx("3")))
-    rows = asked[-1].inline_keyboard
-    check(len(rows) == 3 and rows[0][0].callback_data == "rep:Rip-Monte:3" and rows[-1][0].callback_data == "rep:*:3",
-          "/ripetitori 3: pulsanti con Tutti")
-    run(bot.repeaters_cmd(FakeUpdate(chat), Ctx("monte")))
-    img, cap = chat.photos[-1]
-    check(img[:4] == b"\x89PNG" and "Rip-Monte – ultimi 7 giorni" in cap and "risponde" in cap, "/ripetitori nome")
-    run(bot.send_repeater_chart(chat, "Rip-Valle", 7))
-    check("nessun dato" in chat.sent[-1], "ripetitore senza dati")
-
-    # /copertura
-    run(bot.do(chat, "cov", str(tid), "30"))
-    img, cap = chat.photos[-1]
-    check(img[:3] == b"\xff\xd8\xff" and "Copertura di Escursionista" in cap and "12 richieste, 8 con risposta (67%)" in cap,
-          "/copertura: mappa con le zone")
-    run(bot.do(chat, "cov", str(tid2), "30"))
-    check("Nessuna richiesta" in chat.sent[-1], "/copertura senza dati")
-
-    # /sistema, /registro, /backup
+    # /sistema
     txt = bot.system_text()
     check("Disco libero" in txt and "Radio gateway Casa" in txt and "posizioni" in txt and "Cache mappe: 12 tessere" in txt,
           "/sistema")
-    core.audit("admin1", "login", "", "1.2.3.4")
-    u = FakeUpdate(chat)
-    run(bot.audit_cmd(u, Ctx()))
-    check("Registro attività" in chat.sent[-1] and "admin1 [1.2.3.4] – login" in chat.sent[-1], "/registro")
+    db.set_repeater("Rip-Monte", "x")
+    db._exec("INSERT INTO repeater_status VALUES (?,?,?,?,?,?,?,?,?,?)",
+             (now - 600, "Rip-Monte", 1, 4100, 1000, -110, -80, 7.5, 1, 1))
     other = FakeChat(2)
     bot.allowed.add(2)
-    run(bot.audit_cmd(FakeUpdate(other), Ctx()))
-    check(not other.sent, "/registro solo per le chat admin")
-    sent_files = []
-
-    async def fake_send(data, name, caption=""):
-        sent_files.append(name)
-    core.file_senders[:] = [fake_send]
-    run(bot.backup_cmd(FakeUpdate(chat), Ctx()))
-    check(sent_files and sent_files[0].endswith(".zip"), "/backup")
 
     # /riepilogo: adesso, ogni giorno, disattivato; viewer non può cambiarlo
     n = len(chat.photos)
@@ -681,9 +626,8 @@ def test_bot_images():
     try:
         n = len(chat.photos)
         run(bot.do(chat, "map", str(tid), "1"))
-        run(bot.do(chat, "chart", str(tid), "1"))
-        check(len(chat.photos) == n and botmod.NO_PIL in chat.sent[-1] and any("google.com/maps" in x for x in chat.sent[-4:]),
-              "senza Pillow: traccia e sensori in testo, con l'indicazione per installarla")
+        check(len(chat.photos) == n and botmod.NO_PIL in chat.sent[-1] and any("google.com/maps" in x for x in chat.sent[-3:]),
+              "senza Pillow: traccia in testo, con l'indicazione per installarla")
     finally:
         charts.available = orig
 
