@@ -52,6 +52,9 @@ jobs:
       - name: Cache delle mappe
         run: python tests/test_tiles.py
 
+      - name: Ripristino di un backup dalla pagina
+        run: python tests/test_restore.py
+
       - name: Permessi di tutti gli endpoint per ogni ruolo
         run: python tests/test_permissions.py
 

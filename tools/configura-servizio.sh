@@ -3,7 +3,8 @@
 # Lo usa l'installazione al primo avvio; si può rilanciare quando si vuole (non tocca config e dati).
 # - il programma in /opt/meshwatch appartiene all'utente del servizio, così può aggiornarsi
 #   da solo dalla pagina web (Gestione → Sistema → Aggiornamento);
-# - all'avvio copia il config dalla SD e, solo se AGGIORNA-SD.bat ha lasciato il segnale
+# - all'avvio copia il config dalla SD (prima, se dalla pagina è stato ripristinato un backup,
+#   mette sulla SD il config del backup) e, solo se AGGIORNA-SD.bat ha lasciato il segnale
 #   meshwatch/AGGIORNA sulla SD, anche il programma;
 # - tools/guard.sh ripristina la versione precedente se un aggiornamento non parte;
 # - watchdog: se la pagina non risponde per 5 minuti systemd riavvia il programma;
@@ -35,6 +36,14 @@ if [ -f \$SD/AGGIORNA ] && [ -f \$SD/meshwatch/__main__.py ]; then
   chown -R $SVC:$SVC $APP
   runuser -u $SVC -- $APP/venv/bin/pip install --no-cache-dir -q -r $APP/requirements.txt || echo "pip non riuscito (rete?)"
   rm -f \$SD/AGGIORNA
+fi
+# config ripristinato dalla pagina (Gestione → Sistema → Ripristina un backup): va sulla SD,
+# da dove viene ricopiato qui sotto. Solo un file vero dell'utente del servizio, non un link.
+R=/var/lib/meshwatch/.restore/config-sd.yaml
+if [ -f "\$R" ] && [ ! -L "\$R" ] && [ "\$(stat -c '%U %h' "\$R")" = "$SVC 1" ] && [ "\$(stat -c %s "\$R")" -lt 1048576 ]; then
+  cp $FAT/meshwatch-config.yaml $FAT/meshwatch-config.prima-del-ripristino.yaml
+  cat "\$R" > $FAT/meshwatch-config.yaml && rm -f "\$R"
+  echo "MeshWatch: configurazione ripristinata dalla pagina"
 fi
 install -m 600 -o $SVC -g $SVC $FAT/meshwatch-config.yaml /var/lib/meshwatch/config.yaml
 PRE

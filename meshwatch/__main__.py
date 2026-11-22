@@ -12,6 +12,7 @@ from .auth import Auth, hash_password
 from .core import Core
 from .db import DB
 from .mesh import Mesh
+from . import restore
 from .tiles import TileCache
 from . import watchdog
 from .updater import Updater, restart_event
@@ -30,6 +31,19 @@ async def run(cfg):
     db = DB(cfg.get("database", "meshwatch.db"))
     mesh = Mesh.from_config(cfg)
     core = Core(cfg, db, mesh)
+    restored = restore.take_announcement(cfg)
+    if restored:   # backup ripristinato dalla pagina al riavvio precedente
+        what = " e ".join(x for x, on in (("dati", restored.get("data")), ("configurazione", restored.get("config"))) if on)
+        core.audit(restored.get("user") or "sistema", "ripristino applicato" if restored["ok"] else "ripristino non riuscito",
+                   (what + (": " + "; ".join(restored["errors"]) if restored["errors"] else ""))[:300])
+
+        async def announce():
+            await asyncio.sleep(90)   # il bot nel frattempo si collega
+            await core.notify(("♻️ Backup ripristinato dalla pagina (" + what + ")." if restored["ok"] else
+                               "⚠️ Ripristino del backup non riuscito: " + "; ".join(restored["errors"])))
+        task = asyncio.create_task(announce())
+        core.tasks.add(task)   # riferimento: un task senza riferimenti può sparire
+        task.add_done_callback(core.tasks.discard)
 
     auth = Auth(db)
     if web_cfg.get("mode") == "public" and not auth.enabled:
@@ -91,6 +105,11 @@ def main():
     logging.getLogger("httpx").setLevel(logging.WARNING)
     cfg = yaml.safe_load(Path(a.config).read_text(encoding="utf-8"))
     cfg["_config_path"] = str(Path(a.config).resolve())   # per il backup
+    # backup ripristinato dalla pagina: i file vanno al loro posto prima di aprire il database
+    done = restore.apply_pending(cfg)
+    if done and done.get("config") and done.get("mode") != "sd":
+        cfg = yaml.safe_load(Path(a.config).read_text(encoding="utf-8"))
+        cfg["_config_path"] = str(Path(a.config).resolve())
     asyncio.run(run(cfg))
 
 

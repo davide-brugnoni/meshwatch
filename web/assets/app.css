@@ -96,8 +96,8 @@ details.help p { font-size:13px; color:var(--mute); margin:6px 0 0; line-height:
 label.switch, form.edit label.switch { flex-direction:row; align-items:center; gap:12px; text-transform:none; letter-spacing:normal;
                font-size:14.5px; color:var(--ink); cursor:pointer; }
 form.edit label.switch { grid-column:1 / -1; }
-.card > label.switch { flex-wrap:wrap; }
-label.switch small { flex-basis:100%; color:var(--mute); font-size:12.5px; padding-left:56px; margin-top:-6px; }
+
+label.switch small { display:block; color:var(--mute); font-size:12.5px; margin-top:2px; }
 label.switch input { appearance:none; -webkit-appearance:none; flex:none; width:44px; height:26px; min-height:0; margin:0; padding:0;
                      border-radius:13px; background:var(--line); border:none; position:relative; cursor:pointer; transition:background .15s; }
 label.switch input::after { content:''; position:absolute; top:3px; left:3px; width:20px; height:20px; border-radius:50%; background:var(--ink); transition:transform .15s; }
@@ -106,6 +106,9 @@ label.switch input:checked::after { transform:translateX(18px); background:#0613
 label.switch input:disabled { opacity:.45; cursor:not-allowed; }
 #ctc-manual { margin:0; }
 .card > label.switch { margin-top:10px; display:flex; }
+.rst-head { font-weight:600; margin:14px 0 6px; }
+#rst-warn .note { margin:6px 0 0; }
+button.danger-fill { background:var(--warn); border-color:var(--warn); color:#1a0b05; }
 .lock { font-size:14px; display:inline-flex; align-items:center; gap:6px; }
 .lock.on { color:var(--ok); } .lock.off { color:var(--warn); }
 .cmds { display:grid; grid-template-columns:repeat(auto-fill, minmax(230px, 1fr)); gap:8px 16px; }
@@ -281,7 +284,7 @@ body.tab-chat #chat-view { display:grid; } body.tab-chat main { display:none; }
   #mnav button { min-height:54px; }
   input, select, .term-in input, form.edit label input, form.edit label select, #chat-text { font-size:16px; min-height:40px; }
   input[type=checkbox] { min-height:0; width:22px; height:22px; }
-  label.switch input { width:48px; height:28px; border-radius:14px; }
+  label.switch input, form.edit label.switch input { width:48px; height:28px; min-height:0; border-radius:14px; }
   label.switch input::after { width:22px; height:22px; }
   #adm-nav button { min-height:38px; }
   .btn { display:inline-flex; align-items:center; }

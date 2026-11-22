@@ -350,6 +350,106 @@ $('form-tgb').onsubmit = e => {
     f.backup_telegram.checked ? 'Backup settimanale attivo' : 'Backup settimanale spento').then(loadMaintenance);
 };
 
+// ---------- ripristino di un backup
+let rst = null;
+const fmtWhen = ts => ts ? new Date(ts * 1000).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+async function loadRestore() {
+  let s; try { s = await api('/api/restore'); } catch (e) { return; }
+  $('rst-undo-row').hidden = !s.prev;
+  if (s.prev) $('rst-undo-note').textContent = `rimette lo stato del ${fmtWhen(s.prev.ts)} (${[s.prev.data && 'dati', s.prev.config && 'configurazione'].filter(Boolean).join(' e ')})`;
+  const l = s.last, last = $('rst-last');
+  last.hidden = !l;
+  if (l) {
+    last.className = 'note' + (l.ok ? '' : ' warn');
+    last.textContent = (l.source === 'annullamento' ? 'Ultimo annullamento' : 'Ultimo ripristino') + `: ${fmtWhen(l.applied)}`
+      + (l.backup_ts && l.source !== 'annullamento' ? `, backup del ${fmtWhen(l.backup_ts)}` : '')
+      + (l.ok ? ' — riuscito.' : ' — problemi: ' + l.errors.join('; '));
+  }
+  rst = { ...(rst || {}), status: s };
+}
+function b64(s) { return btoa(String.fromCharCode(...new TextEncoder().encode(s))); }
+$('form-rst').onsubmit = async e => {
+  e.preventDefault();
+  const f = e.target, file = f.file.files[0], btn = f.querySelector('.primary');
+  if (!file) return;
+  btn.disabled = true; btn.textContent = 'Controllo in corso…';
+  try {
+    const r = await fetch('/api/restore/check', { method: 'POST', credentials: 'same-origin', body: file,
+      headers: { 'Content-Type': 'application/zip', 'X-Backup-Password': b64(f.pw.value) } });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 401) { showLogin(); return; }
+    if (!r.ok) {
+      const d = j.detail && typeof j.detail === 'object' && !Array.isArray(j.detail) ? j.detail : { message: j.detail };
+      if (d.code === 'password') f.pw.focus();
+      throw new Error(typeof d.message === 'string' ? d.message : r.status === 413 ? 'file troppo grande' : r.statusText);
+    }
+    $('toast').style.display = 'none';   // un errore di prima (es. password mancante) non resta a schermo
+    showRestore(j, file.name);
+  } catch (err) { toast('Errore: ' + err.message, true); }
+  finally { btn.disabled = false; btn.textContent = 'Controlla il backup'; }
+};
+function showRestore(c, name) {
+  rst = { ...(rst || {}), check: c };
+  $('rst-result').hidden = false;
+  $('rst-title').textContent = `${name}: backup ${c.backup_ts ? 'del ' + fmtWhen(c.backup_ts) : 'di MeshWatch'}${c.encrypted ? ' · 🔒 protetto da password' : ''}`;
+  const cells = [];
+  if (c.has_data) {
+    const d = c.data;
+    cells.push(cell('Dispositivi', d.trackers.length ? d.trackers.join(', ') : 'nessuno'),
+      cell('Ripetitori', d.repeaters.length ? d.repeaters.join(', ') : 'nessuno'),
+      cell('Utenti', d.users.map(u => `${u.username} (${u.role})`).join(', ')),
+      cell('Posizioni', `${d.positions}${d.first_ts ? ` dal ${fmtWhen(d.first_ts).slice(0, 10)} al ${fmtWhen(d.last_ts).slice(0, 10)}` : ''}`),
+      cell('Messaggi', String(d.messages)), cell('Database', fmtSize(d.size)));
+  }
+  if (c.has_config) {
+    const k = c.config;
+    cells.push(cell('Telegram', k.telegram ? `bot configurato, ${k.chats} chat` : 'non configurato'),
+      cell('Radio', k.radio), cell('Pagina web', k.web_mode));
+  }
+  $('rst-info').replaceChildren(...cells);
+  const warns = [...(c.warnings || []), ...(c.config_warnings || []).map(w => 'Configurazione: ' + w)];
+  $('rst-warn').replaceChildren(...warns.map(w => el('p', { className: 'note warn', textContent: '⚠️ ' + w })));
+  const f = $('form-rst-apply');
+  f.data.checked = c.has_data; f.data.disabled = !c.has_data;
+  const cfgOk = c.has_config && !!c.config_mode;
+  f.config.checked = false; f.config.disabled = !cfgOk;
+  $('rst-cfg-note').textContent = !c.has_config ? 'il backup non contiene il config'
+    : cfgOk ? 'token Telegram, radio, pagina web (config.yaml)' : 'non disponibile: ' + c.config_reason;
+  $('rst-result').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+$('rst-cancel').onclick = () => { $('rst-result').hidden = true; $('form-rst').reset(); rst.check = null; };
+$('form-rst-apply').onsubmit = async e => {
+  e.preventDefault(); const f = e.target, c = rst && rst.check;
+  if (!c) return;
+  const what = [f.data.checked && 'i dati', f.config.checked && 'la configurazione'].filter(Boolean);
+  if (!what.length) { toast('Scegli cosa ripristinare', true); return; }
+  if (!confirm(`Ripristinare ${what.join(' e ')} dal backup${c.backup_ts ? ' del ' + fmtWhen(c.backup_ts) : ''}?\n\n`
+    + 'Lo stato attuale viene salvato (si può annullare). Il servizio si riavvia: per circa un minuto pagina e bot non rispondono.'
+    + (f.data.checked ? '\nDopo il riavvio si entra con utenti e password del backup.' : ''))) return;
+  const btn = $('rst-apply'); btn.disabled = true;
+  try {
+    await post('/api/restore/apply', { token: c.token, data: f.data.checked, config: f.config.checked });
+    $('rst-result').hidden = true;
+    waitBack($('rst-log'), 'Ripristino in corso: il servizio si riavvia, la pagina si ricarica da sola…');
+  } catch (err) { if (err.message !== 'login') toast('Errore: ' + err.message, true); btn.disabled = false; }
+};
+$('rst-undo').onclick = async e => {
+  if (!confirm('Annullare l\'ultimo ripristino e rimettere lo stato precedente?\nIl servizio si riavvia (circa un minuto).')) return;
+  e.target.disabled = true;
+  try { await post('/api/restore/undo'); waitBack($('rst-log'), 'Rimetto lo stato precedente: il servizio si riavvia…'); }
+  catch (err) { if (err.message !== 'login') toast('Errore: ' + err.message, true); e.target.disabled = false; }
+};
+async function waitBack(box, msg) {
+  box.hidden = false; box.textContent = msg;
+  const t0 = Date.now();
+  await new Promise(r => setTimeout(r, 4000));
+  while (Date.now() - t0 < 10 * 60000) {
+    try { const r = await fetch('/api/me', { cache: 'no-store' }); if (r.ok || r.status === 401) { location.reload(); return; } } catch (e) { }
+    await new Promise(r => setTimeout(r, 3000));
+  }
+  box.textContent = 'Il servizio non risponde ancora: ricarica la pagina tra qualche minuto.';
+}
+
 // ---------- riepilogo giornaliero su Telegram
 async function loadReport() {
   let r; try { r = await api('/api/telegram/report'); } catch (e) { return; }

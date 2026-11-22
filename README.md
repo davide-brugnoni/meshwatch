@@ -191,7 +191,21 @@ Come sono salvate le password:
 | token Telegram | `config.yaml` | in chiaro: serve a ogni avvio |
 | password del backup | database | in chiaro: serve per i backup automatici. Protegge le copie che escono dal Raspberry, non la SD |
 
-**Ripristino**: ferma il servizio, rimetti i due file al loro posto e riavvia.
+### Ripristino dalla pagina
+
+**Gestione → Sistema → Ripristina un backup**:
+
+1. scegli lo zip (e la password, se è protetto) e premi **Controlla il backup**: il Raspberry verifica password, integrità del database e che questa versione lo sappia aprire, poi mostra cosa contiene (dispositivi, ripetitori, utenti, posizioni, bot Telegram, radio) e gli avvisi (posizioni recenti che si perderebbero, bot o porta della pagina diversi). Fin qui non cambia niente;
+2. scegli **Dati**, **Configurazione** o entrambi e premi **Ripristina e riavvia**: lo stato attuale viene salvato, il servizio si riavvia (circa un minuto) e la pagina si ricarica da sola. L'esito finisce nel registro attività e arriva su Telegram;
+3. se qualcosa non va: **Annulla l'ultimo ripristino** rimette lo stato di prima.
+
+Da sapere:
+
+- con i dati tornano anche utenti e password della pagina com'erano nel backup; un backup senza utenti admin viene rifiutato;
+- **kit SD**: la configurazione si ripristina dopo un'abilitazione una tantum via SSH, `sudo bash /opt/meshwatch/tools/configura-servizio.sh` (le SD preparate da questa versione in poi sono già pronte); il config precedente resta sulla SD come `meshwatch-config.prima-del-ripristino.yaml`. I dati si ripristinano anche senza;
+- i file del ripristino stanno in `.restore/` accanto al database.
+
+**Ripristino a mano** (via SSH): ferma il servizio, rimetti i due file al loro posto e riavvia.
 
 - Con il kit SD: `meshwatch.db` in `/var/lib/meshwatch/` (poi `sudo chown meshwatch-svc: /var/lib/meshwatch/meshwatch.db`) e `config.yaml` come `/boot/firmware/meshwatch-config.yaml`, perché viene ricopiato da lì a ogni avvio.
 - Con `install.sh`: entrambi nella cartella del programma.
@@ -327,6 +341,7 @@ A ogni push GitHub Actions esegue i test (Python 3.11 e 3.13, radio simulata), i
 | `test_update.py` | aggiornamento dalla pagina e ripristino |
 | `test_features.py` | sensori e soglie, percorsi, copertura, tempo reale, comandi del bot |
 | `test_tiles.py` | cache delle mappe con un server delle mappe finto: scadenza, 304, senza Internet, spazio massimo |
+| `test_restore.py` | ripristino dalla pagina: password, file non validi, avvisi, applicazione al riavvio, annullamento, kit SD |
 | `test_permissions.py` | **ogni** endpoint dell'API per ospite, viewer e admin; fallisce se se ne aggiunge uno senza dichiarare chi può usarlo |
 | `check_page.py` | file della pagina, id usati dagli script, sintassi JavaScript (serve node) |
 | `test_page_browser.py` | la pagina in Chromium su computer e telefono, tutte le schede, nessun errore JavaScript |
@@ -387,6 +402,7 @@ meshwatch/            pacchetto Python
   system.py           stato del Raspberry, riavvio/spegnimento
   updater.py          aggiornamento dalla pagina (GitHub), con ripristino
   maintenance.py      pulizia dei dati vecchi e backup
+  restore.py          ripristino di un backup dalla pagina
   events.py           notifiche in tempo reale alla pagina (Server-Sent Events)
   tiles.py            cache delle tessere delle mappe (tiles.db)
   watchdog.py         segnale a systemd finché la pagina risponde (riavvio se si blocca)

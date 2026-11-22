@@ -197,7 +197,7 @@
       <button id="ctc-refresh">Rileggi dalla radio</button>
       <button id="ctc-nb">Aggiorna mappa della rete</button>
     </div>
-    <label class="switch"><input type="checkbox" id="ctc-manual"> Aggiunta manuale dei nuovi nodi <small>i nodi sentiti restano in attesa finché non li aggiungi</small></label>
+    <label class="switch"><input type="checkbox" id="ctc-manual"> <span>Aggiunta manuale dei nuovi nodi <small>i nodi sentiti restano in attesa finché non li aggiungi</small></span></label>
     <div id="ctc-pending-box" hidden>
       <h2 style="margin-top:14px">In attesa di essere aggiunti</h2>
       <div class="list" id="ctc-pending"></div>
@@ -318,6 +318,37 @@
     <details class="help"><summary>Come funziona</summary><p>Le tessere di OpenStreetMap, CyclOSM e OpenTopoMap passano dal Raspberry, che conserva quelle già viste: le zone che guardi di solito si aprono subito e restano visibili anche senza Internet.
       Si salvano solo le zone aperte sulla mappa (le regole di OpenStreetMap non permettono di scaricare intere regioni). Quando il server dice che una tessera è scaduta, il Raspberry chiede se è cambiata.
       Superato lo spazio massimo si cancellano quelle usate meno di recente. Le mappe satellitari arrivano sempre direttamente da Internet.</p></details>
+  </section>
+  <section class="card wide" id="rst-card">
+    <h2>Ripristina un backup</h2>
+    <form class="edit" id="form-rst">
+      <label>File del backup (.zip) <input type="file" name="file" accept=".zip,application/zip" required></label>
+      <label>Password del backup <input type="password" name="pw" maxlength="128" autocomplete="off" placeholder="solo se è protetto"></label>
+      <div class="formacts"><button class="primary">Controlla il backup</button></div>
+    </form>
+    <div id="rst-result" hidden>
+      <p class="rst-head" id="rst-title"></p>
+      <div class="grid stats mono" id="rst-info"></div>
+      <div id="rst-warn"></div>
+      <form class="edit" id="form-rst-apply">
+        <label class="switch"><input type="checkbox" name="data"> <span>Dati <small>dispositivi, posizioni, ripetitori, messaggi, utenti e impostazioni della pagina</small></span></label>
+        <label class="switch"><input type="checkbox" name="config"> <span>Configurazione <small id="rst-cfg-note">token Telegram, radio, pagina web (config.yaml)</small></span></label>
+        <div class="formacts">
+          <button class="primary danger-fill" id="rst-apply">Ripristina e riavvia</button>
+          <button type="button" id="rst-cancel">Annulla</button>
+        </div>
+      </form>
+    </div>
+    <div class="row" id="rst-undo-row" hidden>
+      <button id="rst-undo" class="danger">Annulla l'ultimo ripristino</button>
+      <span class="muted" id="rst-undo-note"></span>
+    </div>
+    <p class="note" id="rst-last" hidden></p>
+    <p class="upd-log" id="rst-log" hidden></p>
+    <details class="help"><summary>Come funziona</summary><p>Prima si controlla il backup: niente cambia finché non premi <strong>Ripristina e riavvia</strong>. Il Raspberry verifica password, integrità del database e che questa versione lo sappia aprire (i backup delle versioni precedenti vanno bene), poi mostra cosa contiene.
+      Al ripristino lo stato attuale viene salvato, così puoi tornare indietro con <strong>Annulla l'ultimo ripristino</strong>; il servizio si riavvia (circa un minuto) e la pagina si ricarica da sola.
+      Con i dati tornano anche gli utenti e le password della pagina com'erano nel backup: dopo il riavvio si rientra con quelle. Le posizioni registrate dopo il backup si perdono (restano nella copia salvata).
+      Sulla SD del kit la configurazione si ripristina dopo un'abilitazione una tantum via SSH (<span class="mono">sudo bash /opt/meshwatch/tools/configura-servizio.sh</span>); il config precedente resta sulla SD come <span class="mono">meshwatch-config.prima-del-ripristino.yaml</span>.</p></details>
   </section>
   </div>
 

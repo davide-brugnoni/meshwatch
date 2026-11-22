@@ -50,7 +50,9 @@ Contiene:
 
 ATTENZIONE: contiene password e posizioni. Conservalo in un posto sicuro.
 
-Per ripristinarlo sul Raspberry (via SSH):
+Il modo più semplice: pagina di MeshWatch -> Gestione -> Sistema -> Ripristina un backup.
+
+A mano, sul Raspberry (via SSH):
   sudo systemctl stop meshwatch
 
   SD preparata con il kit (DietPi):

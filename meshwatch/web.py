@@ -1,6 +1,9 @@
 import asyncio
+import os
 import re
+import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
@@ -10,7 +13,7 @@ from starlette.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel, Field
 
 from .auth import hash_password
-from . import maintenance, system
+from . import maintenance, restore, system
 from .tiles import TileCache, TileError, MIN_MB, MAX_MB
 from .core import fmt_sensor, is_dangerous, parse_hhmm, sensor_info
 from .updater import UpdateError
@@ -78,6 +81,12 @@ class MaintenanceIn(BaseModel):
     retention_days: int | None = Field(None, ge=0, le=3650)
     backup_telegram: bool | None = None
     backup_password: str | None = Field(None, max_length=128)   # "" = togli la password
+
+
+class RestoreIn(BaseModel):
+    token: str = Field(..., max_length=64)
+    data: bool = False
+    config: bool = False
 
 
 class ReportIn(BaseModel):
@@ -703,6 +712,70 @@ def create_app(core, auth, web_cfg, updater=None, tiles=None):
         audit(u, "impostazioni manutenzione", f"conserva {st['retention_days'] or 'per sempre'} giorni, "
               f"backup Telegram {'sì' if st['backup_telegram'] else 'no'}")
         return {"ok": True}
+
+    # ---------- ripristino di un backup
+    def restart_soon():
+        """Riavvio come dopo un aggiornamento: __main__ chiude tutto e systemd fa ripartire il servizio,
+        che all'avvio mette al loro posto i file del ripristino (restore.apply_pending)."""
+        from .updater import restart_event
+        asyncio.get_running_loop().call_later(1.5, restart_event.set)
+
+    @app.get("/api/restore")
+    async def restore_info(u=Depends(admin)):
+        return restore.status(core.cfg)
+
+    @app.post("/api/restore/check")
+    async def restore_check(req: Request, u=Depends(admin)):
+        import base64
+        try:
+            pw = base64.b64decode(req.headers.get("x-backup-password", "")).decode("utf-8")
+        except ValueError:
+            raise HTTPException(400, "password non leggibile")
+        root = restore.base_dir(core.cfg)
+        root.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(suffix=".zip", dir=root)
+        size = 0
+        try:
+            with os.fdopen(fd, "wb") as f:
+                async for chunk in req.stream():   # su disco, non in memoria: il database può essere grande
+                    size += len(chunk)
+                    if size > restore.MAX_UPLOAD:
+                        raise HTTPException(413, "file troppo grande")
+                    f.write(chunk)
+            if not size:
+                raise HTTPException(400, "nessun file caricato")
+            try:
+                out = await asyncio.to_thread(restore.check, tmp, pw, db, core.cfg)
+            except restore.RestoreError as e:
+                if e.code == "password":
+                    raise HTTPException(422, {"code": "password", "message": str(e)})
+                raise HTTPException(400, str(e))
+        finally:
+            Path(tmp).unlink(missing_ok=True)
+        audit(u, "backup caricato per il ripristino",
+              datetime.fromtimestamp(out["backup_ts"]).strftime("del %d/%m/%Y %H:%M") if out.get("backup_ts") else "")
+        return out
+
+    @app.post("/api/restore/apply")
+    async def restore_apply(body: RestoreIn, u=Depends(admin)):
+        try:
+            r = await asyncio.to_thread(restore.apply, body.token, body.data, body.config, db, core.cfg, u["username"])
+        except restore.RestoreError as e:
+            raise HTTPException(400, str(e))
+        audit(u, "ripristino del backup avviato",
+              " e ".join(x for x, on in (("dati", body.data), ("configurazione", body.config)) if on) + ": riavvio")
+        restart_soon()
+        return r
+
+    @app.post("/api/restore/undo")
+    async def restore_undo(u=Depends(admin)):
+        try:
+            r = await asyncio.to_thread(restore.undo, db, core.cfg, u["username"])
+        except restore.RestoreError as e:
+            raise HTTPException(400, str(e))
+        audit(u, "ripristino annullato", "rimesso lo stato precedente: riavvio")
+        restart_soon()
+        return r
 
     # ---------- riepilogo giornaliero su Telegram
     @app.get("/api/telegram/report")
