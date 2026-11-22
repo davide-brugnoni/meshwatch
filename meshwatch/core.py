@@ -163,7 +163,9 @@ class Core:
         last = self.db.last_position(tid)
         res = await self.mesh.request_telemetry(t["contact"])
         ok = res is not None
-        self.db.add_tracker_poll(tid, ok, *((res.get("hops"), res.get("path")) if ok else (None, None)),
+        # senza risposta si salva il percorso provato per primo, per capire dove si interrompe
+        tried = getattr(self.mesh, "tried", {}).get(t["contact"], (None, None))
+        self.db.add_tracker_poll(tid, ok, *((res.get("hops"), res.get("path")) if ok else tried),
                                  *self._poll_place(t, res, last))
         if ok:
             if res["lat"] is not None:
