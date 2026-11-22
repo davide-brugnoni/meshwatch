@@ -1,4 +1,18 @@
-// MeshWatch — gestione: dispositivi, ripetitori, utenti, gateway, sistema, aggiornamenti, backup, rubrica
+// MeshWatch — gestione: dispositivi, ripetitori, utenti, gateway, sistema, aggiornamenti, backup, rubrica, Telegram
+// ---------- sezioni della gestione (una alla volta; l'ultima scelta resta nel browser)
+function setAdmSec(s) {
+  if (!document.querySelector(`.adm-sec[data-sec="${s}"]`)) s = 'dispositivi';
+  document.querySelectorAll('.adm-sec').forEach(x => x.classList.toggle('on', x.dataset.sec === s));
+  document.querySelectorAll('#adm-nav button').forEach(b => {
+    b.classList.toggle('on', b.dataset.sec === s);
+    if (b.dataset.sec === s && b.scrollIntoView) b.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  });
+  try { localStorage.setItem('admSec', s); } catch (e) { }
+  $('admin-scroll').scrollTop = 0;
+}
+document.querySelectorAll('#adm-nav button').forEach(b => b.onclick = () => setAdmSec(b.dataset.sec));
+try { setAdmSec(localStorage.getItem('admSec') || 'dispositivi'); } catch (e) { setAdmSec('dispositivi'); }
+
 // ---------- gestione
 const FREE = '__altro__';
 function contactSelect(sel, types, exclude, current) {
@@ -17,6 +31,7 @@ const pickedName = (f, sel, free) => f[sel].value === FREE ? f[free].value.trim(
 function openForm(form, onSubmit) {
   // chiude gli altri moduli a comparsa (quelli con "Annulla"), non gateway e manutenzione
   document.querySelectorAll('form.edit').forEach(x => { if (x.querySelector('.cancel')) x.hidden = true; });
+  const sec = form.closest('.adm-sec'); if (sec && !sec.classList.contains('on')) setAdmSec(sec.dataset.sec);
   form.hidden = false; form.querySelector('.cancel').onclick = () => form.hidden = true;
   form.onsubmit = async e => { e.preventDefault(); const r = await action(form.querySelector('.primary'), onSubmit); if (r) form.hidden = true; };
   form.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -281,7 +296,8 @@ async function updateBadge() {
   document.querySelectorAll('.badge').forEach(b => b.remove());
   if (!u.available || !u.latest) return;
   const title = 'Nuova versione disponibile: ' + u.latest.message;
-  [$('tab-admin'), document.querySelector('#mnav [data-t=admin]')].forEach(b => b.append(el('span', { className: 'badge', title })));
+  [$('tab-admin'), document.querySelector('#mnav [data-t=admin]'), document.querySelector('#adm-nav [data-sec=sistema]')]
+    .forEach(b => b.append(el('span', { className: 'badge', title })));
 }
 
 // ---------- manutenzione e backup
@@ -293,18 +309,163 @@ async function loadMaintenance() {
     cell('Dati dal', m.oldest ? new Date(m.oldest * 1000).toLocaleDateString('it-IT') : '—'),
     cell('Ultima pulizia', m.last_purge ? fmtTs(m.last_purge) + (m.last_purge_deleted ? ` (${m.last_purge_deleted} righe)` : '') : 'mai'),
     cell('Ultimo backup Telegram', m.last_backup ? fmtTs(m.last_backup) : 'mai'));
-  const f = $('form-mnt');
-  f.retention_days.value = m.retention_days;
-  f.backup_telegram.checked = m.backup_telegram; f.backup_telegram.disabled = !m.telegram;
-  f.backup_telegram.parentElement.title = m.telegram ? '' : 'Telegram non configurato';
-  $('mnt-telegram').disabled = !m.telegram;
+  $('form-mnt').retention_days.value = m.retention_days;
   $('mnt-purge').disabled = !m.retention_days;
+  const b = $('form-tgb');
+  b.backup_telegram.checked = m.backup_telegram; b.backup_telegram.disabled = !m.telegram;
+  b.querySelector('.primary').disabled = !m.telegram;
+  $('mnt-telegram').disabled = !m.telegram;
+  $('tgb-last').textContent = !m.telegram ? 'Telegram non configurato.'
+    : 'Ultimo backup inviato: ' + (m.last_backup ? fmtTs(m.last_backup) : 'mai') + '.'
+      + (m.backup_protected ? ' 🔒 Protetto da password.' : ' Senza password (si imposta in Sistema → Manutenzione e backup).');
+  const st = $('bkpw-state');
+  st.className = 'lock ' + (m.backup_protected ? 'on' : 'off');
+  st.textContent = !m.backup_crypto ? 'Per proteggere i backup serve la libreria pyzipper: aggiorna MeshWatch.'
+    : m.backup_protected ? '🔒 Backup protetti da password (AES-256)' : '🔓 Backup senza password';
+  const p = $('form-bkpw');
+  p.pw.value = p.pw2.value = '';
+  [p.pw, p.pw2, p.querySelector('.primary')].forEach(x => x.disabled = !m.backup_crypto);
+  p.querySelector('.primary').textContent = m.backup_protected ? 'Cambia password' : 'Proteggi i backup';
+  $('bkpw-remove').hidden = !m.backup_protected;
 }
+$('form-bkpw').onsubmit = e => {
+  e.preventDefault(); const f = e.target;
+  action(f.querySelector('.primary'), () => {
+    if (f.pw.value !== f.pw2.value) throw new Error('le due password non coincidono');
+    return put('/api/maintenance', { backup_password: f.pw.value });
+  }, 'Backup protetti da password: annotala in un posto sicuro').then(loadMaintenance);
+};
+$('bkpw-remove').onclick = e => {
+  if (!confirm('Togliere la password? I prossimi backup saranno zip normali, leggibili da chiunque li abbia.')) return;
+  action(e.target, () => put('/api/maintenance', { backup_password: '' }), 'Password del backup tolta').then(loadMaintenance);
+};
 $('form-mnt').onsubmit = e => {
   e.preventDefault(); const f = e.target;
-  action(f.querySelector('.primary'), () => put('/api/maintenance', { retention_days: +f.retention_days.value, backup_telegram: f.backup_telegram.checked }), 'Impostazioni salvate')
+  action(f.querySelector('.primary'), () => put('/api/maintenance', { retention_days: +f.retention_days.value }), 'Impostazioni salvate')
     .then(loadMaintenance);
 };
+$('form-tgb').onsubmit = e => {
+  e.preventDefault(); const f = e.target;
+  action(f.querySelector('.primary'), () => put('/api/maintenance', { backup_telegram: f.backup_telegram.checked }),
+    f.backup_telegram.checked ? 'Backup settimanale attivo' : 'Backup settimanale spento').then(loadMaintenance);
+};
+
+// ---------- ripristino di un backup
+let rst = null;
+const fmtWhen = ts => ts ? new Date(ts * 1000).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+async function loadRestore() {
+  let s; try { s = await api('/api/restore'); } catch (e) { return; }
+  $('rst-undo-row').hidden = !s.prev;
+  if (s.prev) $('rst-undo-note').textContent = `rimette lo stato del ${fmtWhen(s.prev.ts)} (${[s.prev.data && 'dati', s.prev.config && 'configurazione'].filter(Boolean).join(' e ')})`;
+  const l = s.last, last = $('rst-last');
+  last.hidden = !l;
+  if (l) {
+    last.className = 'note' + (l.ok ? '' : ' warn');
+    last.textContent = (l.source === 'annullamento' ? 'Ultimo annullamento' : 'Ultimo ripristino') + `: ${fmtWhen(l.applied)}`
+      + (l.backup_ts && l.source !== 'annullamento' ? `, backup del ${fmtWhen(l.backup_ts)}` : '')
+      + (l.ok ? ' — riuscito.' : ' — problemi: ' + l.errors.join('; '));
+  }
+  rst = { ...(rst || {}), status: s };
+}
+function b64(s) { return btoa(String.fromCharCode(...new TextEncoder().encode(s))); }
+$('form-rst').onsubmit = async e => {
+  e.preventDefault();
+  const f = e.target, file = f.file.files[0], btn = f.querySelector('.primary');
+  if (!file) return;
+  btn.disabled = true; btn.textContent = 'Controllo in corso…';
+  try {
+    const r = await fetch('/api/restore/check', { method: 'POST', credentials: 'same-origin', body: file,
+      headers: { 'Content-Type': 'application/zip', 'X-Backup-Password': b64(f.pw.value) } });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 401) { showLogin(); return; }
+    if (!r.ok) {
+      const d = j.detail && typeof j.detail === 'object' && !Array.isArray(j.detail) ? j.detail : { message: j.detail };
+      if (d.code === 'password') f.pw.focus();
+      throw new Error(typeof d.message === 'string' ? d.message : r.status === 413 ? 'file troppo grande' : r.statusText);
+    }
+    $('toast').style.display = 'none';   // un errore di prima (es. password mancante) non resta a schermo
+    showRestore(j, file.name);
+  } catch (err) { toast('Errore: ' + err.message, true); }
+  finally { btn.disabled = false; btn.textContent = 'Controlla il backup'; }
+};
+function showRestore(c, name) {
+  rst = { ...(rst || {}), check: c };
+  $('rst-result').hidden = false;
+  $('rst-title').textContent = `${name}: backup ${c.backup_ts ? 'del ' + fmtWhen(c.backup_ts) : 'di MeshWatch'}${c.encrypted ? ' · 🔒 protetto da password' : ''}`;
+  const cells = [];
+  if (c.has_data) {
+    const d = c.data;
+    cells.push(cell('Dispositivi', d.trackers.length ? d.trackers.join(', ') : 'nessuno'),
+      cell('Ripetitori', d.repeaters.length ? d.repeaters.join(', ') : 'nessuno'),
+      cell('Utenti', d.users.map(u => `${u.username} (${u.role})`).join(', ')),
+      cell('Posizioni', `${d.positions}${d.first_ts ? ` dal ${fmtWhen(d.first_ts).slice(0, 10)} al ${fmtWhen(d.last_ts).slice(0, 10)}` : ''}`),
+      cell('Messaggi', String(d.messages)), cell('Database', fmtSize(d.size)));
+  }
+  if (c.has_config) {
+    const k = c.config;
+    cells.push(cell('Telegram', k.telegram ? `bot configurato, ${k.chats} chat` : 'non configurato'),
+      cell('Radio', k.radio), cell('Pagina web', k.web_mode));
+  }
+  $('rst-info').replaceChildren(...cells);
+  const warns = [...(c.warnings || []), ...(c.config_warnings || []).map(w => 'Configurazione: ' + w)];
+  $('rst-warn').replaceChildren(...warns.map(w => el('p', { className: 'note warn', textContent: '⚠️ ' + w })));
+  const f = $('form-rst-apply');
+  f.data.checked = c.has_data; f.data.disabled = !c.has_data;
+  const cfgOk = c.has_config && !!c.config_mode;
+  f.config.checked = false; f.config.disabled = !cfgOk;
+  $('rst-cfg-note').textContent = !c.has_config ? 'il backup non contiene il config'
+    : cfgOk ? 'token Telegram, radio, pagina web (config.yaml)' : 'non disponibile: ' + c.config_reason;
+  $('rst-result').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+$('rst-cancel').onclick = () => { $('rst-result').hidden = true; $('form-rst').reset(); rst.check = null; };
+$('form-rst-apply').onsubmit = async e => {
+  e.preventDefault(); const f = e.target, c = rst && rst.check;
+  if (!c) return;
+  const what = [f.data.checked && 'i dati', f.config.checked && 'la configurazione'].filter(Boolean);
+  if (!what.length) { toast('Scegli cosa ripristinare', true); return; }
+  if (!confirm(`Ripristinare ${what.join(' e ')} dal backup${c.backup_ts ? ' del ' + fmtWhen(c.backup_ts) : ''}?\n\n`
+    + 'Lo stato attuale viene salvato (si può annullare). Il servizio si riavvia: per circa un minuto pagina e bot non rispondono.'
+    + (f.data.checked ? '\nDopo il riavvio si entra con utenti e password del backup.' : ''))) return;
+  const btn = $('rst-apply'); btn.disabled = true;
+  try {
+    await post('/api/restore/apply', { token: c.token, data: f.data.checked, config: f.config.checked });
+    $('rst-result').hidden = true;
+    waitBack($('rst-log'), 'Ripristino in corso: il servizio si riavvia, la pagina si ricarica da sola…');
+  } catch (err) { if (err.message !== 'login') toast('Errore: ' + err.message, true); btn.disabled = false; }
+};
+$('rst-undo').onclick = async e => {
+  if (!confirm('Annullare l\'ultimo ripristino e rimettere lo stato precedente?\nIl servizio si riavvia (circa un minuto).')) return;
+  e.target.disabled = true;
+  try { await post('/api/restore/undo'); waitBack($('rst-log'), 'Rimetto lo stato precedente: il servizio si riavvia…'); }
+  catch (err) { if (err.message !== 'login') toast('Errore: ' + err.message, true); e.target.disabled = false; }
+};
+async function waitBack(box, msg) {
+  box.hidden = false; box.textContent = msg;
+  const t0 = Date.now();
+  await new Promise(r => setTimeout(r, 4000));
+  while (Date.now() - t0 < 10 * 60000) {
+    try { const r = await fetch('/api/me', { cache: 'no-store' }); if (r.ok || r.status === 401) { location.reload(); return; } } catch (e) { }
+    await new Promise(r => setTimeout(r, 3000));
+  }
+  box.textContent = 'Il servizio non risponde ancora: ricarica la pagina tra qualche minuto.';
+}
+
+// ---------- riepilogo giornaliero su Telegram
+async function loadReport() {
+  let r; try { r = await api('/api/telegram/report'); } catch (e) { return; }
+  const f = $('form-report');
+  f.enabled.checked = r.enabled; f.time.value = r.time;
+  [f.enabled, f.time, f.querySelector('.primary'), $('rep-send')].forEach(x => x.disabled = !r.telegram);
+  $('rep-off').hidden = r.telegram;
+  $('rep-state').textContent = !r.telegram ? '' : r.enabled
+    ? `Attivo: arriva ogni giorno alle ${r.time} a tutte le chat autorizzate.` : 'Spento: il riepilogo arriva solo se lo chiedi (pulsante 📝 Riepilogo del bot).';
+}
+$('form-report').onsubmit = e => {
+  e.preventDefault(); const f = e.target;
+  action(f.querySelector('.primary'), () => put('/api/telegram/report', { enabled: f.enabled.checked, time: f.time.value }),
+    r => r.enabled ? `Riepilogo ogni giorno alle ${r.time}` : 'Riepilogo automatico spento').then(loadReport);
+};
+$('rep-send').onclick = e => action(e.target, () => post('/api/telegram/report/send'), 'Riepilogo inviato su Telegram');
 $('mnt-purge').onclick = e => {
   if (!confirm(`Cancellare adesso i dati più vecchi di ${$('form-mnt').retention_days.value} giorni?`)) return;
   action(e.target, () => post('/api/maintenance/purge'), r => r.deleted ? `Eliminate ${r.deleted} righe` : 'Niente da cancellare').then(loadMaintenance);

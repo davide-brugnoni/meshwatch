@@ -1,6 +1,9 @@
 import asyncio
+import os
 import re
+import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
@@ -10,9 +13,9 @@ from starlette.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel, Field
 
 from .auth import hash_password
-from . import maintenance, system
+from . import maintenance, restore, system
 from .tiles import TileCache, TileError, MIN_MB, MAX_MB
-from .core import fmt_sensor, is_dangerous, sensor_info
+from .core import fmt_sensor, is_dangerous, parse_hhmm, sensor_info
 from .updater import UpdateError
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
@@ -77,6 +80,18 @@ class GatewayIn(BaseModel):
 class MaintenanceIn(BaseModel):
     retention_days: int | None = Field(None, ge=0, le=3650)
     backup_telegram: bool | None = None
+    backup_password: str | None = Field(None, max_length=128)   # "" = togli la password
+
+
+class RestoreIn(BaseModel):
+    token: str = Field(..., max_length=64)
+    data: bool = False
+    config: bool = False
+
+
+class ReportIn(BaseModel):
+    enabled: bool
+    time: str = Field("21:00", pattern=r"^\d{1,2}[:.]\d{2}$")
 
 
 class BatteryAlertsIn(BaseModel):
@@ -673,7 +688,7 @@ def create_app(core, auth, web_cfg, updater=None, tiles=None):
     @app.get("/api/maintenance")
     async def maintenance_info(u=Depends(admin)):
         return {**maintenance.settings(db), **maintenance.db_info(db),
-                "telegram": bool(core.file_senders)}
+                "telegram": bool(core.file_senders), "backup_crypto": maintenance.crypto_available()}
 
     @app.put("/api/maintenance")
     async def maintenance_set(body: MaintenanceIn, u=Depends(admin)):
@@ -685,9 +700,110 @@ def create_app(core, auth, web_cfg, updater=None, tiles=None):
             if body.backup_telegram and not core.file_senders:
                 raise HTTPException(400, "Telegram non è configurato")
             db.set("backup_telegram", "1" if body.backup_telegram else "0")
+        if body.backup_password is not None:
+            try:
+                maintenance.set_backup_password(db, body.backup_password)
+            except maintenance.BackupError as e:
+                raise HTTPException(400, str(e))
+            audit(u, "password del backup " + ("impostata" if body.backup_password else "rimossa"))
+            if body.retention_days is None and body.backup_telegram is None:
+                return {"ok": True}
         st = maintenance.settings(db)
         audit(u, "impostazioni manutenzione", f"conserva {st['retention_days'] or 'per sempre'} giorni, "
               f"backup Telegram {'sì' if st['backup_telegram'] else 'no'}")
+        return {"ok": True}
+
+    # ---------- ripristino di un backup
+    def restart_soon():
+        """Riavvio come dopo un aggiornamento: __main__ chiude tutto e systemd fa ripartire il servizio,
+        che all'avvio mette al loro posto i file del ripristino (restore.apply_pending)."""
+        from .updater import restart_event
+        asyncio.get_running_loop().call_later(1.5, restart_event.set)
+
+    @app.get("/api/restore")
+    async def restore_info(u=Depends(admin)):
+        return restore.status(core.cfg)
+
+    @app.post("/api/restore/check")
+    async def restore_check(req: Request, u=Depends(admin)):
+        import base64
+        try:
+            pw = base64.b64decode(req.headers.get("x-backup-password", "")).decode("utf-8")
+        except ValueError:
+            raise HTTPException(400, "password non leggibile")
+        root = restore.base_dir(core.cfg)
+        root.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(suffix=".zip", dir=root)
+        size = 0
+        try:
+            with os.fdopen(fd, "wb") as f:
+                async for chunk in req.stream():   # su disco, non in memoria: il database può essere grande
+                    size += len(chunk)
+                    if size > restore.MAX_UPLOAD:
+                        raise HTTPException(413, "file troppo grande")
+                    f.write(chunk)
+            if not size:
+                raise HTTPException(400, "nessun file caricato")
+            try:
+                out = await asyncio.to_thread(restore.check, tmp, pw, db, core.cfg)
+            except restore.RestoreError as e:
+                if e.code == "password":
+                    raise HTTPException(422, {"code": "password", "message": str(e)})
+                raise HTTPException(400, str(e))
+        finally:
+            Path(tmp).unlink(missing_ok=True)
+        audit(u, "backup caricato per il ripristino",
+              datetime.fromtimestamp(out["backup_ts"]).strftime("del %d/%m/%Y %H:%M") if out.get("backup_ts") else "")
+        return out
+
+    @app.post("/api/restore/apply")
+    async def restore_apply(body: RestoreIn, u=Depends(admin)):
+        try:
+            r = await asyncio.to_thread(restore.apply, body.token, body.data, body.config, db, core.cfg, u["username"])
+        except restore.RestoreError as e:
+            raise HTTPException(400, str(e))
+        audit(u, "ripristino del backup avviato",
+              " e ".join(x for x, on in (("dati", body.data), ("configurazione", body.config)) if on) + ": riavvio")
+        restart_soon()
+        return r
+
+    @app.post("/api/restore/undo")
+    async def restore_undo(u=Depends(admin)):
+        try:
+            r = await asyncio.to_thread(restore.undo, db, core.cfg, u["username"])
+        except restore.RestoreError as e:
+            raise HTTPException(400, str(e))
+        audit(u, "ripristino annullato", "rimesso lo stato precedente: riavvio")
+        restart_soon()
+        return r
+
+    # ---------- riepilogo giornaliero su Telegram
+    @app.get("/api/telegram/report")
+    async def report_get(u=Depends(admin)):
+        return core.report_settings()
+
+    @app.put("/api/telegram/report")
+    async def report_set(body: ReportIn, u=Depends(admin)):
+        when = parse_hhmm(body.time)
+        if not when:
+            raise HTTPException(400, "orario non valido")
+        if body.enabled and not core.reporters:
+            raise HTTPException(400, "Telegram non è configurato")
+        if body.enabled:
+            core.set_report_time(when)
+        else:
+            core.db.set("tg_report_prev", when)
+            core.set_report_time("")
+        audit(u, "riepilogo automatico", f"ogni giorno alle {when}" if body.enabled else "disattivato")
+        return core.report_settings()
+
+    @app.post("/api/telegram/report/send")
+    async def report_send(u=Depends(admin)):
+        if not core.reporters:
+            raise HTTPException(400, "Telegram non è configurato")
+        for send in core.reporters:
+            await send()
+        audit(u, "riepilogo inviato su Telegram")
         return {"ok": True}
 
     @app.post("/api/maintenance/purge")
@@ -698,15 +814,21 @@ def create_app(core, auth, web_cfg, updater=None, tiles=None):
 
     @app.get("/api/backup")
     async def backup_download(u=Depends(admin)):
-        data, name = await asyncio.to_thread(maintenance.make_backup, db, core.cfg.get("_config_path"))
-        audit(u, "backup scaricato", name)
+        try:
+            data, name = await asyncio.to_thread(maintenance.make_backup, db, core.cfg.get("_config_path"))
+        except maintenance.BackupError as e:
+            raise HTTPException(503, str(e))
+        audit(u, "backup scaricato", name + (" (protetto da password)" if maintenance.settings(db)["backup_protected"] else ""))
         return Response(data, media_type="application/zip",
                         headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
     @app.post("/api/backup/telegram")
     async def backup_telegram(u=Depends(admin)):
-        if not await core.send_backup(u["username"]):
-            raise HTTPException(400, "Telegram non è configurato")
+        try:
+            if not await core.send_backup(u["username"]):
+                raise HTTPException(400, "Telegram non è configurato")
+        except maintenance.BackupError as e:
+            raise HTTPException(503, str(e))
         return {"ok": True}
 
     # ---------- avvisi batteria bassa

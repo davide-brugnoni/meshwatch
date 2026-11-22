@@ -190,6 +190,64 @@ def main():
         sent.append(name)
     core.file_senders.append(fake_send)
     check(c.post("/api/backup/telegram").json()["ok"] and sent and db.get("last_backup"), "backup su Telegram")
+    # backup protetto da password (AES-256): database e config cifrati, LEGGIMI in chiaro
+    import pyzipper
+    check(c.get("/api/maintenance").json()["backup_protected"] is False, "backup senza password di default")
+    check(c.put("/api/maintenance", json={"backup_password": "corta"}).status_code == 400, "password del backup: almeno 8 caratteri")
+    check(v.put("/api/maintenance", json={"backup_password": "segreta-123"}).status_code == 403, "password del backup solo admin")
+    check(c.put("/api/maintenance", json={"backup_password": "segreta-123"}).json()["ok"]
+          and c.get("/api/maintenance").json()["backup_protected"], "password del backup impostata")
+    check("segreta-123" not in c.get("/api/maintenance").text and "segreta-123" not in c.get("/api/audit").text,
+          "la password del backup non torna alla pagina né nel registro")
+    r = c.get("/api/backup")
+    z = zipfile.ZipFile(io.BytesIO(r.content))
+    enc = {i.filename: bool(i.flag_bits & 1) for i in z.infolist()}
+    check(enc == {"LEGGIMI.txt": False, "meshwatch.db": True} and "7-Zip" in z.read("LEGGIMI.txt").decode(),
+          "backup protetto: database cifrato, LEGGIMI in chiaro con le istruzioni")
+    try:
+        z.read("meshwatch.db")
+        opened = True
+    except RuntimeError:
+        opened = False
+    az = pyzipper.AESZipFile(io.BytesIO(r.content))
+    az.setpassword(b"sbagliata")
+    try:
+        az.read("meshwatch.db")
+        wrong = True
+    except RuntimeError:
+        wrong = False
+    az.setpassword(b"segreta-123")
+    check(not opened and not wrong and az.read("meshwatch.db")[:15] == b"SQLite format 3",
+          "backup protetto: senza password o con quella sbagliata non si apre, con quella giusta sì")
+    captions = []
+
+    async def cap_send(data, name, caption):
+        captions.append(caption)
+    core.file_senders[:] = [cap_send]
+    c.post("/api/backup/telegram")
+    check("protetto da password" in captions[-1], "backup su Telegram protetto, scritto nella didascalia")
+    # password impostata ma libreria mancante: mai un backup in chiaro
+    import builtins
+    real_import = builtins.__import__
+
+    def no_pyzipper(name, *a, **kw):
+        if name == "pyzipper":
+            raise ImportError(name)
+        return real_import(name, *a, **kw)
+    builtins.__import__ = no_pyzipper
+    try:
+        r = c.get("/api/backup")
+        rt = c.post("/api/backup/telegram")
+    finally:
+        builtins.__import__ = real_import
+    check(r.status_code == 503 and "pyzipper" in r.json()["detail"] and rt.status_code == 503,
+          "password senza libreria: backup rifiutato, non in chiaro")
+    check(c.put("/api/maintenance", json={"backup_password": ""}).json()["ok"]
+          and not c.get("/api/maintenance").json()["backup_protected"], "password del backup tolta")
+    z = zipfile.ZipFile(io.BytesIO(c.get("/api/backup").content))
+    check(z.read("meshwatch.db")[:15] == b"SQLite format 3", "senza password: zip normale")
+    acts = [x["action"] for x in c.get("/api/audit").json()]
+    check("password del backup impostata" in acts and "password del backup rimossa" in acts, "password del backup nel registro")
     core.file_senders.clear()
     db.delete_tracker(tid3)
 

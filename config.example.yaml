@@ -46,6 +46,9 @@ telegram:
   allowed_chat_ids: []
   # Chi può usare /terminale (comandi ai ripetitori). Vuoto = tutte le chat autorizzate.
   admin_chat_ids: []
+  # Riepilogo della giornata con la mappa, ogni giorno a quest'ora (facoltativo).
+  # Si cambia anche dal bot: /riepilogo 21:00 oppure /riepilogo no
+  # daily_report: "21:00"
 
 web:
   # "lan": pagina raggiungibile solo in casa (http://IP-raspberry:8080)

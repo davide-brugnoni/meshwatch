@@ -73,6 +73,16 @@ def fmt_sensor(type, channel, value):
     return f"{value:.{i['dec']}f}" + (f" {i['unit']}" if i["unit"] else "")
 
 
+def parse_hhmm(text):
+    """"21:00", "8.05" → "08:05"; None se non è un orario."""
+    try:
+        h, m = str(text).strip().replace(".", ":").split(":")
+        h, m = int(h), int(m)
+    except ValueError:
+        return None
+    return f"{h:02d}:{m:02d}" if 0 <= h < 24 and 0 <= m < 60 else None
+
+
 def maps_link(lat, lon):
     return f"https://www.google.com/maps?q={lat:.6f},{lon:.6f}"
 
@@ -94,6 +104,7 @@ class Core:
         self.tasks = set()           # invii della chat in corso
         self.events = Events()       # notifiche in tempo reale per le pagine aperte
         self.position_listeners = [] # funzioni async(tracker, posizione) per ogni nuova posizione (Telegram /segui)
+        self.reporters = []          # funzioni async() che mandano il riepilogo a tutte le chat (Telegram)
         db.seed_from_config(cfg)
         mesh.on_message = self.on_message
         # invii rimasti a metà quando il programma si è fermato
@@ -105,6 +116,26 @@ class Core:
             self.db.add_audit(user, action, detail, ip)
         except Exception as e:
             log.error("Registro attività: %s", e)
+
+    # ---------- riepilogo giornaliero su Telegram
+    def report_time(self):
+        """Ora del riepilogo automatico ("" = spento). Impostata dalla pagina o dal bot,
+        altrimenti telegram.daily_report del config."""
+        v = self.db.get("tg_report_time")
+        if v is None:
+            v = parse_hhmm((self.cfg.get("telegram") or {}).get("daily_report") or "") or ""
+        return v
+
+    def set_report_time(self, when):
+        """when = "HH:MM" per accenderlo, "" per spegnerlo (l'ultimo orario resta ricordato)."""
+        if when:
+            self.db.set("tg_report_prev", when)
+        self.db.set("tg_report_time", when)
+
+    def report_settings(self):
+        t = self.report_time()
+        return {"telegram": bool(self.reporters), "enabled": bool(t),
+                "time": t or self.db.get("tg_report_prev") or "21:00"}
 
     # ---------- avvisi
     async def notify(self, text):
@@ -603,8 +634,11 @@ class Core:
             return False
         from . import maintenance
         data, name = await asyncio.to_thread(maintenance.make_backup, self.db, self.cfg.get("_config_path"))
+        caption = ("💾 Backup di MeshWatch (dati e config) 🔒 protetto da password: si apre con 7-Zip."
+                   if maintenance.settings(self.db)["backup_protected"]
+                   else "💾 Backup di MeshWatch (dati e config). Contiene password: conservalo con cura.")
         for send in self.file_senders:
-            await send(data, name, "💾 Backup di MeshWatch (dati e config). Contiene password: conservalo con cura.")
+            await send(data, name, caption)
         self.db.set("last_backup", int(time.time()))
         self.audit(user, "backup inviato su Telegram", name)
         return True
@@ -674,7 +708,12 @@ class Core:
                 if now - (st["last_purge"] or 0) > 86400:
                     await self.run_purge()
                 if st["backup_telegram"] and now - (st["last_backup"] or 0) > maintenance.BACKUP_EVERY_DAYS * 86400:
-                    await self.send_backup()
+                    try:
+                        await self.send_backup()
+                    except maintenance.BackupError as e:
+                        if self.db.get("backup_error_day") != datetime.now().strftime("%Y-%m-%d"):   # un avviso al giorno
+                            self.db.set("backup_error_day", datetime.now().strftime("%Y-%m-%d"))
+                            await self.notify(f"💾 Backup settimanale non inviato: {e}")
             except Exception as e:
                 log.exception("Errore manutenzione: %s", e)
             await asyncio.sleep(3600)

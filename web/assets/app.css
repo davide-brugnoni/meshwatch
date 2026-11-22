@@ -54,7 +54,7 @@ svg.spark { width:100%; height:34px; margin-top:6px; display:block; }
 .audit div { display:grid; grid-template-columns:96px 110px 1fr; gap:8px; padding:3px 0; border-bottom:1px solid var(--line); }
 .audit .who { color:var(--mute); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .audit .bad { color:var(--warn); }
-@media (max-width: 820px) { .audit div { grid-template-columns:80px 1fr; } .audit .what { grid-column:1 / -1; } }
+@media (max-width: 820px) { .audit div { grid-template-columns:96px 1fr; } .audit .what { grid-column:1 / -1; } }
 .badge { display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--warn); margin-left:6px; vertical-align:middle; }
 #mnav .badge { position:absolute; margin:0; transform:translate(10px, -14px); }
 #mnav button { position:relative; }
@@ -68,7 +68,53 @@ svg.spark { width:100%; height:34px; margin-top:6px; display:block; }
 .admin-block { display:none; } body.admin .admin-block { display:block; }
 /* gestione */
 #admin-scroll { display:none; flex:1; min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch; }
-#view-admin { padding:18px; max-width:1100px; margin:0 auto; gap:14px; display:flex; flex-direction:column; }
+#view-admin { padding:0 18px 24px; max-width:1100px; margin:0 auto; gap:14px; display:flex; flex-direction:column; }
+/* sezioni della gestione: una alla volta, scelta dalla barra in alto (fissa mentre si scorre) */
+#adm-nav { position:sticky; top:0; z-index:20; display:flex; gap:6px; overflow-x:auto; scrollbar-width:none;
+           padding:14px 0 10px; background:var(--bg); border-bottom:1px solid var(--line); }
+#adm-nav::-webkit-scrollbar { display:none; }
+#adm-nav button { flex:none; border-radius:20px; padding:7px 16px; color:var(--mute); position:relative; }
+#adm-nav button.on { background:var(--acc); border-color:var(--acc); color:#06130e; font-weight:600; }
+#adm-nav .badge { position:absolute; top:2px; right:2px; margin:0; }
+body.tab-admin #range { display:none; }   /* il periodo vale per la mappa, non per la gestione */
+.adm-sec { display:none; flex-direction:column; gap:14px; }
+.adm-sec.on { display:flex; }
+@media (min-width: 1000px) {
+  .adm-sec.on { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); align-items:start; }
+  .adm-sec .card.wide { grid-column:1 / -1; }
+}
+.grid.stats { grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:10px 12px; margin:2px 0 4px; }
+.grid.stats div { background:var(--field); border:1px solid var(--line); border-radius:8px; padding:8px 10px; min-width:0; overflow-wrap:anywhere; }
+/* spiegazioni lunghe: chiuse, si aprono a richiesta */
+details.help { margin-top:10px; }
+details.help summary { cursor:pointer; color:var(--acc); font-size:13px; list-style:none; display:inline-flex; align-items:center; gap:6px; }
+details.help summary::-webkit-details-marker { display:none; }
+details.help summary::before { content:'›'; display:inline-block; transition:transform .15s; font-size:16px; line-height:1; }
+details.help[open] summary::before { transform:rotate(90deg); }
+details.help p { font-size:13px; color:var(--mute); margin:6px 0 0; line-height:1.5; }
+/* interruttori al posto delle caselle */
+label.switch, form.edit label.switch { flex-direction:row; align-items:center; gap:12px; text-transform:none; letter-spacing:normal;
+               font-size:14.5px; color:var(--ink); cursor:pointer; }
+form.edit label.switch { grid-column:1 / -1; }
+
+label.switch small { display:block; color:var(--mute); font-size:12.5px; margin-top:2px; }
+label.switch input { appearance:none; -webkit-appearance:none; flex:none; width:44px; height:26px; min-height:0; margin:0; padding:0;
+                     border-radius:13px; background:var(--line); border:none; position:relative; cursor:pointer; transition:background .15s; }
+label.switch input::after { content:''; position:absolute; top:3px; left:3px; width:20px; height:20px; border-radius:50%; background:var(--ink); transition:transform .15s; }
+label.switch input:checked { background:var(--acc); }
+label.switch input:checked::after { transform:translateX(18px); background:#06130e; }
+label.switch input:disabled { opacity:.45; cursor:not-allowed; }
+#ctc-manual { margin:0; }
+.card > label.switch { margin-top:10px; display:flex; }
+.rst-head { font-weight:600; margin:14px 0 6px; }
+#rst-warn .note { margin:6px 0 0; }
+button.danger-fill { background:var(--warn); border-color:var(--warn); color:#1a0b05; }
+.lock { font-size:14px; display:inline-flex; align-items:center; gap:6px; }
+.lock.on { color:var(--ok); } .lock.off { color:var(--warn); }
+.cmds { display:grid; grid-template-columns:repeat(auto-fill, minmax(230px, 1fr)); gap:8px 16px; }
+.cmds div { display:flex; flex-direction:column; padding:6px 0; border-bottom:1px solid var(--line); }
+.cmds b { font-weight:600; font-size:14px; }
+.cmds span { color:var(--mute); font-size:13px; }
 body.tab-admin #admin-scroll { display:block; } body.tab-admin main { display:none; }
 .list { display:flex; flex-direction:column; }
 .item { display:flex; align-items:center; gap:10px; padding:10px 0; border-top:1px solid var(--line); flex-wrap:wrap; }
@@ -82,6 +128,11 @@ form.edit label { display:flex; flex-direction:column; gap:4px; font-size:12px; 
 form.edit label input, form.edit label select { text-transform:none; letter-spacing:normal; font-size:14px; }
 form.edit .formacts { grid-column: 1 / -1; display:flex; gap:8px; flex-wrap:wrap; }
 form.edit label input[type=number] { width:auto; min-width:0; }
+/* i campi non allargano mai il modulo (menu con nomi lunghi, orari affiancati su schermi stretti) */
+form.edit > label { min-width:0; }
+form.edit label > input:not([type=checkbox]), form.edit label > select { width:100%; max-width:100%; min-width:0; }
+.hours { flex-wrap:wrap; }
+.hours input[type=time] { flex:1 1 104px; min-width:0; }
 .hours { display:flex; gap:6px; align-items:center; }
 .note { font-size:13px; color:var(--mute); margin:8px 0 0; }
 .note.warn { color:var(--warn); }
@@ -195,7 +246,12 @@ body.tab-chat #chat-view { display:grid; } body.tab-chat main { display:none; }
   body.tab-list aside { display:flex; } body.tab-list #mapwrap { display:none; }
   #mnav { display:flex; }
   #map-summary { display:flex; }
-  #view-admin { padding:12px; padding-bottom:24px; }
+  #view-admin { padding:0 12px 24px; }
+  #adm-nav { margin:0 -12px; padding:10px 12px 8px; gap:5px; }
+  #adm-nav button { flex:1 0 auto; padding:7px 8px; font-size:13px; }
+  form.edit { grid-template-columns:minmax(0, 1fr); padding:10px; }
+  .grid.stats { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+  .card h2 { font-size:12.5px; }
   .card { padding:12px; }
   .item .info { min-width:0; flex-basis:100%; }
   .item .acts { flex-wrap:wrap; }
@@ -212,6 +268,15 @@ body.tab-chat #chat-view { display:grid; } body.tab-chat main { display:none; }
   .net-legend:not(.cov-legend) { display:none; }
 }
 /* dita invece del mouse: pulsanti più alti, testo dei campi a 16px (iOS non zooma) */
+@media (max-width: 400px) {
+  .status.live::after { display:none; }   /* "· in diretta": su schermi stretti resta il pallino verde */
+  #adm-nav { gap:4px; }
+  #adm-nav button { padding:6px 5px; font-size:12.5px; }
+  header h1 { font-size:15px; }
+  header .status { font-size:0; }   /* resta il pallino (verde collegata, arancione no): la scritta non ci sta */
+  header .status .dot { margin-right:0; }
+  header { flex-wrap:nowrap; }
+}
 @media (pointer: coarse) {
   button, .btn { min-height:40px; padding:8px 14px; }
   button.small { min-height:36px; padding:6px 11px; font-size:13.5px; }
@@ -219,6 +284,9 @@ body.tab-chat #chat-view { display:grid; } body.tab-chat main { display:none; }
   #mnav button { min-height:54px; }
   input, select, .term-in input, form.edit label input, form.edit label select, #chat-text { font-size:16px; min-height:40px; }
   input[type=checkbox] { min-height:0; width:22px; height:22px; }
+  label.switch input, form.edit label.switch input { width:48px; height:28px; min-height:0; border-radius:14px; }
+  label.switch input::after { width:22px; height:22px; }
+  #adm-nav button { min-height:38px; }
   .btn { display:inline-flex; align-items:center; }
   .leaflet-touch .leaflet-bar a { width:36px; height:36px; line-height:36px; }
 }

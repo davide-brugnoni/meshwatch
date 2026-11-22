@@ -30,8 +30,8 @@ Gira su un Raspberry Pi con una radio MeshCore in modalità *Companion USB* (Hel
 - **Radio**: se la radio si scollega arriva un avviso su Telegram e dopo 3 minuti il programma la ricollega da solo, ritrovando la porta USB anche se è cambiata.
 - **Manutenzione e backup**: pulizia automatica dei dati più vecchi di N giorni (default 180); backup di database e config scaricabile dalla pagina o inviato ogni settimana su Telegram.
 - **Registro attività**: login, tentativi falliti e ogni azione di gestione, dalla pagina e da Telegram.
-- **Telegram**: posizione con pin e link Google Maps, ultima posizione, traccia, stato dei nodi, avvisi (dispositivo che non risponde, batteria bassa, ripetitore muto, radio scollegata, nuova versione disponibile).
-- **Avvisi batteria bassa** (Gestione → Avvisi batteria bassa): ogni quanto ripeterli finché la batteria resta bassa (o una volta sola) e una fascia oraria di silenzio (es. 22:00-07:00). Vale per i dispositivi seguiti e per i ripetitori.
+- **Telegram**: posizione con pin e link Google Maps, ultima posizione, traccia, **mappa come immagine** con la traccia, stato del Raspberry, **riepilogo giornaliero** automatico, avvisi (dispositivo che non risponde, batteria bassa, ripetitore muto, radio scollegata, nuova versione disponibile).
+- **Avvisi batteria bassa** (Gestione → Dispositivi → Avvisi batteria bassa): ogni quanto ripeterli finché la batteria resta bassa (o una volta sola) e una fascia oraria di silenzio (es. 22:00-07:00). Vale per i dispositivi seguiti e per i ripetitori.
 - **Tempo reale**: posizioni, ripetitori, stato della radio e messaggi compaiono sulla pagina appena arrivano, senza ricaricare.
 - **Da telefono**: pagina pensata anche per lo smartphone (barra in basso Mappa · Nodi · Gestione).
 - **Aggiornamento dalla pagina**: scarica l'ultima versione da GitHub e riavvia, senza togliere la SD; se la nuova versione non parte torna da sola alla precedente. Quando ne esce una nuova arriva un avviso.
@@ -87,6 +87,20 @@ Copia `config.example.yaml` in `config.yaml` (con il kit SD il file è `meshwatc
 - `telegram.token`: crealo con @BotFather. `allowed_chat_ids`: chi può usare il bot e riceve gli avvisi; `admin_chat_ids`: chi può usare il terminale. Il tuo ID te lo dà @userinfobot.
 - Le sezioni `tracker` e `repeaters` vengono importate solo al primo avvio: poi dispositivi, ripetitori e utenti si gestiscono dalla pagina (scheda **Gestione**).
 
+### La scheda Gestione
+
+È divisa in sezioni, scelte dalla barra in alto (resta in vista mentre si scorre; l'ultima sezione aperta resta ricordata):
+
+| Sezione | Cosa contiene |
+|---|---|
+| **Dispositivi** | dispositivi tracciati (soglie dei sensori comprese), avvisi batteria bassa |
+| **Rete** | ripetitori, gateway (radio collegata al Raspberry), rubrica del gateway |
+| **Telegram** | riepilogo giornaliero (acceso/spento, ora di invio, *Invia ora*), backup settimanale, comandi del bot |
+| **Sistema** | Raspberry, aggiornamento programma, manutenzione, cache delle mappe |
+| **Accessi** | utenti della pagina, registro attività |
+
+Le spiegazioni più lunghe sono chiuse sotto *Come funziona*. Su computer largo le schede stanno su due colonne.
+
 ### Chi vede cosa
 
 | | Mappa e stato | Chiedere la posizione | Gestione |
@@ -107,14 +121,30 @@ Copia `config.example.yaml` in `config.yaml` (con il kit SD il file è `meshwatc
 | `/segui 2` · `/basta` | posizione **in diretta** di Telegram per 2 ore (massimo 8): il pin si sposta a ogni nuova posizione · la ferma |
 | `/stats` · `/stats 7` | km percorsi, ore in movimento, risposte, quota e batteria delle ultime 24 ore · degli ultimi 7 giorni |
 | `/sensori` · `/percorso` | ultimi valori dei sensori · ripetitori attraversati dall'ultima risposta |
+| `/mappa` · `/mappa 7` | **immagine della mappa** con la traccia delle ultime 24 ore · degli ultimi 7 giorni, l'ultima posizione, gateway e ripetitori della zona |
 | `/nodi` · `/aggiorna` | stato di dispositivi e ripetitori · interroga subito i ripetitori |
+| `/sistema` | Raspberry (temperatura, memoria, disco, tensione bassa), radio, database, ultimo backup |
+| `/riepilogo` | riepilogo della giornata con la mappa; `/riepilogo 21:00` ogni giorno a quell'ora, `/riepilogo no` lo spegne |
 | `/intervallo 30` · `/pausa` · `/riprendi` | gestione del tracciamento |
 | `/advert` | il gateway si annuncia sulla mesh |
 | `/terminale` · `/fine` | comandi CLI a un ripetitore |
 
+La tastiera del bot ha i pulsanti 📍 Posizione ora, 🕓 Ultima posizione, 🗺 Mappa, 👣 Segui 2 ore, 📊 Statistiche, 📝 Riepilogo, 📡 Nodi e 🖥 Sistema. Dopo un aggiornamento che la cambia il bot la rimanda da solo una volta; altrimenti basta /start.
+
 Con più dispositivi si scrive il nome dopo il comando, anche solo l'inizio e senza badare alle maiuscole: `/dove escursionista`, `/stats 7 esc`, `/intervallo 15 ciclista`, `/segui 3 esc`. Senza nome il bot chiede quale con dei pulsanti. Scrivendo `/` Telegram mostra l'elenco dei comandi.
 
 Con `/segui` conviene attivare l'intervallo adattivo del dispositivo: in movimento le posizioni arrivano più spesso e il pin si sposta di conseguenza.
+
+#### Mappa e riepilogo su Telegram
+
+Servono a vedere da fuori casa quello che mostra la pagina, senza metterla su Internet. La mostra anche il pulsante **🗺 Mappa** della tastiera del bot.
+
+- La mappa la disegna il Raspberry (libreria Pillow, installata con l'aggiornamento) in qualche secondo. Senza Pillow il bot risponde in testo e dice come installarla. Per le lettere accentate nei nomi serve il font DejaVu (`fonts-dejavu-core`, già installato dal kit SD e da `install.sh`; su schede preparate prima: `sudo apt install fonts-dejavu-core`): senza, i nomi compaiono senza accenti.
+- Se all'avvio Internet non c'è ancora, pagina e radio partono lo stesso e il bot si collega a Telegram appena la rete torna (riprova da solo).
+- Le tessere OpenStreetMap passano dalla [cache delle mappe](#cache-delle-mappe-sul-raspberry), anche quando è disattivata per la pagina: le zone già viste non vengono scaricate di nuovo. Senza Internet la mappa arriva lo stesso, su fondo grigio.
+- Gateway e ripetitori compaiono solo se hanno una posizione e cadono nella zona della traccia: un ripetitore lontano non rimpicciolisce la mappa.
+- Con più dispositivi, **Tutti** mette le tracce di tutti in un'unica mappa, ognuna con il suo colore.
+- **Riepilogo automatico**: si accende dalla pagina (**Gestione → Telegram → Riepilogo giornaliero**: interruttore, ora di invio, *Invia ora* per provarlo) oppure dal bot con `/riepilogo 21:00` (solo chat admin). Lo manda ogni giorno a tutte le chat autorizzate: km, risposte e batteria di ogni dispositivo, stato dei ripetitori e del Raspberry, mappa della giornata. Si può impostare anche nel config con `telegram.daily_report: "21:00"`; quello impostato dalla pagina o da Telegram ha la precedenza. Se a quell'ora il Raspberry era spento, arriva appena riparte, entro mezz'ora.
 
 ### Riavvio e spegnimento dalla pagina
 
@@ -142,15 +172,40 @@ sudo bash /opt/meshwatch/tools/configura-servizio.sh && sudo systemctl restart m
 
 ## Manutenzione e backup
 
-In **Gestione → Manutenzione e backup**:
+In **Gestione → Sistema → Manutenzione e backup** (il backup su Telegram è in **Gestione → Telegram**):
 
 - **Conserva i dati per N giorni** (default 180, `0` = per sempre). Una volta al giorno vengono cancellati posizioni, statistiche dei ripetitori, comandi del terminale e registro più vecchi. Restano sempre l'ultima posizione di ogni dispositivo e l'ultimo stato di ogni ripetitore.
 - **Scarica backup**: uno zip con `meshwatch.db`, `config.yaml` e le istruzioni di ripristino (`LEGGIMI.txt`).
 - **Backup settimanale su Telegram**: va attivato. Arriva solo alle chat in `admin_chat_ids` (o, se vuoto, a quelle in `allowed_chat_ids`).
 
-Il backup contiene password (token Telegram, ripetitori) e posizioni: conservalo con cura.
+- **Password del backup** (facoltativa): database e config nello zip vengono cifrati con AES-256, sia nel backup scaricato sia in quello su Telegram. `LEGGIMI.txt` resta leggibile e spiega come aprirlo. Su Windows serve **7-Zip** (Esplora risorse non apre questi zip), su Linux `7z x` (pacchetto `p7zip-full`; `unzip` non li apre). La pagina non mostra mai la password e il registro segna solo che è stata impostata o tolta.
 
-**Ripristino**: ferma il servizio, rimetti i due file al loro posto e riavvia.
+Il backup contiene password (token Telegram, ripetitori) e posizioni: conservalo con cura, meglio se con la password.
+
+Come sono salvate le password:
+
+| Cosa | Dove | Come |
+|---|---|---|
+| utenti della pagina | database | solo hash PBKDF2-SHA256 (200.000 iterazioni, sale casuale): non si possono rileggere |
+| ripetitori | database | in chiaro: MeshWatch le manda al ripetitore a ogni login. La pagina non le mostra |
+| token Telegram | `config.yaml` | in chiaro: serve a ogni avvio |
+| password del backup | database | in chiaro: serve per i backup automatici. Protegge le copie che escono dal Raspberry, non la SD |
+
+### Ripristino dalla pagina
+
+**Gestione → Sistema → Ripristina un backup**:
+
+1. scegli lo zip (e la password, se è protetto) e premi **Controlla il backup**: il Raspberry verifica password, integrità del database e che questa versione lo sappia aprire, poi mostra cosa contiene (dispositivi, ripetitori, utenti, posizioni, bot Telegram, radio) e gli avvisi (posizioni recenti che si perderebbero, bot o porta della pagina diversi). Fin qui non cambia niente;
+2. scegli **Dati**, **Configurazione** o entrambi e premi **Ripristina e riavvia**: lo stato attuale viene salvato, il servizio si riavvia (circa un minuto) e la pagina si ricarica da sola. L'esito finisce nel registro attività e arriva su Telegram;
+3. se qualcosa non va: **Annulla l'ultimo ripristino** rimette lo stato di prima.
+
+Da sapere:
+
+- con i dati tornano anche utenti e password della pagina com'erano nel backup; un backup senza utenti admin viene rifiutato;
+- **kit SD**: la configurazione si ripristina dopo un'abilitazione una tantum via SSH, `sudo bash /opt/meshwatch/tools/configura-servizio.sh` (le SD preparate da questa versione in poi sono già pronte); il config precedente resta sulla SD come `meshwatch-config.prima-del-ripristino.yaml`. I dati si ripristinano anche senza;
+- i file del ripristino stanno in `.restore/` accanto al database.
+
+**Ripristino a mano** (via SSH): ferma il servizio, rimetti i due file al loro posto e riavvia.
 
 - Con il kit SD: `meshwatch.db` in `/var/lib/meshwatch/` (poi `sudo chown meshwatch-svc: /var/lib/meshwatch/meshwatch.db`) e `config.yaml` come `/boot/firmware/meshwatch-config.yaml`, perché viene ricopiato da lì a ogni avvio.
 - Con `install.sh`: entrambi nella cartella del programma.
@@ -178,7 +233,7 @@ La pagina resta collegata al Raspberry (*Server-Sent Events*): quando arriva una
 Scheda **Chat** (barra in alto o in basso sul telefono). Serve il login: la usano sia gli *admin* sia i *viewer*.
 
 - **Con chi**: i canali configurati nella Heltec (Public e quelli privati) e i contatti *companion* o *room server* della sua rubrica. Per una nuova conversazione scegli dal menu "Nuova conversazione" oppure "Scrivi" dalla rubrica.
-- **Mittente**: chi riceve vede come mittente il **nome del gateway** (Gestione → Gateway), non quello del tuo telefono.
+- **Mittente**: chi riceve vede come mittente il **nome del gateway** (Gestione → Rete → Gateway), non quello del tuo telefono.
 - **Stato dei messaggi privati**: *in coda* → *inviato* → *✓✓ consegnato* quando arriva la conferma. Senza conferma il gateway riprova (3 tentativi, l'ultimo in flood) e poi segna *nessuna conferma*, con il pulsante **Riprova**. Sui canali non esiste conferma: *✓ trasmesso*.
 - **Precedenza**: la radio fa una cosa alla volta. Un messaggio passa davanti alle richieste di posizione e ai ripetitori in coda; se in quel momento ne è in corso una, aspetta che finisca (fino a circa 40 secondi).
 - **Lunghezza**: circa 150 byte (le lettere accentate e le emoji contano di più); sui canali un po' meno, perché il nome del gateway fa parte del testo. Al massimo 10 messaggi al minuto, per rispettare il duty cycle.
@@ -190,14 +245,14 @@ Scheda **Chat** (barra in alto o in basso sul telefono). Serve il login: la usan
 Ogni risposta alla telemetria porta, oltre alla posizione, i valori dei sensori del dispositivo in formato Cayenne LPP (per esempio il T1000-E manda temperatura e luce; un nodo sensore può mandare umidità, pressione, tensioni, …). MeshWatch li salva tutti, anche quando il GPS non ha il fix.
 
 - Nella scheda del dispositivo compaiono gli ultimi valori e il grafico del sensore scelto per il periodo selezionato. La tensione sul canale 1 è la batteria del dispositivo.
-- **Soglie** (solo admin): Gestione → Dispositivi tracciati → **Soglie**. Si sceglie un sensore già ricevuto almeno una volta, *sopra* o *sotto* e il valore. Arriva un avviso su Telegram quando il valore esce dalla soglia e uno quando torna nella norma. Massimo 20 soglie per dispositivo.
+- **Soglie** (solo admin): Gestione → Dispositivi → Dispositivi tracciati → **Soglie**. Si sceglie un sensore già ricevuto almeno una volta, *sopra* o *sotto* e il valore. Arriva un avviso su Telegram quando il valore esce dalla soglia e uno quando torna nella norma. Massimo 20 soglie per dispositivo.
 - Per seguire un nodo che ha solo sensori (senza GPS) si aggiunge come un dispositivo normale: la mappa non mostra posizioni, la scheda mostra i sensori.
 - Le letture vengono cancellate con la pulizia dei dati vecchi.
 
 ## Mappa della rete e rubrica
 
 - Sulla mappa, dal selettore dei livelli, attiva **Rete MeshCore** (serve il login): rombi gialli i ripetitori, cerchi blu i companion, quadrato verde il gateway. Le linee uniscono i ripetitori che si sentono tra loro: verde SNR ≥ 5 dB, giallo 0–5, arancione sotto 0. La linea tratteggiata indica un ripetitore che il gateway sente direttamente. Compaiono solo i nodi che annunciano la posizione.
-- I vicini vengono chiesti ai ripetitori configurati al massimo ogni 6 ore (servono la password del ripetitore e un firmware recente). Per aggiornarli subito: **Gestione → Rubrica del gateway → Aggiorna mappa della rete**.
+- I vicini vengono chiesti ai ripetitori configurati al massimo ogni 6 ore (servono la password del ripetitore e un firmware recente). Per aggiornarli subito: **Gestione → Rete → Rubrica del gateway → Aggiorna mappa della rete**.
 - **Rubrica del gateway** (solo admin): cerca, segna i preferiti, azzera il percorso di un nodo che non risponde più, rimuovi i contatti inutili (la Heltec ne tiene un numero limitato). Con l'**aggiunta manuale** attiva i nodi nuovi restano in attesa finché non li aggiungi. Se rimuovi un contatto usato da un dispositivo o da un ripetitore, la pagina ti avvisa.
 
 ## Percorso dei pacchetti
@@ -242,7 +297,7 @@ Tutte gratuite e senza chiave, si sceglie dal pulsante dei livelli in alto a des
 
 OpenStreetMap, CyclOSM e OpenTopoMap passano dal Raspberry (`/api/tiles/…`): la prima volta che una zona viene aperta il Raspberry scarica le tessere e le conserva, le volte dopo le dà subito dalla SD. Le zone già viste restano sulla mappa anche se Internet non c'è.
 
-Si gestisce da **Gestione → Cache delle mappe**:
+Si gestisce da **Gestione → Sistema → Cache delle mappe**:
 
 - attiva o disattivata (disattivata: il browser carica le tessere direttamente da Internet, come prima);
 - spazio massimo sulla SD (default 500 MB, circa 15–25 mila tessere): oltre, si cancellano quelle usate meno di recente;
@@ -263,7 +318,7 @@ Da Internet (Cloudflare Tunnel) le tessere passano dalla connessione di casa: se
 
 ## Aggiornamenti
 
-Dalla pagina: **Gestione → Aggiornamento programma → Controlla aggiornamenti → Aggiorna ora**. Il Raspberry deve raggiungere `api.github.com` e `codeload.github.com`.
+Dalla pagina: **Gestione → Sistema → Aggiornamento programma → Controlla aggiornamenti → Aggiorna ora**. Il Raspberry deve raggiungere `api.github.com` e `codeload.github.com`.
 
 Cosa succede:
 
@@ -286,6 +341,7 @@ A ogni push GitHub Actions esegue i test (Python 3.11 e 3.13, radio simulata), i
 | `test_update.py` | aggiornamento dalla pagina e ripristino |
 | `test_features.py` | sensori e soglie, percorsi, copertura, tempo reale, comandi del bot |
 | `test_tiles.py` | cache delle mappe con un server delle mappe finto: scadenza, 304, senza Internet, spazio massimo |
+| `test_restore.py` | ripristino dalla pagina: password, file non validi, avvisi, applicazione al riavvio, annullamento, kit SD |
 | `test_permissions.py` | **ogni** endpoint dell'API per ospite, viewer e admin; fallisce se se ne aggiunge uno senza dichiarare chi può usarlo |
 | `check_page.py` | file della pagina, id usati dagli script, sintassi JavaScript (serve node) |
 | `test_page_browser.py` | la pagina in Chromium su computer e telefono, tutte le schede, nessun errore JavaScript |
@@ -341,10 +397,12 @@ meshwatch/            pacchetto Python
   db.py               SQLite: dispositivi, posizioni, ripetitori, utenti, impostazioni
   web.py              API FastAPI e pagina
   bot.py              bot Telegram
+  charts.py           mappa come immagine per Telegram (traccia, gateway, ripetitori)
   auth.py             login e sessioni
   system.py           stato del Raspberry, riavvio/spegnimento
   updater.py          aggiornamento dalla pagina (GitHub), con ripristino
   maintenance.py      pulizia dei dati vecchi e backup
+  restore.py          ripristino di un backup dalla pagina
   events.py           notifiche in tempo reale alla pagina (Server-Sent Events)
   tiles.py            cache delle tessere delle mappe (tiles.db)
   watchdog.py         segnale a systemd finché la pagina risponde (riavvio se si blocca)

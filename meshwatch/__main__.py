@@ -12,6 +12,8 @@ from .auth import Auth, hash_password
 from .core import Core
 from .db import DB
 from .mesh import Mesh
+from . import restore
+from .tiles import TileCache
 from . import watchdog
 from .updater import Updater, restart_event
 from .web import create_app
@@ -29,22 +31,37 @@ async def run(cfg):
     db = DB(cfg.get("database", "meshwatch.db"))
     mesh = Mesh.from_config(cfg)
     core = Core(cfg, db, mesh)
+    restored = restore.take_announcement(cfg)
+    if restored:   # backup ripristinato dalla pagina al riavvio precedente
+        what = " e ".join(x for x, on in (("dati", restored.get("data")), ("configurazione", restored.get("config"))) if on)
+        core.audit(restored.get("user") or "sistema", "ripristino applicato" if restored["ok"] else "ripristino non riuscito",
+                   (what + (": " + "; ".join(restored["errors"]) if restored["errors"] else ""))[:300])
+
+        async def announce():
+            await asyncio.sleep(90)   # il bot nel frattempo si collega
+            await core.notify(("♻️ Backup ripristinato dalla pagina (" + what + ")." if restored["ok"] else
+                               "⚠️ Ripristino del backup non riuscito: " + "; ".join(restored["errors"])))
+        task = asyncio.create_task(announce())
+        core.tasks.add(task)   # riferimento: un task senza riferimenti può sparire
+        task.add_done_callback(core.tasks.discard)
 
     auth = Auth(db)
     if web_cfg.get("mode") == "public" and not auth.enabled:
         sys.exit("web.mode è 'public' ma non ci sono utenti: crea prima un utente admin dalla pagina "
                  "in modalità lan (al primo accesso a Gestione chiede la password admin), poi passa a public.")
 
+    tiles = TileCache(db)   # una sola cache delle mappe per la pagina e per le immagini di Telegram
     tg = cfg.get("telegram") or {}
+    bot = None
     if tg.get("token") and "BotFather" not in tg["token"]:
         from .bot import Bot
-        await Bot(tg, core).run()
+        bot = Bot(tg, core, tiles)   # si collega a Telegram in sottofondo (vedi start_forever)
     else:
         log.info("Telegram non configurato: bot disattivato")
 
     updater = Updater(cfg.get("update") or {})
     server = uvicorn.Server(uvicorn.Config(
-        create_app(core, auth, web_cfg, updater),
+        create_app(core, auth, web_cfg, updater, tiles),
         host=host, port=port,
         log_level="warning", proxy_headers=web_cfg.get("mode") == "public",
         timeout_graceful_shutdown=5))   # le pagine collegate in tempo reale non bloccano il riavvio
@@ -56,6 +73,8 @@ async def run(cfg):
     serve = asyncio.create_task(server.serve())
     others = [asyncio.create_task(radio()), asyncio.create_task(updater.confirm_later()),
               asyncio.create_task(core.maintenance_loop()), asyncio.create_task(core.radio_watchdog())]
+    if bot:   # senza Internet all'avvio la pagina parte lo stesso; il bot riprova finché la rete torna
+        others.append(asyncio.create_task(bot.start_forever()))
     if (cfg.get("update") or {}).get("notify", True):
         others.append(asyncio.create_task(core.update_watch(updater)))
     restart = asyncio.create_task(restart_event.wait())
@@ -86,6 +105,11 @@ def main():
     logging.getLogger("httpx").setLevel(logging.WARNING)
     cfg = yaml.safe_load(Path(a.config).read_text(encoding="utf-8"))
     cfg["_config_path"] = str(Path(a.config).resolve())   # per il backup
+    # backup ripristinato dalla pagina: i file vanno al loro posto prima di aprire il database
+    done = restore.apply_pending(cfg)
+    if done and done.get("config") and done.get("mode") != "sd":
+        cfg = yaml.safe_load(Path(a.config).read_text(encoding="utf-8"))
+        cfg["_config_path"] = str(Path(a.config).resolve())
     asyncio.run(run(cfg))
 
 
