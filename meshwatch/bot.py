@@ -17,12 +17,19 @@ from .core import is_dangerous, maps_link
 log = logging.getLogger("meshwatch.bot")
 
 BTN_POS, BTN_LAST, BTN_TRACK, BTN_NODES = "📍 Posizione ora", "🕓 Ultima posizione", "🧭 Traccia oggi", "📡 Nodi"
-BTN_MAP = "🗺 Mappa"
+BTN_MAP, BTN_FOLLOW, BTN_STATS = "🗺 Mappa", "👣 Segui 2 ore", "📊 Statistiche"
+BTN_REPORT, BTN_SYSTEM = "📝 Riepilogo", "🖥 Sistema"
+# "Traccia oggi" non è più sulla tastiera (la mappa la mostra meglio) ma il pulsante funziona
+# ancora per chi ha la tastiera vecchia; /traccia resta nel menu
 KEYBOARD = ReplyKeyboardMarkup(
     [[KeyboardButton(BTN_POS), KeyboardButton(BTN_LAST)],
-     [KeyboardButton(BTN_MAP), KeyboardButton(BTN_TRACK)],
-     [KeyboardButton(BTN_NODES)]],
+     [KeyboardButton(BTN_MAP), KeyboardButton(BTN_FOLLOW)],
+     [KeyboardButton(BTN_STATS), KeyboardButton(BTN_REPORT)],
+     [KeyboardButton(BTN_NODES), KeyboardButton(BTN_SYSTEM)]],
     resize_keyboard=True)
+KEYBOARD_VERSION = "2"
+KEYBOARD_NEWS = ("🆕 Nuovi pulsanti: 🗺 Mappa con la traccia, 👣 Segui (posizione in diretta per 2 ore), "
+                 "📊 Statistiche, 📝 Riepilogo della giornata, 🖥 Sistema. La traccia in link resta con /traccia.")
 NO_PIL = ("Per la mappa serve la libreria Pillow: aggiorna MeshWatch dalla pagina "
           "(Gestione → Aggiornamento programma) oppure installala con  venv/bin/pip install Pillow")
 
@@ -146,6 +153,10 @@ class Bot:
         a.add_handler(MessageHandler(filters.Text([BTN_TRACK]), lambda u, c: self.pick(u, "track")))
         a.add_handler(MessageHandler(filters.Text([BTN_NODES]), self.nodes))
         a.add_handler(MessageHandler(filters.Text([BTN_MAP]), lambda u, c: self.pick(u, "map", "1")))
+        a.add_handler(MessageHandler(filters.Text([BTN_FOLLOW]), lambda u, c: self.pick(u, "follow", "2")))
+        a.add_handler(MessageHandler(filters.Text([BTN_STATS]), lambda u, c: self.pick(u, "stats", "1")))
+        a.add_handler(MessageHandler(filters.Text([BTN_REPORT]), self.report_cmd))
+        a.add_handler(MessageHandler(filters.Text([BTN_SYSTEM]), self.system_cmd))
         a.add_handler(CallbackQueryHandler(self.on_button))
         a.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.term_text))
         a.add_error_handler(self.on_error)
@@ -176,11 +187,25 @@ class Bot:
         await self.app.updater.start_polling(drop_pending_updates=False)
         log.info("Bot Telegram attivo")
         self.report_task = asyncio.create_task(self.report_loop())
+        await self.send_new_keyboard()
         try:   # menu dei comandi che Telegram mostra scrivendo "/"
             from telegram import BotCommand
             await self.app.bot.set_my_commands([BotCommand(c, d) for c, d in COMMANDS])
         except Exception as e:
             log.info("Menu dei comandi non impostato: %s", e)
+
+    async def send_new_keyboard(self):
+        """Telegram tiene la tastiera finché il bot non ne manda un'altra: dopo un aggiornamento
+        che la cambia la rimanda una volta a ogni chat, con i pulsanti nuovi."""
+        if self.core.db.get("tg_keyboard") == KEYBOARD_VERSION:
+            return
+        for chat in self.allowed:
+            try:
+                await self.app.bot.send_message(chat, KEYBOARD_NEWS, reply_markup=KEYBOARD)
+            except Exception as e:
+                log.info("Tastiera non inviata a %s: %s", chat, e)
+                return   # riprova al prossimo avvio
+        self.core.db.set("tg_keyboard", KEYBOARD_VERSION)
 
     async def broadcast(self, text):
         """Avvisi: se la rete cade, riprova per qualche minuto invece di perderli."""

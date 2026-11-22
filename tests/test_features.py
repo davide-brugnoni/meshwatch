@@ -583,6 +583,23 @@ def test_bot_images():
     check(chat.photos[-1][0][:3] == b"\xff\xd8\xff", "mappa anche senza tessere")
     tiles.fail = False
 
+    # tastiera: tutti i pulsanti hanno un comando; mandata una volta sola dopo l'aggiornamento
+    from meshwatch.bot import KEYBOARD
+    texts = [b.text for row in KEYBOARD.keyboard for b in row]
+    handled = [t for h in bot.app.handlers[0] if getattr(h, "filters", None) is not None
+               and hasattr(h.filters, "strings") for t in h.filters.strings]
+    check(len(texts) == 8 and set(texts) <= set(handled) and botmod.BTN_TRACK in handled,
+          "tastiera con 8 pulsanti, tutti gestiti (anche Traccia oggi della tastiera vecchia)")
+    kb_sent = []
+
+    class FakeTgBot:
+        async def send_message(self, cid, text, reply_markup=None, **kw):
+            kb_sent.append((cid, reply_markup))
+    bot.app = type("A", (), {"bot": FakeTgBot()})()
+    run(bot.send_new_keyboard())
+    run(bot.send_new_keyboard())
+    check(kb_sent == [(1, KEYBOARD)], "tastiera nuova mandata una volta sola")
+
     # /sistema
     txt = bot.system_text()
     check("Disco libero" in txt and "Radio gateway Casa" in txt and "posizioni" in txt and "Cache mappe: 12 tessere" in txt,

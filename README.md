@@ -115,6 +115,8 @@ Copia `config.example.yaml` in `config.yaml` (con il kit SD il file è `meshwatc
 | `/advert` | il gateway si annuncia sulla mesh |
 | `/terminale` · `/fine` | comandi CLI a un ripetitore |
 
+La tastiera del bot ha i pulsanti 📍 Posizione ora, 🕓 Ultima posizione, 🗺 Mappa, 👣 Segui 2 ore, 📊 Statistiche, 📝 Riepilogo, 📡 Nodi e 🖥 Sistema. Dopo un aggiornamento che la cambia il bot la rimanda da solo una volta; altrimenti basta /start.
+
 Con più dispositivi si scrive il nome dopo il comando, anche solo l'inizio e senza badare alle maiuscole: `/dove escursionista`, `/stats 7 esc`, `/intervallo 15 ciclista`, `/segui 3 esc`. Senza nome il bot chiede quale con dei pulsanti. Scrivendo `/` Telegram mostra l'elenco dei comandi.
 
 Con `/segui` conviene attivare l'intervallo adattivo del dispositivo: in movimento le posizioni arrivano più spesso e il pin si sposta di conseguenza.
