@@ -141,7 +141,8 @@ class Updater:
             try:
                 sha = _run(["git", "-C", str(self.app), "rev-parse", "HEAD"], timeout=10)
                 date = _run(["git", "-C", str(self.app), "log", "-1", "--format=%cI"], timeout=10)
-                return {"sha": sha, "date": date, "source": "git"}
+                msg = _run(["git", "-C", str(self.app), "log", "-1", "--format=%s"], timeout=10)
+                return {"sha": sha, "date": date, "message": msg[:200], "source": "git"}
             except (UpdateError, OSError, subprocess.SubprocessError):
                 return {"sha": None, "source": "git"}
         try:
@@ -267,10 +268,28 @@ class Updater:
 
     # ---------- dopo il riavvio
     async def confirm_later(self):
-        """Se l'ultimo aggiornamento è in prova e il programma resta su, lo conferma."""
+        """Se l'ultimo aggiornamento è in prova e il programma resta su, lo conferma.
+        Restituisce True se ha confermato un aggiornamento (per l'avviso su Telegram)."""
         if not (self.udir / "pending").exists():
-            return
+            return False
         await asyncio.sleep(CONFIRM_AFTER)
         for f in ("pending", "tries"):
             (self.udir / f).unlink(missing_ok=True)
         log.info("Aggiornamento confermato: la nuova versione funziona")
+        return True
+
+    async def announce(self, notify, seen):
+        """Esito dell'ultimo aggiornamento su Telegram, una volta sola: installato (dopo la conferma)
+        o tornato alla versione precedente da guard.sh. seen = (leggi, scrivi) l'ultimo avviso dato."""
+        rolled = self.udir / "rolled_back"
+        if rolled.exists():
+            when = rolled.read_text().strip()
+            get, put = seen
+            if get() != when:
+                put(when)
+                await asyncio.sleep(60)   # il bot nel frattempo si collega
+                await notify(f"⚠️ La nuova versione di MeshWatch non partiva: rimessa da sola la precedente ({when}).")
+            return
+        if await self.confirm_later():
+            msg = self.installed().get("message") or ""
+            await notify("✅ MeshWatch aggiornato" + (f": {msg}" if msg else "") + f" (versione {__version__}).")
