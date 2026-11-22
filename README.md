@@ -139,7 +139,8 @@ Con `/segui` conviene attivare l'intervallo adattivo del dispositivo: in movimen
 
 Servono a vedere da fuori casa quello che mostra la pagina, senza metterla su Internet. La mostra anche il pulsante **🗺 Mappa** della tastiera del bot.
 
-- La mappa la disegna il Raspberry (libreria Pillow, installata con l'aggiornamento) in qualche secondo. Senza Pillow il bot risponde in testo e dice come installarla.
+- La mappa la disegna il Raspberry (libreria Pillow, installata con l'aggiornamento) in qualche secondo. Senza Pillow il bot risponde in testo e dice come installarla. Per le lettere accentate nei nomi serve il font DejaVu (`fonts-dejavu-core`, già installato dal kit SD e da `install.sh`; su schede preparate prima: `sudo apt install fonts-dejavu-core`): senza, i nomi compaiono senza accenti.
+- Se all'avvio Internet non c'è ancora, pagina e radio partono lo stesso e il bot si collega a Telegram appena la rete torna (riprova da solo).
 - Le tessere OpenStreetMap passano dalla [cache delle mappe](#cache-delle-mappe-sul-raspberry), anche quando è disattivata per la pagina: le zone già viste non vengono scaricate di nuovo. Senza Internet la mappa arriva lo stesso, su fondo grigio.
 - Gateway e ripetitori compaiono solo se hanno una posizione e cadono nella zona della traccia: un ripetitore lontano non rimpicciolisce la mappa.
 - Con più dispositivi, **Tutti** mette le tracce di tutti in un'unica mappa, ognuna con il suo colore.

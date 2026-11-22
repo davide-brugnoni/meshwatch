@@ -7,7 +7,7 @@ cd "$DIR"
 
 echo "→ Pacchetti di sistema"
 sudo apt-get update -qq
-sudo apt-get install -y -qq python3-venv python3-pip
+sudo apt-get install -y -qq python3-venv python3-pip fonts-dejavu-core
 
 echo "→ Ambiente Python"
 python3 -m venv venv

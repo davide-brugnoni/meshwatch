@@ -125,6 +125,11 @@ form.edit label { display:flex; flex-direction:column; gap:4px; font-size:12px; 
 form.edit label input, form.edit label select { text-transform:none; letter-spacing:normal; font-size:14px; }
 form.edit .formacts { grid-column: 1 / -1; display:flex; gap:8px; flex-wrap:wrap; }
 form.edit label input[type=number] { width:auto; min-width:0; }
+/* i campi non allargano mai il modulo (menu con nomi lunghi, orari affiancati su schermi stretti) */
+form.edit > label { min-width:0; }
+form.edit label > input:not([type=checkbox]), form.edit label > select { width:100%; max-width:100%; min-width:0; }
+.hours { flex-wrap:wrap; }
+.hours input[type=time] { flex:1 1 104px; min-width:0; }
 .hours { display:flex; gap:6px; align-items:center; }
 .note { font-size:13px; color:var(--mute); margin:8px 0 0; }
 .note.warn { color:var(--warn); }
@@ -241,7 +246,7 @@ body.tab-chat #chat-view { display:grid; } body.tab-chat main { display:none; }
   #view-admin { padding:0 12px 24px; }
   #adm-nav { margin:0 -12px; padding:10px 12px 8px; gap:5px; }
   #adm-nav button { flex:1 0 auto; padding:7px 8px; font-size:13px; }
-  form.edit { grid-template-columns:1fr; padding:10px; }
+  form.edit { grid-template-columns:minmax(0, 1fr); padding:10px; }
   .grid.stats { grid-template-columns:repeat(2, minmax(0, 1fr)); }
   .card h2 { font-size:12.5px; }
   .card { padding:12px; }
@@ -260,6 +265,15 @@ body.tab-chat #chat-view { display:grid; } body.tab-chat main { display:none; }
   .net-legend:not(.cov-legend) { display:none; }
 }
 /* dita invece del mouse: pulsanti più alti, testo dei campi a 16px (iOS non zooma) */
+@media (max-width: 400px) {
+  .status.live::after { display:none; }   /* "· in diretta": su schermi stretti resta il pallino verde */
+  #adm-nav { gap:4px; }
+  #adm-nav button { padding:6px 5px; font-size:12.5px; }
+  header h1 { font-size:15px; }
+  header .status { font-size:0; }   /* resta il pallino (verde collegata, arancione no): la scritta non ci sta */
+  header .status .dot { margin-right:0; }
+  header { flex-wrap:nowrap; }
+}
 @media (pointer: coarse) {
   button, .btn { min-height:40px; padding:8px 14px; }
   button.small { min-height:36px; padding:6px 11px; font-size:13.5px; }

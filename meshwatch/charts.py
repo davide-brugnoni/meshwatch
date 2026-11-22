@@ -9,6 +9,7 @@ import importlib.util
 import io
 import math
 import os
+import unicodedata
 
 TILE = 256
 PALETTE = ["#2f80ed", "#e5484d", "#3ccf8e", "#f2994a", "#9b51e0", "#00a3bf", "#d6409f", "#8d6e63"]
@@ -23,6 +24,19 @@ def available():
 
 
 _fonts = {}
+
+
+def has_full_font():
+    """True con DejaVu (lettere accentate); il font incluso in Pillow ha solo quelle senza accento."""
+    return any(os.path.exists(p) for p in FONT_PATHS)
+
+
+def safe_text(text):
+    """Testo che il font sa scrivere: senza DejaVu "Città –" diventa "Citta -" invece di quadratini."""
+    if has_full_font():
+        return text
+    text = text.replace("–", "-").replace("—", "-").replace("’", "'").replace("°", " gradi")
+    return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
 
 
 def font(size):
@@ -155,10 +169,14 @@ def _compose(got, missing, total, proj, ox, oy, width, height, tracks, markers):
             d.ellipse([x - s - 3, y - s - 3, x + s + 3, y + s + 3], fill=(255, 255, 255))
             d.ellipse([x - s, y - s, x + s, y + s], fill=col)
         if m.get("label"):
-            labels.append((x + s + 6, y - 10, m["label"], m.get("bold")))
-    for x, y, text, bold in labels:   # sopra a tutto, con il bordo bianco per leggerle sulla mappa
-        d.text((x, y), text, fill=INK, font=font(17 if bold else 15), stroke_width=3, stroke_fill=(255, 255, 255))
-    note = "© OpenStreetMap contributors"
+            labels.append((x, y, s, safe_text(m["label"]), m.get("bold")))
+    for x, y, s, text, bold in labels:   # sopra a tutto, con il bordo bianco per leggerle sulla mappa
+        f = font(17 if bold else 15)
+        w = _text_w(d, text, f)
+        tx = x + s + 6 if x + s + 6 + w <= width - 6 else max(4, x - s - 6 - w)   # vicino al bordo: a sinistra
+        ty = min(max(4, y - 10), height - 46)
+        d.text((tx, ty), text, fill=INK, font=f, stroke_width=3, stroke_fill=(255, 255, 255))
+    note = "© OpenStreetMap contributors" if has_full_font() else "(c) OpenStreetMap contributors"
     if missing:
         note = (f"{missing} tessere su {total} non disponibili · " if missing < total else "mappa non disponibile · ") + note
     f = font(13)

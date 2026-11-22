@@ -113,8 +113,8 @@
       <label>In movimento ogni (min, 0 = come sopra) <input type="number" name="moving_interval_min" min="0" max="720" value="0"></label>
       <label>Fascia oraria
         <span class="hours"><input type="time" name="h_from" value="05:00"> – <input type="time" name="h_to" value="21:00"></span>
-        <span class="hours" style="text-transform:none"><input type="checkbox" name="always"> sempre attivo</span>
       </label>
+      <label class="switch"><input type="checkbox" name="always"> Sempre attivo (ignora la fascia oraria)</label>
       <label>Avviso se non risponde da (min) <input type="number" name="offline_alert_min" min="10" max="1440" value="90"></label>
       <label>Avviso batteria sotto (V) <input type="number" name="low_battery_v" min="0" max="5" step="0.05" value="3.5"></label>
       <div class="formacts"><button class="primary">Salva</button><button type="button" class="cancel">Annulla</button></div>
@@ -130,7 +130,7 @@
     </form>
     <details class="help"><summary>Come funziona</summary><p>Il dispositivo deve permettere al gateway di leggere la sua telemetria (nell'app MeshCore: gateway tra i preferiti, telemetria posizione "solo preferiti").</p></details>
   </section>
-<section class="card">
+<section class="card wide">
     <h2>Avvisi batteria bassa</h2>
     <form class="edit" id="form-batt">
       <label>Ripeti l'avviso ogni

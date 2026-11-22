@@ -38,9 +38,10 @@ async def run(cfg):
 
     tiles = TileCache(db)   # una sola cache delle mappe per la pagina e per le immagini di Telegram
     tg = cfg.get("telegram") or {}
+    bot = None
     if tg.get("token") and "BotFather" not in tg["token"]:
         from .bot import Bot
-        await Bot(tg, core, tiles).run()
+        bot = Bot(tg, core, tiles)   # si collega a Telegram in sottofondo (vedi start_forever)
     else:
         log.info("Telegram non configurato: bot disattivato")
 
@@ -58,6 +59,8 @@ async def run(cfg):
     serve = asyncio.create_task(server.serve())
     others = [asyncio.create_task(radio()), asyncio.create_task(updater.confirm_later()),
               asyncio.create_task(core.maintenance_loop()), asyncio.create_task(core.radio_watchdog())]
+    if bot:   # senza Internet all'avvio la pagina parte lo stesso; il bot riprova finché la rete torna
+        others.append(asyncio.create_task(bot.start_forever()))
     if (cfg.get("update") or {}).get("notify", True):
         others.append(asyncio.create_task(core.update_watch(updater)))
     restart = asyncio.create_task(restart_event.wait())

@@ -31,7 +31,7 @@ KEYBOARD_VERSION = "2"
 KEYBOARD_NEWS = ("🆕 Nuovi pulsanti: 🗺 Mappa con la traccia, 👣 Segui (posizione in diretta per 2 ore), "
                  "📊 Statistiche, 📝 Riepilogo della giornata, 🖥 Sistema. La traccia in link resta con /traccia.")
 NO_PIL = ("Per la mappa serve la libreria Pillow: aggiorna MeshWatch dalla pagina "
-          "(Gestione → Aggiornamento programma) oppure installala con  venv/bin/pip install Pillow")
+          "(Gestione → Sistema → Aggiornamento programma) oppure installala con  venv/bin/pip install Pillow")
 
 
 COMMANDS = [
@@ -107,7 +107,7 @@ class Bot:
     def __init__(self, cfg, core, tiles=None):
         self.core = core
         self.tiles = tiles   # cache delle mappe condivisa con la pagina (vedi __main__)
-        self.report_task = None
+        self.report_task = self.keyboard_task = None
         self.allowed = set(int(x) for x in cfg.get("allowed_chat_ids") or [])
         # chi può usare il terminale; se vuoto, tutte le chat autorizzate
         self.admins = set(int(x) for x in cfg.get("admin_chat_ids") or []) or self.allowed
@@ -170,6 +170,23 @@ class Bot:
         else:
             log.error("Errore nel bot: %r", e, exc_info=e)
 
+    async def start_forever(self, first_wait=10, max_wait=300):
+        """Collegamento a Telegram con nuovi tentativi: senza Internet all'avvio (rete o DNS
+        non ancora pronti) il programma non deve fermarsi, né la pagina restare spenta."""
+        wait = first_wait
+        while True:
+            try:
+                await self.run()
+                return
+            except (NetworkError, TimedOut) as e:
+                log.warning("Telegram non raggiungibile all'avvio (%s): riprovo tra %d s", e, wait)
+            except Exception as e:   # es. token sbagliato: il bot resta spento, il resto funziona
+                log.error("Bot Telegram non avviato: %r", e)
+                if "Unauthorized" in type(e).__name__ or "InvalidToken" in type(e).__name__:
+                    return
+            await asyncio.sleep(wait)
+            wait = min(max_wait, wait * 2)
+
     async def run(self):
         await self.app.initialize()
         await self.app.start()
@@ -178,7 +195,8 @@ class Bot:
         await self.app.updater.start_polling(drop_pending_updates=False)
         log.info("Bot Telegram attivo")
         self.report_task = asyncio.create_task(self.report_loop())
-        await self.send_new_keyboard()
+        # in sottofondo: senza Internet non deve ritardare l'avvio della pagina
+        self.keyboard_task = asyncio.create_task(self.send_new_keyboard())
         try:   # menu dei comandi che Telegram mostra scrivendo "/"
             from telegram import BotCommand
             await self.app.bot.set_my_commands([BotCommand(c, d) for c, d in COMMANDS])
@@ -190,13 +208,21 @@ class Bot:
         che la cambia la rimanda una volta a ogni chat, con i pulsanti nuovi."""
         if self.core.db.get("tg_keyboard") == KEYBOARD_VERSION:
             return
+        done = set((self.core.db.get("tg_keyboard_chats") or "").split(","))   # già mandata (giro precedente)
         for chat in self.allowed:
+            if str(chat) in done:
+                continue
             try:
                 await self.app.bot.send_message(chat, KEYBOARD_NEWS, reply_markup=KEYBOARD)
+            except (NetworkError, TimedOut) as e:
+                log.info("Tastiera non inviata (Telegram non raggiungibile): %s", e)
+                return   # riprova al prossimo avvio, solo alle chat che non l'hanno ricevuta
             except Exception as e:
-                log.info("Tastiera non inviata a %s: %s", chat, e)
-                return   # riprova al prossimo avvio
+                log.info("Tastiera non inviata a %s: %s", chat, e)   # chat che ha bloccato il bot, ID sbagliato…
+            done.add(str(chat))
+            self.core.db.set("tg_keyboard_chats", ",".join(sorted(x for x in done if x)))
         self.core.db.set("tg_keyboard", KEYBOARD_VERSION)
+        self.core.db.set("tg_keyboard_chats", "")
 
     async def broadcast(self, text):
         """Avvisi: se la rete cade, riprova per qualche minuto invece di perderli."""
@@ -474,8 +500,10 @@ class Bot:
             if pts:
                 tracks.append({"color": color, "points": thin([(p["lat"], p["lon"]) for p in pts], 1500)})
             if last:
+                when = datetime.fromtimestamp(last["ts"])
+                fmt = "%H:%M" if when.date() == datetime.now().date() else "%d/%m %H:%M"
                 markers.append({"lat": last["lat"], "lon": last["lon"], "color": color, "size": 9, "bold": True,
-                                "label": f"{x['label']} {datetime.fromtimestamp(last['ts']).strftime('%H:%M')}"})
+                                "label": f"{x['label']} {when.strftime(fmt)}"})
                 st = self.core.tracker_stats(x["id"], since)
                 lines.append(f"{x['label']}: " + (f"{st['km']:.1f} km, {st['points']} posizioni" if pts
                                                   else "nessuna posizione nel periodo")
@@ -483,8 +511,16 @@ class Bot:
         if not markers:
             await chat.send_message("Nessuna posizione registrata" + (f" per {t['label']}." if t else "."))
             return
-        img = await charts.static_map(self._get_tile, tracks, markers + self._net_markers())
         title = f"🗺 {t['label'] if t else 'Tutti i dispositivi'} – {period_text(days)}"
+        try:
+            img = await charts.static_map(self._get_tile, tracks, markers + self._net_markers())
+        except Exception as e:   # un errore nel disegno non deve lasciare la chat senza risposta
+            log.exception("Mappa non disegnata: %s", e)
+            img = None
+        if not img:
+            await chat.send_message(title + "\n" + "\n".join(lines) + "\n(immagine della mappa non disponibile)",
+                                    disable_web_page_preview=True)
+            return
         await self._photo(chat, img, title + "\n" + "\n".join(lines))
 
     # ---------- sistema
@@ -590,7 +626,8 @@ class Bot:
             when = self.report_time()
             await update.message.reply_text(
                 f"Riepilogo automatico: ogni giorno alle {when}." if when else
-                "Riepilogo automatico disattivato. Per riceverlo ogni sera: /riepilogo 21:00")
+                "Riepilogo automatico spento. Si accende dalla pagina (Gestione → Telegram) "
+                "oppure, da una chat admin, con /riepilogo 21:00")
             return
         if not self.is_admin(update):
             await update.message.reply_text("Solo le chat admin possono cambiare il riepilogo automatico.")

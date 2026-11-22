@@ -600,6 +600,71 @@ def test_bot_images():
     run(bot.send_new_keyboard())
     check(kb_sent == [(1, KEYBOARD)], "tastiera nuova mandata una volta sola")
 
+    # tastiera: una chat che ha bloccato il bot non fa rimandare il messaggio alle altre
+    from telegram.error import Forbidden, NetworkError
+    db.set("tg_keyboard", "")
+    bot.allowed = {1, 2, 3}
+    calls = []
+
+    class FlakyBot:
+        def __init__(self, fail):
+            self.fail = fail
+
+        async def send_message(self, cid, text, reply_markup=None, **kw):
+            calls.append(cid)
+            if cid in self.fail:
+                raise self.fail[cid]
+    bot.app = type("A", (), {"bot": FlakyBot({2: Forbidden("bloccato"), 3: NetworkError("rete")})})()
+    run(bot.send_new_keyboard())
+    check(db.get("tg_keyboard") != botmod.KEYBOARD_VERSION, "tastiera: rete giù, si riprova al prossimo avvio")
+    calls.clear()
+    bot.app = type("A", (), {"bot": FlakyBot({2: Forbidden("bloccato")})})()
+    run(bot.send_new_keyboard())
+    check(calls == [3] and db.get("tg_keyboard") == botmod.KEYBOARD_VERSION,
+          "tastiera: al nuovo giro solo la chat che non l'aveva ricevuta")
+    bot.allowed = {1}
+
+    # avvio senza Internet: il bot riprova finché Telegram risponde, senza fermare il programma
+    tries = []
+
+    async def flaky_run():
+        tries.append(1)
+        if len(tries) < 3:
+            raise NetworkError("rete non pronta")
+    orig_run, orig_sleep = bot.run, asyncio.sleep
+    bot.run = flaky_run
+    waits = []
+
+    async def no_sleep(sec):
+        waits.append(sec)
+    asyncio.sleep = no_sleep
+    try:
+        run(bot.start_forever(first_wait=10, max_wait=300))
+    finally:
+        asyncio.sleep, bot.run = orig_sleep, orig_run
+    check(len(tries) == 3 and waits == [10, 20], "avvio senza Internet: il bot riprova (10 s, 20 s, …) e poi si collega")
+
+    # mappa: se il disegno fallisce arriva comunque la risposta in testo
+    orig_map = charts.static_map
+
+    async def broken(*a, **kw):
+        raise RuntimeError("disegno rotto")
+    charts.static_map = broken
+    try:
+        run(bot.do(chat, "map", str(tid), "1"))
+    finally:
+        charts.static_map = orig_map
+    check("immagine della mappa non disponibile" in chat.sent[-1] and "google.com/maps" in chat.sent[-1],
+          "mappa non disegnata: risposta in testo con il link")
+    # testo nelle immagini senza DejaVu: niente quadratini al posto delle lettere accentate
+    orig_paths = charts.FONT_PATHS
+    charts.FONT_PATHS = ()
+    try:
+        check(charts.safe_text("Città – 5°") == "Citta - 5 gradi", "senza DejaVu: lettere accentate senza accento")
+    finally:
+        charts.FONT_PATHS = orig_paths
+    check(charts.safe_text("Città") == "Città" or not charts.has_full_font(), "con DejaVu: testo invariato")
+
     # /sistema
     txt = bot.system_text()
     check("Disco libero" in txt and "Radio gateway Casa" in txt and "posizioni" in txt and "Cache mappe: 12 tessere" in txt,
@@ -614,7 +679,7 @@ def test_bot_images():
     n = len(chat.photos)
     run(bot.report_cmd(FakeUpdate(chat), Ctx()))
     check(any("Riepilogo MeshWatch" in x and "Escursionista" in x and "Rip-Monte" in x for x in chat.sent[-3:])
-          and len(chat.photos) == n + 1 and "disattivato" in chat.sent[-1], "/riepilogo adesso, con la mappa")
+          and len(chat.photos) == n + 1 and "spento" in chat.sent[-1] and "Gestione → Telegram" in chat.sent[-1], "/riepilogo adesso, con la mappa")
     run(bot.report_cmd(FakeUpdate(other), Ctx("21:00")))
     check("Solo le chat admin" in other.sent[-1] and not bot.report_time(), "/riepilogo HH:MM solo admin")
     run(bot.report_cmd(FakeUpdate(chat), Ctx("21.30")))
