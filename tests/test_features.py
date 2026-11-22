@@ -633,9 +633,33 @@ def test_bot_images():
     check(sorted(sent) == [1, 2], "riepilogo automatico una volta al giorno a tutte le chat")
     run(bot.report_cmd(FakeUpdate(chat), Ctx("no")))
     check(bot.report_time() == "" and not run(bot.report_tick(datetime(2026, 5, 5, 21, 31))), "/riepilogo no")
-    b2 = Bot({"token": "123456:TEST", "allowed_chat_ids": [1], "daily_report": "8:05"}, core, tiles)
+    core.cfg["telegram"] = {"daily_report": "8:05"}
     db._exec("DELETE FROM settings WHERE key='tg_report_time'")
-    check(b2.report_time() == "08:05", "orario del riepilogo dal config (telegram.daily_report)")
+    check(bot.report_time() == "08:05", "orario del riepilogo dal config (telegram.daily_report)")
+
+    # dalla pagina (Gestione → Telegram): leggi, accendi, spegni, invia ora
+    del bot.send_report
+    sent.clear()
+
+    async def fake_send(ch):
+        sent.append(ch.id)
+    bot.send_report = fake_send
+    bot.app = type("A", (), {"bot": None})()
+    r = c.get("/api/telegram/report").json()
+    check(r == {"telegram": True, "enabled": True, "time": "08:05"}, f"pagina: riepilogo dal config {r}")
+    r = c.put("/api/telegram/report", json={"enabled": False, "time": "20:15"}).json()
+    check(not r["enabled"] and r["time"] == "20:15" and bot.report_time() == "", "pagina: riepilogo spento, orario ricordato")
+    r = c.put("/api/telegram/report", json={"enabled": True, "time": "7.30"}).json()
+    check(r["enabled"] and bot.report_time() == "07:30", "pagina: riepilogo acceso alle 07:30")
+    check(c.put("/api/telegram/report", json={"enabled": True, "time": "25:00"}).status_code == 400
+          and c.put("/api/telegram/report", json={"enabled": True, "time": "x"}).status_code == 422, "pagina: orario non valido")
+    check(v.get("/api/telegram/report").status_code == 403, "pagina: solo admin")
+    check(c.post("/api/telegram/report/send").json()["ok"] and sorted(sent) == [1, 2], "pagina: invia il riepilogo ora")
+    acts = [x["action"] for x in c.get("/api/audit").json()]
+    check("riepilogo automatico" in acts and "riepilogo inviato su Telegram" in acts, "riepilogo nel registro attività")
+    core.reporters.clear()
+    check(c.put("/api/telegram/report", json={"enabled": True, "time": "21:00"}).status_code == 400
+          and not c.get("/api/telegram/report").json()["telegram"], "pagina: senza Telegram non si accende")
 
     # senza Pillow: risposte in testo
     orig = charts.available

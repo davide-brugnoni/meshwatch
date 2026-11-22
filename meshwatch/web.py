@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from .auth import hash_password
 from . import maintenance, system
 from .tiles import TileCache, TileError, MIN_MB, MAX_MB
-from .core import fmt_sensor, is_dangerous, sensor_info
+from .core import fmt_sensor, is_dangerous, parse_hhmm, sensor_info
 from .updater import UpdateError
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
@@ -77,6 +77,11 @@ class GatewayIn(BaseModel):
 class MaintenanceIn(BaseModel):
     retention_days: int | None = Field(None, ge=0, le=3650)
     backup_telegram: bool | None = None
+
+
+class ReportIn(BaseModel):
+    enabled: bool
+    time: str = Field("21:00", pattern=r"^\d{1,2}[:.]\d{2}$")
 
 
 class BatteryAlertsIn(BaseModel):
@@ -688,6 +693,35 @@ def create_app(core, auth, web_cfg, updater=None, tiles=None):
         st = maintenance.settings(db)
         audit(u, "impostazioni manutenzione", f"conserva {st['retention_days'] or 'per sempre'} giorni, "
               f"backup Telegram {'sì' if st['backup_telegram'] else 'no'}")
+        return {"ok": True}
+
+    # ---------- riepilogo giornaliero su Telegram
+    @app.get("/api/telegram/report")
+    async def report_get(u=Depends(admin)):
+        return core.report_settings()
+
+    @app.put("/api/telegram/report")
+    async def report_set(body: ReportIn, u=Depends(admin)):
+        when = parse_hhmm(body.time)
+        if not when:
+            raise HTTPException(400, "orario non valido")
+        if body.enabled and not core.reporters:
+            raise HTTPException(400, "Telegram non è configurato")
+        if body.enabled:
+            core.set_report_time(when)
+        else:
+            core.db.set("tg_report_prev", when)
+            core.set_report_time("")
+        audit(u, "riepilogo automatico", f"ogni giorno alle {when}" if body.enabled else "disattivato")
+        return core.report_settings()
+
+    @app.post("/api/telegram/report/send")
+    async def report_send(u=Depends(admin)):
+        if not core.reporters:
+            raise HTTPException(400, "Telegram non è configurato")
+        for send in core.reporters:
+            await send()
+        audit(u, "riepilogo inviato su Telegram")
         return {"ok": True}
 
     @app.post("/api/maintenance/purge")

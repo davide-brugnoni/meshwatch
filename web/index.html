@@ -92,128 +92,16 @@
 </div>
 
 <div id="admin-scroll"><div id="view-admin">
-  <section class="card">
-    <h2>Sistema</h2>
-    <div id="sys-info" class="grid mono" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))"><p class="muted">Caricamento…</p></div>
-    <p class="note warn" id="sys-warn" hidden></p>
-    <div class="row">
-      <button id="sys-reboot">Riavvia Raspberry</button>
-      <button id="sys-poweroff" class="danger">Spegni Raspberry</button>
-      <button id="sys-gw-reboot">Riavvia gateway (radio)</button>
-      <button id="sys-radio">Riconnetti radio</button>
-      <button id="sys-reload">Aggiorna</button>
-    </div>
-    <p class="note" id="sys-note"></p>
-  </section>
-  <section class="card">
-    <h2>Aggiornamento programma</h2>
-    <div id="upd-info" class="grid mono" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))"><p class="muted">Caricamento…</p></div>
-    <p class="note warn" id="upd-warn" hidden></p>
-    <p class="upd-log" id="upd-log" hidden></p>
-    <div class="row">
-      <button id="upd-check">Controlla aggiornamenti</button>
-      <button id="upd-apply" class="primary" disabled>Aggiorna ora</button>
-    </div>
-    <p class="note">Scarica l'ultima versione da GitHub e riavvia il servizio (circa un minuto, di più se cambiano le librerie). Config, dati e utenti restano.
-      Se la nuova versione non parte, al terzo tentativo torna da sola a quella precedente.</p>
-  </section>
+  <nav id="adm-nav" aria-label="Sezioni della gestione">
+    <button data-sec="dispositivi" class="on">Dispositivi</button>
+    <button data-sec="rete">Rete</button>
+    <button data-sec="telegram">Telegram</button>
+    <button data-sec="sistema">Sistema</button>
+    <button data-sec="accessi">Accessi</button>
+  </nav>
 
-  <section class="card">
-    <h2>Avvisi batteria bassa</h2>
-    <form class="edit" id="form-batt">
-      <label>Ripeti l'avviso ogni
-        <select name="batt_repeat_h">
-          <option value="0">mai (una volta sola)</option>
-          <option value="1">1 ora</option><option value="2">2 ore</option><option value="3">3 ore</option>
-          <option value="6">6 ore</option><option value="12">12 ore</option><option value="24">24 ore</option>
-          <option value="48">2 giorni</option><option value="168">1 settimana</option>
-        </select>
-      </label>
-      <label>Silenzio dalle alle
-        <span class="hours"><input type="time" name="q_from" value="22:00"> – <input type="time" name="q_to" value="07:00"></span>
-        <span class="hours" style="text-transform:none"><input type="checkbox" name="quiet_on"> silenzia in questa fascia</span>
-      </label>
-      <div class="formacts"><button class="primary">Salva</button></div>
-    </form>
-    <p class="note">Vale per i dispositivi seguiti (la soglia di ognuno si imposta nella sua scheda) e per i ripetitori. Il primo avviso arriva appena la batteria scende sotto la soglia; poi, se è ancora bassa, si ripete con l'intervallo scelto.
-      Durante il silenzio non arriva niente: se la batteria è ancora bassa, l'avviso arriva alla prima lettura dopo la fine della fascia. Quando la batteria risale, si riparte da capo.</p>
-  </section>
-
-  <section class="card">
-    <h2>Manutenzione e backup</h2>
-    <div id="mnt-info" class="grid mono" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))"><p class="muted">Caricamento…</p></div>
-    <form class="edit" id="form-mnt">
-      <label>Conserva i dati per (giorni, 0 = per sempre) <input type="number" name="retention_days" min="0" max="3650"></label>
-      <label><span class="hours" style="text-transform:none"><input type="checkbox" name="backup_telegram"> backup settimanale su Telegram (alle chat admin)</span></label>
-      <div class="formacts"><button class="primary">Salva</button></div>
-    </form>
-    <div class="row">
-      <a class="btn" id="mnt-download" href="/api/backup">Scarica backup</a>
-      <button id="mnt-telegram">Invia backup su Telegram ora</button>
-      <button id="mnt-purge">Pulisci ora</button>
-    </div>
-    <p class="note">La pulizia gira da sola una volta al giorno: cancella posizioni, statistiche dei ripetitori, comandi e registro più vecchi del limite. Restano sempre l'ultima posizione di ogni dispositivo e l'ultimo stato di ogni ripetitore.
-      Il backup è uno zip con database e config.yaml: contiene password e posizioni, conservalo con cura. Come ripristinarlo è spiegato nel file LEGGIMI.txt dentro lo zip.</p>
-  </section>
-  <section class="card">
-    <h2>Cache delle mappe</h2>
-    <div id="tc-info" class="grid mono" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))"><p class="muted">Caricamento…</p></div>
-    <form class="edit" id="form-tc">
-      <label><span class="hours" style="text-transform:none"><input type="checkbox" name="enabled"> tessere delle mappe salvate sul Raspberry</span></label>
-      <label>Spazio massimo sulla SD (MB) <input type="number" name="max_mb" min="50" max="20000" step="50"></label>
-      <div class="formacts"><button class="primary">Salva</button></div>
-    </form>
-    <div class="row">
-      <button id="tc-clear">Svuota cache</button>
-      <button id="tc-reload">Aggiorna</button>
-    </div>
-    <p class="note">Le tessere di OpenStreetMap, CyclOSM e OpenTopoMap passano dal Raspberry, che conserva quelle già viste: le zone che guardi di solito si aprono subito e restano visibili anche senza Internet.
-      Si salvano solo le zone aperte sulla mappa (le regole di OpenStreetMap non permettono di scaricare intere regioni). Quando il server dice che una tessera è scaduta, il Raspberry chiede se è cambiata.
-      Superato lo spazio massimo si cancellano quelle usate meno di recente. Le mappe satellitari arrivano sempre direttamente da Internet.</p>
-  </section>
-  <section class="card">
-    <h2>Gateway (radio collegata al Raspberry)</h2>
-    <div id="gw-info" class="grid mono" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))"><p class="muted">Caricamento…</p></div>
-    <form class="edit" id="form-gw">
-      <label>Nome <input name="gw_name" maxlength="31" required></label>
-      <label>Potenza TX (dBm) <input type="number" name="tx_power" min="1" max="30"></label>
-      <label>Latitudine <input type="number" name="lat" step="0.000001" min="-90" max="90"></label>
-      <label>Longitudine <input type="number" name="lon" step="0.000001" min="-180" max="180"></label>
-      <label>Posizione negli advert <span class="hours" style="text-transform:none"><input type="checkbox" name="share_location"> condividi</span></label>
-      <label>Frequenza (MHz) <input type="number" name="radio_freq" step="0.001" min="137" max="1020"></label>
-      <label>Bandwidth (kHz) <select name="radio_bw">
-        <option>7.8</option><option>10.4</option><option>15.6</option><option>20.8</option><option>31.25</option>
-        <option>41.7</option><option>62.5</option><option>125</option><option>250</option><option>500</option></select></label>
-      <label>Spreading factor <select name="radio_sf"><option>5</option><option>6</option><option>7</option><option>8</option><option>9</option><option>10</option><option>11</option><option>12</option></select></label>
-      <label>Coding rate <select name="radio_cr"><option>5</option><option>6</option><option>7</option><option>8</option></select></label>
-      <div class="formacts">
-        <button class="primary">Salva</button>
-        <button type="button" id="gw-reload">Aggiorna dati</button>
-        <button type="button" id="gw-advert">Advert</button>
-        <button type="button" id="gw-reboot" class="danger">Riavvia gateway</button>
-      </div>
-    </form>
-    <p class="note warn">Frequenza, bandwidth, SF e CR devono essere identici a quelli della tua rete: se li sbagli il gateway non sente più nessun nodo.</p>
-  </section>
-  <section class="card">
-    <h2>Rubrica del gateway</h2>
-    <div class="ctc-tools">
-      <input type="search" id="ctc-filter" placeholder="Cerca per nome o chiave">
-      <select id="ctc-type"><option value="">tutti i tipi</option><option>companion</option><option>ripetitore</option><option>room server</option><option>sensore</option></select>
-      <button id="ctc-refresh">Rileggi dalla radio</button>
-      <button id="ctc-nb">Aggiorna mappa della rete</button>
-    </div>
-    <label class="hours note" style="text-transform:none"><input type="checkbox" id="ctc-manual"> aggiunta manuale dei nuovi nodi (se attiva, i nodi sentiti restano in attesa finché non li aggiungi)</label>
-    <div id="ctc-pending-box" hidden>
-      <h2 style="margin-top:14px">In attesa di essere aggiunti</h2>
-      <div class="list" id="ctc-pending"></div>
-    </div>
-    <div class="list" id="ctc-list" style="margin-top:8px"><p class="muted">Caricamento…</p></div>
-    <p class="note">Preferito: per i dispositivi da seguire, il gateway deve essere tra i preferiti <em>del dispositivo</em>; qui imposti i preferiti del gateway.
-      "Azzera percorso" fa ripartire la ricerca del percorso (utile se un nodo non risponde più dopo che è cambiato un ripetitore). La rubrica della radio gateway ha un limite di contatti: rimuovi quelli che non servono.</p>
-  </section>
-
-  <section class="card">
+  <div class="adm-sec on" data-sec="dispositivi">
+<section class="card wide">
     <h2>Dispositivi tracciati</h2>
     <div class="list" id="adm-trackers"></div>
     <div class="row"><button class="primary" id="add-tracker">+ Aggiungi dispositivo</button></div>
@@ -240,10 +128,32 @@
       <div class="formacts"><button class="primary">Aggiungi soglia</button><button type="button" class="cancel">Chiudi</button></div>
       <p class="note formacts" style="margin:0">Avviso su Telegram quando il valore supera la soglia e quando torna nella norma. Compaiono i sensori che il dispositivo ha già mandato almeno una volta.</p>
     </form>
-    <p class="note">Il dispositivo deve permettere al gateway di leggere la sua telemetria (nell'app MeshCore: gateway tra i preferiti, telemetria posizione "solo preferiti").</p>
+    <details class="help"><summary>Come funziona</summary><p>Il dispositivo deve permettere al gateway di leggere la sua telemetria (nell'app MeshCore: gateway tra i preferiti, telemetria posizione "solo preferiti").</p></details>
   </section>
+<section class="card">
+    <h2>Avvisi batteria bassa</h2>
+    <form class="edit" id="form-batt">
+      <label>Ripeti l'avviso ogni
+        <select name="batt_repeat_h">
+          <option value="0">mai (una volta sola)</option>
+          <option value="1">1 ora</option><option value="2">2 ore</option><option value="3">3 ore</option>
+          <option value="6">6 ore</option><option value="12">12 ore</option><option value="24">24 ore</option>
+          <option value="48">2 giorni</option><option value="168">1 settimana</option>
+        </select>
+      </label>
+      <label>Silenzio dalle alle
+        <span class="hours"><input type="time" name="q_from" value="22:00"> – <input type="time" name="q_to" value="07:00"></span>
+      </label>
+      <label class="switch"><input type="checkbox" name="quiet_on"> Silenzio nella fascia oraria</label>
+      <div class="formacts"><button class="primary">Salva</button></div>
+    </form>
+    <details class="help"><summary>Come funziona</summary><p>Vale per i dispositivi seguiti (la soglia di ognuno si imposta nella sua scheda) e per i ripetitori. Il primo avviso arriva appena la batteria scende sotto la soglia; poi, se è ancora bassa, si ripete con l'intervallo scelto.
+      Durante il silenzio non arriva niente: se la batteria è ancora bassa, l'avviso arriva alla prima lettura dopo la fine della fascia. Quando la batteria risale, si riparte da capo.</p></details>
+  </section>
+  </div>
 
-  <section class="card">
+  <div class="adm-sec" data-sec="rete">
+<section class="card">
     <h2>Ripetitori</h2>
     <div class="list" id="adm-reps"></div>
     <div class="row"><button class="primary" id="add-rep">+ Aggiungi ripetitore</button></div>
@@ -253,10 +163,154 @@
       <label>Password admin <input type="password" name="password" maxlength="64" autocomplete="new-password"></label>
       <div class="formacts"><button class="primary">Salva</button><button type="button" class="cancel">Annulla</button></div>
     </form>
-    <p class="note">Con la password admin funzionano statistiche e terminale; con quella guest solo le statistiche.</p>
+    <details class="help"><summary>Come funziona</summary><p>Con la password admin funzionano statistiche e terminale; con quella guest solo le statistiche.</p></details>
   </section>
+<section class="card">
+    <h2>Gateway (radio collegata al Raspberry)</h2>
+    <div id="gw-info" class="grid stats mono"><p class="muted">Caricamento…</p></div>
+    <form class="edit" id="form-gw">
+      <label>Nome <input name="gw_name" maxlength="31" required></label>
+      <label>Potenza TX (dBm) <input type="number" name="tx_power" min="1" max="30"></label>
+      <label>Latitudine <input type="number" name="lat" step="0.000001" min="-90" max="90"></label>
+      <label>Longitudine <input type="number" name="lon" step="0.000001" min="-180" max="180"></label>
+      <label class="switch"><input type="checkbox" name="share_location"> Posizione negli advert</label>
+      <label>Frequenza (MHz) <input type="number" name="radio_freq" step="0.001" min="137" max="1020"></label>
+      <label>Bandwidth (kHz) <select name="radio_bw">
+        <option>7.8</option><option>10.4</option><option>15.6</option><option>20.8</option><option>31.25</option>
+        <option>41.7</option><option>62.5</option><option>125</option><option>250</option><option>500</option></select></label>
+      <label>Spreading factor <select name="radio_sf"><option>5</option><option>6</option><option>7</option><option>8</option><option>9</option><option>10</option><option>11</option><option>12</option></select></label>
+      <label>Coding rate <select name="radio_cr"><option>5</option><option>6</option><option>7</option><option>8</option></select></label>
+      <div class="formacts">
+        <button class="primary">Salva</button>
+        <button type="button" id="gw-reload">Aggiorna dati</button>
+        <button type="button" id="gw-advert">Advert</button>
+        <button type="button" id="gw-reboot" class="danger">Riavvia gateway</button>
+      </div>
+    </form>
+    <p class="note warn">Frequenza, bandwidth, SF e CR devono essere identici a quelli della tua rete: se li sbagli il gateway non sente più nessun nodo.</p>
+  </section>
+<section class="card wide">
+    <h2>Rubrica del gateway</h2>
+    <div class="ctc-tools">
+      <input type="search" id="ctc-filter" placeholder="Cerca per nome o chiave">
+      <select id="ctc-type"><option value="">tutti i tipi</option><option>companion</option><option>ripetitore</option><option>room server</option><option>sensore</option></select>
+      <button id="ctc-refresh">Rileggi dalla radio</button>
+      <button id="ctc-nb">Aggiorna mappa della rete</button>
+    </div>
+    <label class="switch"><input type="checkbox" id="ctc-manual"> Aggiunta manuale dei nuovi nodi <small>i nodi sentiti restano in attesa finché non li aggiungi</small></label>
+    <div id="ctc-pending-box" hidden>
+      <h2 style="margin-top:14px">In attesa di essere aggiunti</h2>
+      <div class="list" id="ctc-pending"></div>
+    </div>
+    <div class="list" id="ctc-list" style="margin-top:8px"><p class="muted">Caricamento…</p></div>
+    <details class="help"><summary>Come funziona</summary><p>Preferito: per i dispositivi da seguire, il gateway deve essere tra i preferiti <em>del dispositivo</em>; qui imposti i preferiti del gateway.
+      "Azzera percorso" fa ripartire la ricerca del percorso (utile se un nodo non risponde più dopo che è cambiato un ripetitore). La rubrica della radio gateway ha un limite di contatti: rimuovi quelli che non servono.</p></details>
+  </section>
+  </div>
 
+  <div class="adm-sec" data-sec="telegram">
   <section class="card">
+    <h2>Riepilogo giornaliero</h2>
+    <p class="note warn" id="rep-off" hidden>Telegram non è configurato: aggiungi <span class="mono">telegram.token</span> e <span class="mono">allowed_chat_ids</span> nel config e riavvia MeshWatch.</p>
+    <form class="edit" id="form-report">
+      <label class="switch"><input type="checkbox" name="enabled"> Invia ogni giorno</label>
+      <label>Ora di invio <input type="time" name="time" value="21:00" required></label>
+      <div class="formacts">
+        <button class="primary">Salva</button>
+        <button type="button" id="rep-send">Invia ora</button>
+      </div>
+    </form>
+    <p class="note" id="rep-state"></p>
+    <details class="help"><summary>Cosa contiene</summary><p>Arriva a tutte le chat autorizzate: km percorsi, risposte e batteria di ogni dispositivo nelle ultime 24 ore con l'ultima posizione, stato dei ripetitori e del Raspberry, e la mappa della giornata.
+      Se all'ora scelta il Raspberry era spento, arriva appena riparte (entro mezz'ora). Si può cambiare anche dal bot: <span class="mono">/riepilogo 21:00</span> oppure <span class="mono">/riepilogo no</span>.</p></details>
+  </section>
+  <section class="card">
+    <h2>Backup su Telegram</h2>
+    <form class="edit" id="form-tgb">
+      <label class="switch"><input type="checkbox" name="backup_telegram"> Backup settimanale alle chat admin</label>
+      <div class="formacts">
+        <button class="primary">Salva</button>
+        <button type="button" id="mnt-telegram">Invia backup ora</button>
+      </div>
+    </form>
+    <p class="note" id="tgb-last"></p>
+    <details class="help"><summary>Cosa contiene</summary><p>Uno zip con database e config.yaml: contiene password e posizioni, conservalo con cura. Arriva solo alle chat in <span class="mono">admin_chat_ids</span> (o, se vuoto, a quelle in <span class="mono">allowed_chat_ids</span>).</p></details>
+  </section>
+  <section class="card wide">
+    <h2>Comandi del bot</h2>
+    <div class="cmds">
+      <div><b>📍 Posizione ora</b><span>chiede subito la posizione</span></div>
+      <div><b>🗺 Mappa</b><span>traccia del giorno come immagine · <span class="mono">/mappa 7</span> per la settimana</span></div>
+      <div><b>👣 Segui 2 ore</b><span>posizione in diretta di Telegram · <span class="mono">/basta</span> la ferma</span></div>
+      <div><b>📊 Statistiche</b><span>km, risposte, quota e batteria · <span class="mono">/stats 7</span></span></div>
+      <div><b>📝 Riepilogo</b><span>la giornata in un messaggio</span></div>
+      <div><b>🖥 Sistema</b><span>Raspberry, radio e database</span></div>
+      <div><b>/terminale</b><span>comandi CLI ai ripetitori (chat admin)</span></div>
+      <div><b>/aiuto</b><span>tutti i comandi</span></div>
+    </div>
+  </section>
+  </div>
+
+  <div class="adm-sec" data-sec="sistema">
+<section class="card">
+    <h2>Sistema</h2>
+    <div id="sys-info" class="grid stats mono"><p class="muted">Caricamento…</p></div>
+    <p class="note warn" id="sys-warn" hidden></p>
+    <div class="row">
+      <button id="sys-reboot">Riavvia Raspberry</button>
+      <button id="sys-poweroff" class="danger">Spegni Raspberry</button>
+      <button id="sys-gw-reboot">Riavvia gateway (radio)</button>
+      <button id="sys-radio">Riconnetti radio</button>
+      <button id="sys-reload">Aggiorna</button>
+    </div>
+    <p class="note" id="sys-note"></p>
+  </section>
+<section class="card">
+    <h2>Aggiornamento programma</h2>
+    <div id="upd-info" class="grid stats mono"><p class="muted">Caricamento…</p></div>
+    <p class="note warn" id="upd-warn" hidden></p>
+    <p class="upd-log" id="upd-log" hidden></p>
+    <div class="row">
+      <button id="upd-check">Controlla aggiornamenti</button>
+      <button id="upd-apply" class="primary" disabled>Aggiorna ora</button>
+    </div>
+    <details class="help"><summary>Come funziona</summary><p>Scarica l'ultima versione da GitHub e riavvia il servizio (circa un minuto, di più se cambiano le librerie). Config, dati e utenti restano.
+      Se la nuova versione non parte, al terzo tentativo torna da sola a quella precedente.</p></details>
+  </section>
+<section class="card">
+    <h2>Manutenzione e backup</h2>
+    <div id="mnt-info" class="grid stats mono"><p class="muted">Caricamento…</p></div>
+    <form class="edit" id="form-mnt">
+      <label>Conserva i dati per (giorni, 0 = per sempre) <input type="number" name="retention_days" min="0" max="3650"></label>
+      <div class="formacts"><button class="primary">Salva</button></div>
+    </form>
+    <div class="row">
+      <a class="btn" id="mnt-download" href="/api/backup">Scarica backup</a>
+      <button id="mnt-purge">Pulisci ora</button>
+    </div>
+    <details class="help"><summary>Come funziona</summary><p>La pulizia gira da sola una volta al giorno: cancella posizioni, statistiche dei ripetitori, comandi e registro più vecchi del limite. Restano sempre l'ultima posizione di ogni dispositivo e l'ultimo stato di ogni ripetitore.
+      Il backup è uno zip con database e config.yaml: contiene password e posizioni, conservalo con cura. Come ripristinarlo è spiegato nel file LEGGIMI.txt dentro lo zip.</p></details>
+  </section>
+<section class="card">
+    <h2>Cache delle mappe</h2>
+    <div id="tc-info" class="grid stats mono"><p class="muted">Caricamento…</p></div>
+    <form class="edit" id="form-tc">
+      <label class="switch"><input type="checkbox" name="enabled"> Tessere delle mappe salvate sul Raspberry</label>
+      <label>Spazio massimo sulla SD (MB) <input type="number" name="max_mb" min="50" max="20000" step="50"></label>
+      <div class="formacts"><button class="primary">Salva</button></div>
+    </form>
+    <div class="row">
+      <button id="tc-clear">Svuota cache</button>
+      <button id="tc-reload">Aggiorna</button>
+    </div>
+    <details class="help"><summary>Come funziona</summary><p>Le tessere di OpenStreetMap, CyclOSM e OpenTopoMap passano dal Raspberry, che conserva quelle già viste: le zone che guardi di solito si aprono subito e restano visibili anche senza Internet.
+      Si salvano solo le zone aperte sulla mappa (le regole di OpenStreetMap non permettono di scaricare intere regioni). Quando il server dice che una tessera è scaduta, il Raspberry chiede se è cambiata.
+      Superato lo spazio massimo si cancellano quelle usate meno di recente. Le mappe satellitari arrivano sempre direttamente da Internet.</p></details>
+  </section>
+  </div>
+
+  <div class="adm-sec" data-sec="accessi">
+<section class="card wide">
     <h2>Utenti della pagina</h2>
     <div class="list" id="adm-users"></div>
     <div class="row"><button class="primary" id="add-user">+ Aggiungi utente</button></div>
@@ -268,12 +322,12 @@
     </form>
     <p class="note" id="users-note"></p>
   </section>
-
-  <section class="card">
+<section class="card wide">
     <h2>Registro attività</h2>
     <div class="audit mono" id="adm-audit"><p class="muted">Caricamento…</p></div>
-    <p class="note">Accessi, tentativi falliti e azioni di gestione dalla pagina e da Telegram (ultime 300).</p>
+    <details class="help"><summary>Come funziona</summary><p>Accessi, tentativi falliti e azioni di gestione dalla pagina e da Telegram (ultime 300).</p></details>
   </section>
+  </div>
 </div></div>
 
 <nav id="mnav">

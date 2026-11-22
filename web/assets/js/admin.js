@@ -1,4 +1,18 @@
-// MeshWatch — gestione: dispositivi, ripetitori, utenti, gateway, sistema, aggiornamenti, backup, rubrica
+// MeshWatch — gestione: dispositivi, ripetitori, utenti, gateway, sistema, aggiornamenti, backup, rubrica, Telegram
+// ---------- sezioni della gestione (una alla volta; l'ultima scelta resta nel browser)
+function setAdmSec(s) {
+  if (!document.querySelector(`.adm-sec[data-sec="${s}"]`)) s = 'dispositivi';
+  document.querySelectorAll('.adm-sec').forEach(x => x.classList.toggle('on', x.dataset.sec === s));
+  document.querySelectorAll('#adm-nav button').forEach(b => {
+    b.classList.toggle('on', b.dataset.sec === s);
+    if (b.dataset.sec === s && b.scrollIntoView) b.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  });
+  try { localStorage.setItem('admSec', s); } catch (e) { }
+  $('admin-scroll').scrollTop = 0;
+}
+document.querySelectorAll('#adm-nav button').forEach(b => b.onclick = () => setAdmSec(b.dataset.sec));
+try { setAdmSec(localStorage.getItem('admSec') || 'dispositivi'); } catch (e) { setAdmSec('dispositivi'); }
+
 // ---------- gestione
 const FREE = '__altro__';
 function contactSelect(sel, types, exclude, current) {
@@ -17,6 +31,7 @@ const pickedName = (f, sel, free) => f[sel].value === FREE ? f[free].value.trim(
 function openForm(form, onSubmit) {
   // chiude gli altri moduli a comparsa (quelli con "Annulla"), non gateway e manutenzione
   document.querySelectorAll('form.edit').forEach(x => { if (x.querySelector('.cancel')) x.hidden = true; });
+  const sec = form.closest('.adm-sec'); if (sec && !sec.classList.contains('on')) setAdmSec(sec.dataset.sec);
   form.hidden = false; form.querySelector('.cancel').onclick = () => form.hidden = true;
   form.onsubmit = async e => { e.preventDefault(); const r = await action(form.querySelector('.primary'), onSubmit); if (r) form.hidden = true; };
   form.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -281,7 +296,8 @@ async function updateBadge() {
   document.querySelectorAll('.badge').forEach(b => b.remove());
   if (!u.available || !u.latest) return;
   const title = 'Nuova versione disponibile: ' + u.latest.message;
-  [$('tab-admin'), document.querySelector('#mnav [data-t=admin]')].forEach(b => b.append(el('span', { className: 'badge', title })));
+  [$('tab-admin'), document.querySelector('#mnav [data-t=admin]'), document.querySelector('#adm-nav [data-sec=sistema]')]
+    .forEach(b => b.append(el('span', { className: 'badge', title })));
 }
 
 // ---------- manutenzione e backup
@@ -293,18 +309,42 @@ async function loadMaintenance() {
     cell('Dati dal', m.oldest ? new Date(m.oldest * 1000).toLocaleDateString('it-IT') : '—'),
     cell('Ultima pulizia', m.last_purge ? fmtTs(m.last_purge) + (m.last_purge_deleted ? ` (${m.last_purge_deleted} righe)` : '') : 'mai'),
     cell('Ultimo backup Telegram', m.last_backup ? fmtTs(m.last_backup) : 'mai'));
-  const f = $('form-mnt');
-  f.retention_days.value = m.retention_days;
-  f.backup_telegram.checked = m.backup_telegram; f.backup_telegram.disabled = !m.telegram;
-  f.backup_telegram.parentElement.title = m.telegram ? '' : 'Telegram non configurato';
-  $('mnt-telegram').disabled = !m.telegram;
+  $('form-mnt').retention_days.value = m.retention_days;
   $('mnt-purge').disabled = !m.retention_days;
+  const b = $('form-tgb');
+  b.backup_telegram.checked = m.backup_telegram; b.backup_telegram.disabled = !m.telegram;
+  b.querySelector('.primary').disabled = !m.telegram;
+  $('mnt-telegram').disabled = !m.telegram;
+  $('tgb-last').textContent = !m.telegram ? 'Telegram non configurato.'
+    : 'Ultimo backup inviato: ' + (m.last_backup ? fmtTs(m.last_backup) : 'mai') + '.';
 }
 $('form-mnt').onsubmit = e => {
   e.preventDefault(); const f = e.target;
-  action(f.querySelector('.primary'), () => put('/api/maintenance', { retention_days: +f.retention_days.value, backup_telegram: f.backup_telegram.checked }), 'Impostazioni salvate')
+  action(f.querySelector('.primary'), () => put('/api/maintenance', { retention_days: +f.retention_days.value }), 'Impostazioni salvate')
     .then(loadMaintenance);
 };
+$('form-tgb').onsubmit = e => {
+  e.preventDefault(); const f = e.target;
+  action(f.querySelector('.primary'), () => put('/api/maintenance', { backup_telegram: f.backup_telegram.checked }),
+    f.backup_telegram.checked ? 'Backup settimanale attivo' : 'Backup settimanale spento').then(loadMaintenance);
+};
+
+// ---------- riepilogo giornaliero su Telegram
+async function loadReport() {
+  let r; try { r = await api('/api/telegram/report'); } catch (e) { return; }
+  const f = $('form-report');
+  f.enabled.checked = r.enabled; f.time.value = r.time;
+  [f.enabled, f.time, f.querySelector('.primary'), $('rep-send')].forEach(x => x.disabled = !r.telegram);
+  $('rep-off').hidden = r.telegram;
+  $('rep-state').textContent = !r.telegram ? '' : r.enabled
+    ? `Attivo: arriva ogni giorno alle ${r.time} a tutte le chat autorizzate.` : 'Spento: il riepilogo arriva solo se lo chiedi (pulsante 📝 Riepilogo del bot).';
+}
+$('form-report').onsubmit = e => {
+  e.preventDefault(); const f = e.target;
+  action(f.querySelector('.primary'), () => put('/api/telegram/report', { enabled: f.enabled.checked, time: f.time.value }),
+    r => r.enabled ? `Riepilogo ogni giorno alle ${r.time}` : 'Riepilogo automatico spento').then(loadReport);
+};
+$('rep-send').onclick = e => action(e.target, () => post('/api/telegram/report/send'), 'Riepilogo inviato su Telegram');
 $('mnt-purge').onclick = e => {
   if (!confirm(`Cancellare adesso i dati più vecchi di ${$('form-mnt').retention_days.value} giorni?`)) return;
   action(e.target, () => post('/api/maintenance/purge'), r => r.deleted ? `Eliminate ${r.deleted} righe` : 'Niente da cancellare').then(loadMaintenance);

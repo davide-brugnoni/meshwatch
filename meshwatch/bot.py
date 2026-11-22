@@ -12,7 +12,7 @@ from telegram.ext import (Application, CallbackQueryHandler, CommandHandler, Con
                           filters)
 
 from . import __version__, charts, maintenance, system
-from .core import is_dangerous, maps_link
+from .core import is_dangerous, maps_link, parse_hhmm
 
 log = logging.getLogger("meshwatch.bot")
 
@@ -67,15 +67,6 @@ def thin(seq, n):
     return [seq[round(i * step)] for i in range(n)]
 
 
-def parse_hhmm(text):
-    try:
-        h, m = text.strip().replace(".", ":").split(":")
-        h, m = int(h), int(m)
-    except ValueError:
-        return None
-    return f"{h:02d}:{m:02d}" if 0 <= h < 24 and 0 <= m < 60 else None
-
-
 def period_text(days):
     return "ultime 24 ore" if days == 1 else f"ultimi {days} giorni"
 
@@ -116,7 +107,6 @@ class Bot:
     def __init__(self, cfg, core, tiles=None):
         self.core = core
         self.tiles = tiles   # cache delle mappe condivisa con la pagina (vedi __main__)
-        self.report_default = parse_hhmm(str(cfg.get("daily_report") or "")) or ""
         self.report_task = None
         self.allowed = set(int(x) for x in cfg.get("allowed_chat_ids") or [])
         # chi può usare il terminale; se vuoto, tutte le chat autorizzate
@@ -163,6 +153,7 @@ class Bot:
         core.notifiers.append(self.broadcast)
         core.file_senders.append(self.send_file)
         core.position_listeners.append(self.on_position)
+        core.reporters.append(self.report_all)
 
     @staticmethod
     def _request(read_timeout=10):
@@ -542,9 +533,7 @@ class Bot:
 
     # ---------- riepilogo giornaliero
     def report_time(self):
-        """Ora del riepilogo automatico ("" = disattivato). Impostata da Telegram, altrimenti dal config."""
-        v = self.core.db.get("tg_report_time")
-        return self.report_default if v is None else v
+        return self.core.report_time()
 
     def report_text(self):
         now = int(time.time())
@@ -607,7 +596,7 @@ class Bot:
             await update.message.reply_text("Solo le chat admin possono cambiare il riepilogo automatico.")
             return
         if arg in ("no", "off", "basta", "stop"):
-            self.core.db.set("tg_report_time", "")
+            self.core.set_report_time("")
             self.core.audit(f"telegram:{update.effective_chat.id}", "riepilogo automatico", "disattivato")
             await update.message.reply_text("Riepilogo automatico disattivato.")
             return
@@ -615,7 +604,7 @@ class Bot:
         if not when:
             await update.message.reply_text("Uso: /riepilogo (adesso) · /riepilogo 21:00 (ogni giorno) · /riepilogo no")
             return
-        self.core.db.set("tg_report_time", when)
+        self.core.set_report_time(when)
         self.core.audit(f"telegram:{update.effective_chat.id}", "riepilogo automatico", when)
         await update.message.reply_text(f"Riepilogo automatico ogni giorno alle {when}, a tutte le chat autorizzate.")
 
@@ -636,12 +625,16 @@ class Bot:
         if not day or self.core.db.get("tg_report_last") == day:
             return False
         self.core.db.set("tg_report_last", day)
+        await self.report_all()
+        return True
+
+    async def report_all(self):
+        """Riepilogo a tutte le chat autorizzate (ogni giorno, o dalla pagina con "Invia ora")."""
         for cid in self.allowed:
             try:
                 await self.send_report(_Chat(self.app.bot, cid))
             except Exception as e:
                 log.warning("Riepilogo non inviato a %s: %s", cid, e)
-        return True
 
     async def report_loop(self):
         while True:
