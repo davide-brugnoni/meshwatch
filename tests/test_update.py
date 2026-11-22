@@ -111,12 +111,34 @@ def main():
           and (app / "tools/guard.sh").exists(), "versione precedente ripristinata")
     st = up.status()
     check(st["rolled_back"] and not st["pending"], "ripristino segnalato alla pagina")
+    said, seen = [], {}
+
+    async def notify(text):
+        said.append(text)
+    real_sleep = asyncio.sleep
+
+    async def no_wait(s):
+        await real_sleep(0)
+    asyncio.sleep = no_wait
+    try:
+        mark = (lambda: seen.get("k"), lambda v: seen.__setitem__("k", v))
+        asyncio.run(up.announce(notify, mark))
+        asyncio.run(up.announce(notify, mark))
+    finally:
+        asyncio.sleep = real_sleep
+    check(len(said) == 1 and "rimessa da sola la precedente" in said[0], "ripristino avvisato su Telegram una volta sola")
 
     # conferma: se il programma resta su, l'aggiornamento non è più in prova
     (app / ".update/pending").write_text("{}")
     updater.CONFIRM_AFTER = 0
-    asyncio.run(up.confirm_later())
+    (app / ".update/rolled_back").unlink()
+    (app / "VERSION.json").write_text(json.dumps({"sha": "x", "message": "Nuova funzione"}))
+    said.clear()
+    asyncio.run(up.announce(notify, mark))
     check(not (app / ".update/pending").exists(), "aggiornamento confermato dopo l'avvio")
+    check(len(said) == 1 and "aggiornato: Nuova funzione" in said[0], "aggiornamento riuscito avvisato su Telegram")
+    asyncio.run(up.announce(notify, mark))
+    check(len(said) == 1, "nessun avviso se non c'era un aggiornamento in prova")
 
     # senza systemd non si aggiorna (non ripartirebbe)
     del os.environ["INVOCATION_ID"]

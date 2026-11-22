@@ -304,6 +304,7 @@ Il bot funziona in *polling*: non serve aprire porte né esporre il Raspberry. S
 | `/riepilogo` | riepilogo della giornata con la mappa; `/riepilogo 21:00` ogni giorno a quell'ora, `/riepilogo no` lo spegne |
 | `/intervallo 30` · `/pausa` · `/riprendi` | gestione del tracciamento |
 | `/advert` | il gateway si annuncia sulla mesh |
+| `/aggiornamento` · `/versione` | versione installata e, se ne è uscita una nuova, pulsante **Aggiorna ora** con conferma (solo chat admin) |
 | `/terminale` · `/fine` | comandi CLI a un ripetitore (solo chat admin) · chiude il terminale |
 
 La tastiera del bot ha i pulsanti 📍 Posizione ora, 🕓 Ultima posizione, 🗺 Mappa, 👣 Segui 2 ore, 📊 Statistiche, 📝 Riepilogo, 📡 Nodi e 🖥 Sistema. Dopo un aggiornamento che la cambia il bot la rimanda da solo una volta; altrimenti basta /start.
@@ -477,6 +478,8 @@ Se il backup è protetto da password, prima estrailo con `7z x backup.zip`.
 
 Dalla pagina: **Gestione → Sistema → Aggiornamento programma → Controlla aggiornamenti → Aggiorna ora**. Il Raspberry deve raggiungere `api.github.com` e `codeload.github.com`.
 
+Da Telegram, anche fuori casa: **`/aggiornamento`** da una chat admin (`telegram.admin_chat_ids`). Il bot controlla GitHub, mostra la versione installata e quella nuova e chiede conferma con **⬆️ Aggiorna ora** / **✖ Annulla**. Se qualcosa va storto prima del riavvio (download, controllo dei file, librerie) lo scrive in chat e la versione attuale resta com'era. Dopo il riavvio, quando la nuova versione è rimasta accesa 90 secondi, arriva **✅ MeshWatch aggiornato**; se invece non parte e `guard.sh` rimette la precedente, arriva un avviso. L'avvio finisce nel registro attività come gli aggiornamenti dalla pagina.
+
 Cosa succede:
 
 1. scarica l'ultimo commit del ramo `main` (con `install.sh` da un clone git: `git fetch` + `merge --ff-only`);
@@ -487,7 +490,7 @@ Cosa succede:
 
 `config.yaml`, database, utenti e venv non vengono toccati. Repository e ramo si possono cambiare con la sezione `update:` del config.
 
-Ogni 12 ore il programma controlla se c'è una nuova versione: se sì manda un avviso su Telegram (una volta per versione) e mostra un pallino su **Gestione**. Si disattiva con `update.notify: false`.
+Ogni 12 ore il programma controlla se c'è una nuova versione: se sì manda un avviso su Telegram (una volta per versione, con l'invito a usare `/aggiornamento`) e mostra un pallino su **Gestione**. Si disattiva con `update.notify: false`.
 
 Prima che un aggiornamento arrivi al Raspberry, GitHub Actions esegue tutti i [test](#test): l'esito è il bollino in cima a questo README.
 

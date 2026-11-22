@@ -50,16 +50,16 @@ async def run(cfg):
         sys.exit("web.mode è 'public' ma non ci sono utenti: crea prima un utente admin dalla pagina "
                  "in modalità lan (al primo accesso a Gestione chiede la password admin), poi passa a public.")
 
+    updater = Updater(cfg.get("update") or {})
     tiles = TileCache(db)   # una sola cache delle mappe per la pagina e per le immagini di Telegram
     tg = cfg.get("telegram") or {}
     bot = None
     if tg.get("token") and "BotFather" not in tg["token"]:
         from .bot import Bot
-        bot = Bot(tg, core, tiles)   # si collega a Telegram in sottofondo (vedi start_forever)
+        bot = Bot(tg, core, tiles, updater)   # si collega a Telegram in sottofondo (vedi start_forever)
     else:
         log.info("Telegram non configurato: bot disattivato")
 
-    updater = Updater(cfg.get("update") or {})
     server = uvicorn.Server(uvicorn.Config(
         create_app(core, auth, web_cfg, updater, tiles),
         host=host, port=port,
@@ -71,7 +71,8 @@ async def run(cfg):
         await asyncio.gather(core.tracker_loop(), core.repeater_loop())
 
     serve = asyncio.create_task(server.serve())
-    others = [asyncio.create_task(radio()), asyncio.create_task(updater.confirm_later()),
+    others = [asyncio.create_task(radio()), asyncio.create_task(updater.announce(
+                  core.notify, (lambda: db.get("update_rollback_notified"), lambda v: db.set("update_rollback_notified", v)))),
               asyncio.create_task(core.maintenance_loop()), asyncio.create_task(core.radio_watchdog())]
     if bot:   # senza Internet all'avvio la pagina parte lo stesso; il bot riprova finché la rete torna
         others.append(asyncio.create_task(bot.start_forever()))

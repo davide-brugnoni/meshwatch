@@ -800,6 +800,78 @@ def test_telemetry_retries():
           "percorso provato salvato senza cambiare quello dell'ultima risposta")
 
 
+def test_bot_update():
+    """/aggiornamento da Telegram: solo admin, conferma, errori e avviso dell'esito dopo il riavvio."""
+    from meshwatch.bot import Bot
+    from meshwatch.updater import UpdateError
+    db, mesh, core, c, v, anon, tid = setup()
+
+    class FakeUpdater:
+        def __init__(self):
+            self.job = {"state": "idle", "message": "", "ts": None}
+            self.started = 0
+            self.avail, self.probs, self.fail = True, [], None
+
+        async def check(self):
+            return {"installed": {"sha": "a" * 40, "date": "2026-11-01T10:00:00Z", "message": "vecchia"},
+                    "latest": {"sha": "b" * 40, "date": "2026-11-20T10:00:00Z", "message": "Nuova funzione"},
+                    "available": self.avail, "problems": self.probs, "job": self.job, "rolled_back": None}
+
+        async def start(self):
+            if self.fail:
+                raise UpdateError(self.fail)
+            self.started += 1
+
+    up = FakeUpdater()
+    bot = Bot({"token": "123456:TEST", "allowed_chat_ids": [1, 2], "admin_chat_ids": [1]}, core, None, up)
+    chat, viewer = FakeChat(1), FakeChat(2)
+    run = asyncio.run
+    kbs = []
+    upd = FakeUpdate(chat)
+
+    async def reply(text, reply_markup=None, **kw):
+        chat.sent.append(text)
+        kbs.append(reply_markup)
+    upd.message.reply_text = reply
+
+    run(bot.update_cmd(FakeUpdate(viewer), Ctx()))
+    check("Solo le chat admin" in viewer.sent[-1], "/aggiornamento: solo chat admin")
+    run(bot.update_cmd(upd, Ctx()))
+    check("Nuova: bbbbbbb" in chat.sent[-1] and "Nuova funzione" in chat.sent[-1]
+          and [b.callback_data for b in kbs[-1].inline_keyboard[0]] == ["upd:go", "upd:no"],
+          "/aggiornamento: nuova versione con i pulsanti di conferma")
+
+    class Q:
+        def __init__(self):
+            self.text = None
+
+        async def edit_message_text(self, text, **kw):
+            self.text = text
+    q = Q()
+    run(bot.update_button(chat, q, "no"))
+    check(up.started == 0 and "annullato" in q.text, "Annulla: niente aggiornamento")
+
+    async def go():
+        await bot.update_button(chat, q, "go")
+        up.job = {"state": "error", "message": "pacchetto incompleto", "ts": 1}
+        await asyncio.sleep(0.05)
+        await bot.update_progress(chat, None, every=0.01, limit=0.2)
+    run(go())
+    check(up.started == 1 and "avviato" in q.text and "pacchetto incompleto" in chat.sent[-1],
+          "Aggiorna ora: avvio ed errore riferito in chat")
+    check("aggiornamento avviato" in [x["action"] for x in c.get("/api/audit").json()], "aggiornamento da Telegram nel registro")
+    up.fail = "aggiornamento già in corso"
+    run(bot.update_button(chat, q, "go"))
+    check("già in corso" in q.text, "doppio clic: secondo aggiornamento rifiutato")
+
+    up.avail = False
+    run(bot.update_cmd(upd, Ctx()))
+    check("già l'ultima versione" in chat.sent[-1] and kbs[-1] is None, "/aggiornamento: già aggiornato")
+    up.avail, up.probs = True, ["la cartella del programma non è scrivibile dal servizio"]
+    run(bot.update_cmd(upd, Ctx()))
+    check("non si può aggiornare" in chat.sent[-1] and kbs[-1] is None, "/aggiornamento: motivo se non si può")
+
+
 def main():
     test_sensors()
     test_battery_alerts()
@@ -809,6 +881,7 @@ def main():
     test_events()
     test_bot()
     test_bot_images()
+    test_bot_update()
     test_telemetry_retries()
     print("Tutti i test superati.")
 

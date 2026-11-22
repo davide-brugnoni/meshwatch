@@ -52,6 +52,7 @@ COMMANDS = [
     ("pausa", "sospende il tracciamento"),
     ("riprendi", "riattiva il tracciamento"),
     ("advert", "il gateway si annuncia sulla mesh"),
+    ("aggiornamento", "nuova versione di MeshWatch: controlla e installa"),
     ("terminale", "comandi CLI ai ripetitori"),
     ("aiuto", "elenco dei comandi"),
 ]
@@ -104,8 +105,9 @@ def fmt_uptime(s):
 
 
 class Bot:
-    def __init__(self, cfg, core, tiles=None):
+    def __init__(self, cfg, core, tiles=None, updater=None):
         self.core = core
+        self.updater = updater   # aggiornamento del programma (lo stesso della pagina)
         self.tiles = tiles   # cache delle mappe condivisa con la pagina (vedi __main__)
         self.report_task = self.keyboard_task = None
         self.allowed = set(int(x) for x in cfg.get("allowed_chat_ids") or [])
@@ -136,6 +138,7 @@ class Bot:
         a.add_handler(CommandHandler("nodi", self.nodes))
         a.add_handler(CommandHandler("aggiorna", self.refresh_nodes))
         a.add_handler(CommandHandler("advert", self.advert))
+        a.add_handler(CommandHandler(["aggiornamento", "versione"], self.update_cmd))
         a.add_handler(CommandHandler("terminale", self.term_start))
         a.add_handler(CommandHandler("fine", self.term_end))
         a.add_handler(MessageHandler(filters.Text([BTN_POS]), lambda u, c: self.pick(u, "pos")))
@@ -795,6 +798,97 @@ class Bot:
             self.core.audit(f"telegram:{update.effective_chat.id}", "advert gateway")
             await update.message.reply_text("Advert inviato.")
 
+    # ---------- aggiornamento del programma
+    @staticmethod
+    def _version_line(v):
+        if not v or not v.get("sha"):
+            return "versione installata dal kit SD (commit sconosciuto)"
+        when = ""
+        try:
+            when = datetime.fromisoformat(v["date"].replace("Z", "+00:00")).astimezone().strftime("%d/%m/%Y %H:%M")
+        except (KeyError, TypeError, ValueError, AttributeError):
+            pass
+        return f"{v['sha'][:7]}" + (f" del {when}" if when else "") + (f" – {v['message']}" if v.get("message") else "")
+
+    async def update_cmd(self, update: Update, ctx):
+        """/aggiornamento: controlla GitHub e, se c'è una versione nuova, chiede conferma per installarla."""
+        if not self.ok(update):
+            return
+        if not self.is_admin(update):
+            await update.message.reply_text("Solo le chat admin possono aggiornare MeshWatch.")
+            return
+        if self.updater is None:
+            await update.message.reply_text("Aggiornamento non disponibile.")
+            return
+        from .updater import UpdateError
+        await update.message.reply_text("Controllo se c'è una nuova versione…")
+        try:
+            st = await self.updater.check()
+        except UpdateError as e:
+            await update.message.reply_text(f"❌ {e}")
+            return
+        lines = [f"⬆️ MeshWatch {__version__}", "Installata: " + self._version_line(st["installed"])]
+        if st.get("rolled_back"):
+            lines.append(f"⚠️ L'ultimo aggiornamento non partiva: rimessa la versione precedente ({st['rolled_back']}).")
+        if st["job"]["state"] in ("download", "check", "deps", "install", "restarting"):
+            lines.append(f"\nAggiornamento già in corso: {st['job']['message']}")
+            await update.message.reply_text("\n".join(lines))
+            return
+        if not st["available"]:
+            lines.append("\n✅ Hai già l'ultima versione.")
+            await update.message.reply_text("\n".join(lines))
+            return
+        lines.append("Nuova: " + self._version_line(st["latest"]))
+        if st["problems"]:
+            lines.append("\nDa qui non si può aggiornare: " + "; ".join(st["problems"])
+                         + ". Vedi il README, sezione Aggiornamenti.")
+            await update.message.reply_text("\n".join(lines))
+            return
+        lines.append("\nDurante l'installazione (circa un minuto, di più se cambiano le librerie) pagina, radio "
+                     "e bot si fermano. Se la nuova versione non parte torna da sola alla precedente.")
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬆️ Aggiorna ora", callback_data="upd:go"),
+                                    InlineKeyboardButton("✖ Annulla", callback_data="upd:no")]])
+        await update.message.reply_text("\n".join(lines), reply_markup=kb)
+
+    async def update_button(self, chat, q, what):
+        if what != "go":
+            await q.edit_message_text("Aggiornamento annullato.")
+            return
+        if self.updater is None:
+            return
+        from .updater import UpdateError
+        before = self.updater.job
+        try:
+            await self.updater.start()
+        except UpdateError as e:
+            await q.edit_message_text(f"❌ Aggiornamento non avviato: {e}")
+            return
+        self.core.audit(f"telegram:{chat.id}", "aggiornamento avviato")
+        await q.edit_message_text("⬆️ Aggiornamento avviato: scarico e controllo la nuova versione, poi MeshWatch "
+                                  "si riavvia. Circa 2 minuti dopo il riavvio arriva qui la conferma.")
+        task = asyncio.create_task(self.update_progress(chat, before))
+        self.core.tasks.add(task)
+        task.add_done_callback(self.core.tasks.discard)
+
+    async def update_progress(self, chat, before, every=2, limit=3600):
+        """Segue l'aggiornamento avviato da Telegram: avvisa se aggiorna le librerie (lento) o se
+        non riesce. Il riavvio non si annuncia qui (il bot si chiude subito): la conferma arriva
+        dopo, da Updater.announce."""
+        told_deps = False
+        for _ in range(int(limit / every)):
+            await asyncio.sleep(every)
+            job = self.updater.job
+            if job is before:
+                continue
+            if job["state"] == "deps" and not told_deps:
+                told_deps = True
+                await chat.send_message("📦 Aggiorno le librerie: può richiedere alcuni minuti.")
+            elif job["state"] == "error":
+                await chat.send_message(f"❌ Aggiornamento non riuscito: {job['message']}\nLa versione attuale resta com'era.")
+                return
+            elif job["state"] == "restarting":
+                return
+
     # ---------- pulsanti
     async def on_button(self, update: Update, ctx):
         q = update.callback_query
@@ -810,6 +904,9 @@ class Bot:
             await self.do(chat, action, tid, arg)
             return
         if chat.id not in self.admins:
+            return
+        if action == "upd":
+            await self.update_button(chat, q, rest)
             return
         if action == "node":
             self.sessions[chat.id] = (rest, time.time() + 600)

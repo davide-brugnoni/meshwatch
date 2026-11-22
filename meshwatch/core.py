@@ -690,7 +690,8 @@ class Core:
                 latest = st.get("latest") or {}
                 if st.get("available") and latest.get("sha") and latest["sha"] != self.db.get("update_notified"):
                     self.db.set("update_notified", latest["sha"])
-                    how = ("Per installarla: pagina → Gestione → Aggiornamento programma → Aggiorna ora."
+                    how = ("Per installarla: /aggiornamento da una chat admin, oppure pagina → Gestione → "
+                           "Aggiornamento programma → Aggiorna ora."
                            if not st.get("problems") else "Dalla pagina non si può aggiornare: vedi Gestione → Aggiornamento programma.")
                     await self.notify(f"🆕 Nuova versione di MeshWatch disponibile:\n{latest.get('message', '')}\n{how}")
             except Exception as e:
