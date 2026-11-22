@@ -212,13 +212,15 @@ class TileCache:
         async with self.sem:
             return await self.client.get(url, headers=headers)
 
-    async def get(self, layer, z, x, y):
-        """Ritorna (dati, content-type, secondi di validità per il browser)."""
+    async def get(self, layer, z, x, y, force=False):
+        """Ritorna (dati, content-type, secondi di validità per il browser).
+        force: anche con la cache disattivata (mappe disegnate per Telegram, che non
+        possono prendere le tessere da Internet come fa il browser)."""
         if layer not in SOURCES:
             raise TileError(404, "mappa sconosciuta")
         if not (0 <= z <= SOURCES[layer][2] and 0 <= x < 2**z and 0 <= y < 2**z):
             raise TileError(404, "tessera fuori dalla mappa")
-        if not self.enabled():
+        if not self.enabled() and not force:
             raise TileError(404, "cache delle mappe disattivata")
         key = (layer, z, x, y)
         now = time.time()

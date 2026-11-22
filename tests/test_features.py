@@ -405,7 +405,13 @@ class FakeMsg:
 
 class FakeChat:
     def __init__(self, cid=1):
-        self.id, self.sent, self.locations = cid, [], []
+        self.id, self.sent, self.locations, self.photos = cid, [], [], []
+
+    async def send_photo(self, photo, caption="", **kw):
+        self.photos.append((photo, caption))
+
+    async def send_action(self, action):
+        pass
 
     async def send_message(self, text, **kw):
         self.sent.append(text)
@@ -516,6 +522,172 @@ def test_bot():
     check("posizione in diretta" in acts and "intervallo" in acts, "comandi del bot nel registro attività")
 
 
+class FakeTiles:
+    """Cache delle mappe finta: una tessera grigia per ogni richiesta."""
+
+    def __init__(self):
+        import io
+        from PIL import Image
+        buf = io.BytesIO()
+        Image.new("RGB", (256, 256), "#dddddd").save(buf, "PNG")
+        self.png, self.asked, self.fail = buf.getvalue(), [], False
+
+    async def get(self, layer, z, x, y, force=False):
+        from meshwatch.tiles import TileError
+        self.asked.append((layer, z, x, y, force))
+        if self.fail:
+            raise TileError(504, "niente Internet")
+        return self.png, "image/png", 3600
+
+    def info(self):
+        return {"enabled": False, "tiles": 12, "size": 3 * 2**20}
+
+
+def test_bot_images():
+    """Mappe, grafici, copertura, sistema, registro, backup e riepilogo giornaliero su Telegram."""
+    from datetime import datetime
+    from meshwatch import bot as botmod, charts
+    from meshwatch.bot import Bot, thin
+    db, mesh, core, c, v, anon, tid = setup()
+    tid2 = db.add_tracker(contact="Bob", label="Ciclista")
+    tiles = FakeTiles()
+    bot = Bot({"token": "123456:TEST", "allowed_chat_ids": [1], "admin_chat_ids": [1]}, core, tiles)
+    chat = FakeChat(1)
+    run = asyncio.run
+    now = int(time.time())
+    for i in range(12):
+        db._exec("INSERT INTO positions (ts, lat, lon, alt, batt_v, tracker_id) VALUES (?,?,?,?,?,?)",
+                 (now - 3600 * 10 + i * 1800, 45.0 + i * 0.002, 9.0 + i * 0.001, 300 + i * 10, 4.1 - i * 0.01, tid))
+        db.add_sensor_readings(tid, [{"channel": 2, "type": "temperature", "value": 18 + i * 0.5},
+                                     {"channel": 3, "type": "accelerometer.acc_x", "value": 0.1}], ts=now - 3600 * 10 + i * 1800)
+        db.add_tracker_poll(tid, i % 3 != 0, hops=1, path=["b2"], lat=45.0 + i * 0.002, lon=9.0, est=0)
+    check(thin(list(range(100)), 10)[0] == 0 and thin(list(range(100)), 10)[-1] == 99
+          and len(thin(list(range(100)), 10)) == 10 and thin([1, 2], 10) == [1, 2], "punti diradati con primo e ultimo")
+
+    # /mappa con il nome: un'immagine JPEG con la traccia, tessere chieste alla cache anche se disattivata
+    run(bot._with_days("map", 1)(FakeUpdate(chat), Ctx("escursionista")))
+    img, cap = chat.photos[-1]
+    check(img[:3] == b"\xff\xd8\xff" and "Escursionista – ultime 24 ore" in cap and "posizioni" in cap
+          and "google.com/maps" in cap, "/mappa nome: immagine con traccia e didascalia")
+    check(tiles.asked and all(a[0] == "osm" and a[4] for a in tiles.asked) and 2 <= tiles.asked[0][1] <= 16,
+          "tessere dalla cache del Raspberry (OpenStreetMap, anche con la cache spenta per la pagina)")
+    # tutti i dispositivi in una sola mappa; Ciclista non ha posizioni ma non blocca
+    n = len(chat.photos)
+    run(bot.do(chat, "map", "all", "7"))
+    check(len(chat.photos) == n + 1 and "Tutti i dispositivi – ultimi 7 giorni" in chat.photos[-1][1], "/mappa Tutti: una mappa sola")
+    run(bot.do(chat, "map", str(tid2), "1"))
+    check("Nessuna posizione registrata per Ciclista" in chat.sent[-1], "/mappa senza posizioni")
+    # senza Internet: la mappa arriva lo stesso (sfondo grigio) con la nota
+    tiles.fail = True
+    run(bot.do(chat, "map", str(tid), "1"))
+    check(chat.photos[-1][0][:3] == b"\xff\xd8\xff", "mappa anche senza tessere")
+    tiles.fail = False
+
+    # /grafici: batteria (dalle posizioni), temperatura e quota; accelerometro escluso
+    panels = bot._tracker_panels(db.tracker(tid), now - 86400)
+    labels = [p["label"] for p in panels]
+    check(labels[0] == "Batteria" and "Temperatura" in labels and labels[-1] == "Quota"
+          and not any("Accelerometro" in x for x in labels), f"pannelli del grafico in ordine: {labels}")
+    run(bot._with_days("chart", 1)(FakeUpdate(chat), Ctx("escursionista")))
+    img, cap = chat.photos[-1]
+    check(img[:8] == b"\x89PNG\r\n\x1a\n" and "📈 Escursionista" in cap and "Percorsi" in cap, "/grafici nome: PNG")
+    run(bot.do(chat, "chart", str(tid2), "1"))
+    check("Nessun valore" in chat.sent[-1], "/grafici senza dati")
+    png = charts.line_chart("Vuoto", [], now - 3600, now)
+    check(png[:4] == b"\x89PNG", "grafico senza dati: immagine con la scritta")
+    png = charts.line_chart("Uno", [{"label": "T", "unit": "°C", "dec": 1, "points": [(now, 5.0)]}], now - 86400 * 30, now)
+    check(png[:4] == b"\x89PNG", "grafico con un solo valore e 30 giorni")
+
+    # /ripetitori: pulsanti con più ripetitori, grafico con batteria, rumore, SNR, RSSI
+    db.set_repeater("Rip-Monte", "x")
+    db.set_repeater("Rip-Valle", "x")
+    for i in range(5):
+        db._exec("INSERT INTO repeater_status VALUES (?,?,?,?,?,?,?,?,?,?)",
+                 (now - 3600 * (5 - i), "Rip-Monte", 1, 4100 - i * 10, 1000, -110 + i, -80, 7.5, 1, 1))
+    upd = FakeUpdate(chat)
+    asked = []
+
+    async def reply(text, reply_markup=None, **kw):
+        asked.append(reply_markup)
+    upd.message.reply_text = reply
+    run(bot.repeaters_cmd(upd, Ctx("3")))
+    rows = asked[-1].inline_keyboard
+    check(len(rows) == 3 and rows[0][0].callback_data == "rep:Rip-Monte:3" and rows[-1][0].callback_data == "rep:*:3",
+          "/ripetitori 3: pulsanti con Tutti")
+    run(bot.repeaters_cmd(FakeUpdate(chat), Ctx("monte")))
+    img, cap = chat.photos[-1]
+    check(img[:4] == b"\x89PNG" and "Rip-Monte – ultimi 7 giorni" in cap and "risponde" in cap, "/ripetitori nome")
+    run(bot.send_repeater_chart(chat, "Rip-Valle", 7))
+    check("nessun dato" in chat.sent[-1], "ripetitore senza dati")
+
+    # /copertura
+    run(bot.do(chat, "cov", str(tid), "30"))
+    img, cap = chat.photos[-1]
+    check(img[:3] == b"\xff\xd8\xff" and "Copertura di Escursionista" in cap and "12 richieste, 8 con risposta (67%)" in cap,
+          "/copertura: mappa con le zone")
+    run(bot.do(chat, "cov", str(tid2), "30"))
+    check("Nessuna richiesta" in chat.sent[-1], "/copertura senza dati")
+
+    # /sistema, /registro, /backup
+    txt = bot.system_text()
+    check("Disco libero" in txt and "Radio gateway Casa" in txt and "posizioni" in txt and "Cache mappe: 12 tessere" in txt,
+          "/sistema")
+    core.audit("admin1", "login", "", "1.2.3.4")
+    u = FakeUpdate(chat)
+    run(bot.audit_cmd(u, Ctx()))
+    check("Registro attività" in chat.sent[-1] and "admin1 [1.2.3.4] – login" in chat.sent[-1], "/registro")
+    other = FakeChat(2)
+    bot.allowed.add(2)
+    run(bot.audit_cmd(FakeUpdate(other), Ctx()))
+    check(not other.sent, "/registro solo per le chat admin")
+    sent_files = []
+
+    async def fake_send(data, name, caption=""):
+        sent_files.append(name)
+    core.file_senders[:] = [fake_send]
+    run(bot.backup_cmd(FakeUpdate(chat), Ctx()))
+    check(sent_files and sent_files[0].endswith(".zip"), "/backup")
+
+    # /riepilogo: adesso, ogni giorno, disattivato; viewer non può cambiarlo
+    n = len(chat.photos)
+    run(bot.report_cmd(FakeUpdate(chat), Ctx()))
+    check(any("Riepilogo MeshWatch" in x and "Escursionista" in x and "Rip-Monte" in x for x in chat.sent[-3:])
+          and len(chat.photos) == n + 1 and "disattivato" in chat.sent[-1], "/riepilogo adesso, con la mappa")
+    run(bot.report_cmd(FakeUpdate(other), Ctx("21:00")))
+    check("Solo le chat admin" in other.sent[-1] and not bot.report_time(), "/riepilogo HH:MM solo admin")
+    run(bot.report_cmd(FakeUpdate(chat), Ctx("21.30")))
+    check(bot.report_time() == "21:30" and "21:30" in chat.sent[-1], "/riepilogo 21.30")
+    slot = bot.report_slot
+    check(slot("21:30", datetime(2026, 5, 4, 21, 40)) == "2026-05-04" and slot("21:30", datetime(2026, 5, 4, 21, 29)) is None
+          and slot("21:30", datetime(2026, 5, 4, 22, 5)) is None
+          and slot("23:50", datetime(2026, 5, 5, 0, 10)) == "2026-05-04", "orario del riepilogo (anche a cavallo della mezzanotte)")
+    sent = []
+
+    async def fake_report(ch):
+        sent.append(ch.id)
+    bot.send_report = fake_report
+    run(bot.report_tick(datetime(2026, 5, 4, 21, 31)))
+    run(bot.report_tick(datetime(2026, 5, 4, 21, 35)))
+    check(sorted(sent) == [1, 2], "riepilogo automatico una volta al giorno a tutte le chat")
+    run(bot.report_cmd(FakeUpdate(chat), Ctx("no")))
+    check(bot.report_time() == "" and not run(bot.report_tick(datetime(2026, 5, 5, 21, 31))), "/riepilogo no")
+    b2 = Bot({"token": "123456:TEST", "allowed_chat_ids": [1], "daily_report": "8:05"}, core, tiles)
+    db._exec("DELETE FROM settings WHERE key='tg_report_time'")
+    check(b2.report_time() == "08:05", "orario del riepilogo dal config (telegram.daily_report)")
+
+    # senza Pillow: risposte in testo
+    orig = charts.available
+    charts.available = lambda: False
+    try:
+        n = len(chat.photos)
+        run(bot.do(chat, "map", str(tid), "1"))
+        run(bot.do(chat, "chart", str(tid), "1"))
+        check(len(chat.photos) == n and botmod.NO_PIL in chat.sent[-1] and any("google.com/maps" in x for x in chat.sent[-4:]),
+              "senza Pillow: traccia e sensori in testo, con l'indicazione per installarla")
+    finally:
+        charts.available = orig
+
+
 def test_telemetry_retries():
     """Tre tentativi (percorso salvato, flood, flood dopo una pausa), percorso provato salvato
     anche senza risposta e mostrato dal bot."""
@@ -586,6 +758,7 @@ def main():
     test_coverage()
     test_events()
     test_bot()
+    test_bot_images()
     test_telemetry_retries()
     print("Tutti i test superati.")
 

@@ -12,6 +12,7 @@ from .auth import Auth, hash_password
 from .core import Core
 from .db import DB
 from .mesh import Mesh
+from .tiles import TileCache
 from . import watchdog
 from .updater import Updater, restart_event
 from .web import create_app
@@ -35,16 +36,17 @@ async def run(cfg):
         sys.exit("web.mode è 'public' ma non ci sono utenti: crea prima un utente admin dalla pagina "
                  "in modalità lan (al primo accesso a Gestione chiede la password admin), poi passa a public.")
 
+    tiles = TileCache(db)   # una sola cache delle mappe per la pagina e per le immagini di Telegram
     tg = cfg.get("telegram") or {}
     if tg.get("token") and "BotFather" not in tg["token"]:
         from .bot import Bot
-        await Bot(tg, core).run()
+        await Bot(tg, core, tiles).run()
     else:
         log.info("Telegram non configurato: bot disattivato")
 
     updater = Updater(cfg.get("update") or {})
     server = uvicorn.Server(uvicorn.Config(
-        create_app(core, auth, web_cfg, updater),
+        create_app(core, auth, web_cfg, updater, tiles),
         host=host, port=port,
         log_level="warning", proxy_headers=web_cfg.get("mode") == "public",
         timeout_graceful_shutdown=5))   # le pagine collegate in tempo reale non bloccano il riavvio
