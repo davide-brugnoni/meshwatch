@@ -103,6 +103,7 @@ class Core:
         self.file_senders = []       # funzioni async(data, filename, caption) per i backup (Telegram)
         self.tasks = set()           # invii della chat in corso
         self.events = Events()       # notifiche in tempo reale per le pagine aperte
+        self.polls_inflight = {}     # tracker_id -> richiesta di posizione in corso (vedi poll_tracker)
         self.position_listeners = [] # funzioni async(tracker, posizione) per ogni nuova posizione (Telegram /segui)
         self.reporters = []          # funzioni async() che mandano il riepilogo a tutte le chat (Telegram)
         db.seed_from_config(cfg)
@@ -187,7 +188,19 @@ class Core:
         self.wakeup.set()
 
     async def poll_tracker(self, tid):
-        """Chiede la posizione adesso. Ritorna il dict ricevuto o None."""
+        """Chiede la posizione adesso. Ritorna il dict ricevuto o None. Se una richiesta allo
+        stesso dispositivo è già in corso (dalla pagina, da Telegram o dal ciclo) si aspetta il suo
+        esito invece di mandarne un'altra via radio: niente doppioni nel duty cycle."""
+        inflight = self.polls_inflight
+        task = inflight.get(tid)
+        if task is None:
+            task = asyncio.ensure_future(self._poll_tracker(tid))
+            inflight[tid] = task
+            task.add_done_callback(lambda _t, tid=tid: inflight.pop(tid, None))
+        res = await asyncio.shield(task)
+        return dict(res) if res is not None else None
+
+    async def _poll_tracker(self, tid):
         t = self.db.tracker(tid)
         if not t or not self.mesh.connected:
             return None

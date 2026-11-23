@@ -390,9 +390,14 @@ def test_events():
     check(closed.get("/api/events").status_code == 401, "tempo reale con login se la mappa non è libera")
 
 
+LIVE_MSGS = {}   # message_id -> FakeMsg: i messaggi con la posizione in diretta, per FakeLiveBot
+
+
 class FakeMsg:
     def __init__(self, chat, lat=None, lon=None):
         self.chat, self.lat, self.lon, self.stopped = chat, lat, lon, False
+        self.message_id = len(LIVE_MSGS) + 1
+        LIVE_MSGS[self.message_id] = self
 
     async def edit_live_location(self, latitude, longitude):
         if self.stopped:
@@ -406,9 +411,26 @@ class FakeMsg:
         self.chat.sent.append(text)
 
 
+class FakeLiveBot:
+    """Il bot di Telegram per la posizione in diretta: modifica i messaggi per id, come quello vero."""
+
+    def __init__(self):
+        self.sent = []
+
+    async def edit_message_live_location(self, chat_id, message_id, latitude, longitude):
+        await LIVE_MSGS[message_id].edit_live_location(latitude, longitude)
+
+    async def stop_message_live_location(self, chat_id, message_id):
+        await LIVE_MSGS[message_id].stop_live_location()
+
+    async def send_message(self, cid, text, **kw):
+        self.sent.append((cid, text))
+
+
 class FakeChat:
-    def __init__(self, cid=1):
+    def __init__(self, cid=1, type="private"):
         self.id, self.sent, self.locations, self.photos = cid, [], [], []
+        self.type = type
 
     async def send_photo(self, photo, caption="", **kw):
         self.photos.append((photo, caption))
@@ -427,9 +449,11 @@ class FakeChat:
 
 
 class FakeUpdate:
-    def __init__(self, chat):
+    def __init__(self, chat, user=None):
         from datetime import datetime, timezone
         self.effective_chat = chat
+        # in una chat privata chi scrive ha lo stesso ID della chat
+        self.effective_user = SimpleNamespace(id=chat.id if user is None else user)
         self.message = self.effective_message = FakeMsg(chat)
         self.message.date = datetime.now(timezone.utc)
 
@@ -444,6 +468,7 @@ def test_bot():
     db, mesh, core, c, v, anon, tid = setup()
     tid2 = db.add_tracker(contact="Bob", label="Ciclista")
     bot = Bot({"token": "123456:TEST", "allowed_chat_ids": [1]}, core)
+    bot.app = SimpleNamespace(bot=FakeLiveBot())
     chat = FakeChat(1)
     run = asyncio.run
 
@@ -495,9 +520,16 @@ def test_bot():
     mesh.fix = True
     run(core.poll_tracker(tid))
     check((live.lat, live.lon) == (45.2, 9.2), "nuova posizione: la posizione in diretta si sposta")
-    bot.live[(1, tid)] = (live, time.time() - 1)
+    # dopo un riavvio il pin continua a spostarsi: le posizioni in diretta sono nel database
+    bot2 = Bot({"token": "123456:TEST", "allowed_chat_ids": [1]}, core)
+    bot2.app = SimpleNamespace(bot=FakeLiveBot())
+    check(bot2.live.get((1, tid), (None,))[0] == live.message_id, "posizione in diretta ritrovata dopo un riavvio")
+    run(bot2.on_position(db.tracker(tid), {"lat": 45.3, "lon": 9.3}))
+    check((live.lat, live.lon) == (45.3, 9.3), "dopo il riavvio la posizione in diretta si sposta ancora")
+    core.position_listeners.remove(bot2.on_position)
+    bot.live[(1, tid)] = (live.message_id, time.time() - 1)
     run(core.poll_tracker(tid))
-    check((1, tid) not in bot.live, "posizione in diretta scaduta: non viene più aggiornata")
+    check((1, tid) not in bot.live and "[]" == db.get("tg_live"), "posizione in diretta scaduta: non viene più aggiornata")
     run(bot.follow(FakeUpdate(chat), Ctx("escursionista")))
     live = chat.locations[-1]
     run(bot.unfollow(FakeUpdate(chat), Ctx()))
@@ -905,6 +937,139 @@ def test_bot_update():
     check("non si può aggiornare" in chat.sent[-1] and kbs[-1] is None, "/aggiornamento: motivo se non si può")
 
 
+def test_bot_permissions():
+    """Avvisi che arrivano a tutti anche se una chat è bloccata, azioni da admin, gruppi,
+    richieste di posizione doppie."""
+    from telegram.error import BadRequest, Forbidden, NetworkError, RetryAfter
+    from meshwatch import bot as botmod
+    from meshwatch.bot import Bot
+    db, mesh, core, c, v, anon, tid = setup()
+    run = asyncio.run
+
+    # avvisi: una chat bloccata, un errore di Telegram o una richiesta di rallentare non fanno
+    # perdere l'avviso alle altre chat
+    bot = Bot({"token": "123456:TEST", "allowed_chat_ids": [1, 2, 3, 4, 5]}, core)
+    got, tries = [], {}
+
+    class AlertBot:
+        async def send_message(self, cid, text, **kw):
+            tries[cid] = tries.get(cid, 0) + 1
+            if cid == 2:
+                raise Forbidden("bot bloccato")
+            if cid == 3:
+                raise BadRequest("Chat not found")
+            if cid == 4 and tries[cid] == 1:
+                raise RetryAfter(0)
+            if cid == 5 and tries[cid] == 1:
+                raise NetworkError("rete")
+            got.append(cid)
+
+        async def send_document(self, cid, doc, **kw):
+            if cid == 2:
+                raise Forbidden("bot bloccato")
+            got.append(("doc", cid))
+    bot.app = SimpleNamespace(bot=AlertBot())
+    orig_sleep = asyncio.sleep
+
+    async def no_wait(s):
+        await orig_sleep(0)
+    asyncio.sleep = no_wait
+    try:
+        run(bot.broadcast("⚠️ prova"))
+        check(sorted(got) == [1, 4, 5] and tries[2] == 1 and tries[3] == 1,
+              "avviso: chat bloccata e ID sbagliato saltati, rallentamento e rete giù riprovati, le altre lo ricevono")
+        got.clear()
+        bot.admins = {1, 2, 3}
+        run(bot.send_file(b"x", "backup.zip"))
+        check(sorted(got) == [("doc", 1), ("doc", 3)], "backup: una chat admin bloccata non lo toglie alle altre")
+    finally:
+        asyncio.sleep = orig_sleep
+
+    # una chat admin è anche autorizzata
+    bot = Bot({"token": "123456:TEST", "allowed_chat_ids": [2], "admin_chat_ids": [1]}, core)
+    bot.app = SimpleNamespace(bot=FakeLiveBot())
+    check(bot.allowed == {1, 2} and bot.admins == {1}, "chat admin autorizzata anche se manca in allowed_chat_ids")
+
+    # viewer: vede e chiede la posizione, ma non cambia il tracciamento (come sulla pagina)
+    admin, viewer = FakeChat(1), FakeChat(2)
+    for cmd in (bot._by_name("pause"), bot._by_name("resume")):
+        run(cmd(FakeUpdate(viewer), Ctx("escursionista")))
+        check(viewer.sent[-1] == botmod.NOT_ADMIN, "viewer: niente pausa/riprendi")
+    run(bot.interval(FakeUpdate(viewer), Ctx("15", "escursionista")))
+    check(viewer.sent[-1] == botmod.NOT_ADMIN and db.tracker(tid)["interval_min"] == 30, "viewer: niente /intervallo")
+    for cmd in (bot.advert, bot.refresh_nodes, bot.term_start):
+        run(cmd(FakeUpdate(viewer), Ctx()))
+        check(viewer.sent[-1] == botmod.NOT_ADMIN, f"viewer: niente {cmd.__name__}")
+    run(bot._by_name("last")(FakeUpdate(viewer), Ctx("escursionista")))
+    check("Nessuna posizione" in viewer.sent[-1] or viewer.locations, "viewer: l'ultima posizione sì")
+    run(bot._by_name("pause")(FakeUpdate(admin), Ctx("escursionista")))
+    check(db.tracker(tid)["paused"] == 1 and "sospeso" in admin.sent[-1], "admin: pausa")
+    run(bot._by_name("resume")(FakeUpdate(admin), Ctx("escursionista")))
+
+    # pulsanti: la stessa regola
+    class Q:
+        def __init__(self, chat, user, data):
+            self.message = SimpleNamespace(chat=chat)
+            self.from_user, self.data, self.text = SimpleNamespace(id=user), data, None
+
+        async def answer(self):
+            pass
+
+        async def edit_message_reply_markup(self, markup):
+            pass
+
+        async def edit_message_text(self, text, **kw):
+            self.text = text
+    run(bot.on_button(SimpleNamespace(callback_query=Q(viewer, 2, f"pause:{tid}:")), Ctx()))
+    check(db.tracker(tid)["paused"] == 0 and viewer.sent[-1] == botmod.NOT_ADMIN, "pulsante pausa: solo admin")
+    run(bot.on_button(SimpleNamespace(callback_query=Q(viewer, 2, "node:Rip-Monte")), Ctx()))
+    check(2 not in bot.sessions, "pulsante del terminale: solo admin")
+
+    # gruppo tra le chat admin: per gestire conta chi scrive
+    bot = Bot({"token": "123456:TEST", "allowed_chat_ids": [], "admin_chat_ids": [-100, 7],
+               "admin_user_ids": [8]}, core)
+    group = FakeChat(-100, type="supergroup")
+    run(bot._by_name("pause")(FakeUpdate(group, user=99), Ctx("escursionista")))
+    check(db.tracker(tid)["paused"] == 0 and group.sent[-1] == botmod.NOT_ADMIN, "gruppo: un membro qualsiasi non gestisce")
+    run(bot._by_name("last")(FakeUpdate(group, user=99), Ctx("escursionista")))
+    check(group.sent[-1] != botmod.NOT_ADMIN, "gruppo: un membro qualsiasi vede la posizione")
+    for user in (7, 8):   # chat privata admin, oppure in admin_user_ids
+        run(bot._by_name("pause")(FakeUpdate(group, user=user), Ctx("escursionista")))
+        check(db.tracker(tid)["paused"] == 1, f"gruppo: l'admin {user} gestisce")
+        db.update_tracker(tid, paused=0)
+    run(bot.on_button(SimpleNamespace(callback_query=Q(group, 99, "node:Rip-Monte")), Ctx()))
+    check(-100 not in bot.sessions, "gruppo: un membro qualsiasi non apre il terminale col pulsante")
+    bot.sessions[-100] = ("Rip-Monte", time.time() + 600)
+    upd = FakeUpdate(group, user=99)
+    upd.message.text = "reboot"
+    run(bot.term_text(upd, Ctx()))
+    check(not bot.pending, "gruppo: i comandi del terminale di un membro qualsiasi vengono ignorati")
+
+    # messaggio modificato: update.message è None, si usa effective_message
+    upd = FakeUpdate(group, user=7)
+    upd.message = None
+    run(bot._by_name("last")(upd, Ctx("zzz")))
+    check("Nessun dispositivo si chiama" in group.sent[-1], "messaggio modificato: il bot risponde senza errori")
+
+    # due richieste di posizione insieme (pagina e Telegram): una sola via radio
+    asked = []
+    orig = mesh.request_telemetry
+
+    async def slow(contact, **kw):
+        asked.append(contact)
+        await asyncio.sleep(0.05)
+        return await orig(contact, **kw)
+    mesh.request_telemetry = slow
+
+    async def both():
+        return await asyncio.gather(core.poll_tracker(tid), core.poll_tracker(tid))
+    a, b = run(both())
+    check(len(asked) == 1 and a == b and a is not b, "due richieste insieme: una sola via radio, stesso esito a tutti")
+    run(core.poll_tracker(tid))
+    check(len(asked) == 2 and not core.polls_inflight, "finita la richiesta, la successiva parte di nuovo")
+    mesh.request_telemetry = orig
+
+
 def main():
     test_sensors()
     test_battery_alerts()
@@ -915,6 +1080,7 @@ def main():
     test_bot()
     test_bot_images()
     test_bot_update()
+    test_bot_permissions()
     test_telemetry_retries()
     print("Tutti i test superati.")
 

@@ -44,8 +44,12 @@ telegram:
   # Solo queste chat possono usare il bot e ricevono gli avvisi.
   # Il tuo ID lo scopri scrivendo /start al bot: te lo risponde lui.
   allowed_chat_ids: []
-  # Chi può usare /terminale (comandi ai ripetitori). Vuoto = tutte le chat autorizzate.
+  # Chi può gestire: terminale, pausa, intervallo, advert, aggiornamento, riepilogo automatico.
+  # Vuoto = tutte le chat autorizzate. Una chat admin è anche autorizzata.
   admin_chat_ids: []
+  # Solo per i gruppi tra le chat admin: gli utenti (ID personale) che possono gestire.
+  # Vale anche chi ha la propria chat privata in admin_chat_ids; gli altri membri vedono soltanto.
+  admin_user_ids: []
   # Riepilogo della giornata con la mappa, ogni giorno a quest'ora (facoltativo).
   # Si cambia anche dal bot: /riepilogo 21:00 oppure /riepilogo no
   # daily_report: "21:00"
