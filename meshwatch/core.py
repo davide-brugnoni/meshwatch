@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import math
+import random
 import time
 from datetime import datetime
 
@@ -100,6 +101,8 @@ class Core:
         self.alerts = {}             # chiave -> set di avvisi attivi
         self.batt_sent = {}          # chiave -> ultimo avviso di batteria bassa inviato
         self.moving = {}             # tracker_id -> True se all'ultima posizione si stava spostando
+        self.fail_streak = {}        # tracker_id -> richieste consecutive senza risposta
+        self.soon = {}               # tracker_id -> richiesta anticipata da un advert (vale anche se arriva durante una richiesta)
         self.file_senders = []       # funzioni async(data, filename, caption) per i backup (Telegram)
         self.tasks = set()           # invii della chat in corso
         self.events = Events()       # notifiche in tempo reale per le pagine aperte
@@ -107,6 +110,7 @@ class Core:
         self.reporters = []          # funzioni async() che mandano il riepilogo a tutte le chat (Telegram)
         db.seed_from_config(cfg)
         mesh.on_message = self.on_message
+        mesh.on_advert = self.on_advert
         # invii rimasti a metà quando il programma si è fermato
         db._exec("UPDATE messages SET status='failed' WHERE dir='out' AND status IN ('queued','sending','sent')")
 
@@ -186,32 +190,42 @@ class Core:
             self.next_due.pop(tid, None)
         self.wakeup.set()
 
-    async def poll_tracker(self, tid):
-        """Chiede la posizione adesso. Ritorna il dict ricevuto o None."""
+    PATH_STATS_S = 12 * 3600   # finestra per giudicare l'affidabilità del percorso salvato
+
+    def path_unreliable(self, tid):
+        """True se il percorso dell'ultima risposta, nelle ultime ore, ha fallito almeno due volte
+        e più spesso di quanto abbia funzionato: in quel caso il primo tentativo diretto è quasi
+        sempre sprecato (collegamento instabile o che funziona in una sola direzione)."""
+        route = self.db.last_route(tid)
+        if not route or not route["path"]:
+            return False
+        ok, ko = self.db.path_failures(tid, route["path"], int(time.time()) - self.PATH_STATS_S)
+        return ko >= 2 and ko > ok
+
+    async def poll_tracker(self, tid, attempts=3):
+        """Chiede la posizione adesso. Ritorna il dict ricevuto o None.
+        attempts: tentativi di questa richiesta (le richieste automatiche ne fanno meno, perché
+        se va a vuoto si riprova dopo pochi minuti, vedi next_delay_s)."""
         t = self.db.tracker(tid)
         if not t or not self.mesh.connected:
             return None
         last = self.db.last_position(tid)
-        # in movimento o dopo una richiesta andata a vuoto il percorso salvato è probabilmente
-        # quello del ripetitore di prima: si parte subito in flood invece di perdere un tentativo
+        # in movimento, dopo una richiesta andata a vuoto o con un percorso che fallisce spesso,
+        # il percorso salvato è probabilmente da buttare: si parte subito in flood invece di
+        # perdere un tentativo
         prev_poll = self.db.last_poll(tid)
-        flood_first = self.moving.get(tid, False) or bool(prev_poll and not prev_poll["ok"])
-        res = await self.mesh.request_telemetry(t["contact"], flood_first=flood_first)
+        flood_first = (self.moving.get(tid, False) or bool(prev_poll and not prev_poll["ok"])
+                       or self.path_unreliable(tid))
+        res = await self.mesh.request_telemetry(t["contact"], attempts=attempts, flood_first=flood_first)
         ok = res is not None
+        self.fail_streak[tid] = 0 if ok else self.fail_streak.get(tid, 0) + 1
         # senza risposta si salva il percorso provato per primo, per capire dove si interrompe
         tried = getattr(self.mesh, "tried", {}).get(t["contact"], (None, None))
         self.db.add_tracker_poll(tid, ok, *((res.get("hops"), res.get("path")) if ok else tried),
                                  *self._poll_place(t, res, last))
         if ok:
             if res["lat"] is not None:
-                prev = self.db.last_position(tid)
-                self.db.add_position(tid, res["lat"], res["lon"], res["alt"], res["batt_v"])
-                self._update_moving(t, prev, res)
-                for listener in self.position_listeners:
-                    try:
-                        await listener(t, self.db.last_position(tid))
-                    except Exception as e:
-                        log.error("Posizione non inoltrata: %s", e)
+                await self._store_position(t, res["lat"], res["lon"], res["alt"], res["batt_v"])
             if res.get("sensors"):
                 self.db.add_sensor_readings(tid, res["sensors"])
             self.events.publish("state")
@@ -221,6 +235,56 @@ class Core:
             self.events.publish("state")
             await self._tracker_fail(t)
         return res
+
+    async def _store_position(self, t, lat, lon, alt, batt_v, src=None):
+        prev = self.db.last_position(t["id"])
+        self.db.add_position(t["id"], lat, lon, alt, batt_v, src)
+        self._update_moving(t, prev, {"lat": lat, "lon": lon})
+        for listener in self.position_listeners:
+            try:
+                await listener(t, self.db.last_position(t["id"]))
+            except Exception as e:
+                log.error("Posizione non inoltrata: %s", e)
+
+    ADVERT_MAX_AGE_S = 900     # advert con l'ora più vecchia di così: posizione non attuale
+    ADVERT_POLL_DELAY_S = 10   # dopo l'advert di un tracker che non rispondeva, richiesta entro pochi secondi
+
+    async def on_advert(self, info):
+        """Advert di un contatto. Se è un tracker:
+        - se le ultime richieste sono andate a vuoto, è appena tornato in copertura: lo si
+          interroga subito invece di aspettare il prossimo turno;
+        - se porta una posizione diversa da quella dell'advert precedente (quindi presa dal GPS e
+          non impostata a mano) e recente, la si salva come posizione senza usare la radio."""
+        name = info.get("name")
+        for t in self.db.trackers():
+            if t["contact"] != name:
+                continue
+            tid, adv_ts = t["id"], info.get("last_advert") or 0
+            key = f"advert_{tid}"
+            prev = (self.db.get(key) or "").split(",")
+            prev_ts = int(prev[0]) if prev[0].isdigit() else None
+            if prev_ts is not None and adv_ts and adv_ts <= prev_ts:
+                continue       # lo stesso advert ripetuto da un altro ripetitore, o uno vecchio
+            self.db.set(key, f"{adv_ts},{info.get('lat')},{info.get('lon')}")
+            if t["paused"] or not in_active_hours(t["active_hours"]):
+                continue
+            if self.fail_streak.get(tid):
+                due = time.time() + self.ADVERT_POLL_DELAY_S
+                if self.next_due.get(tid, due + 1) > due:
+                    self.next_due[tid] = self.soon[tid] = due
+                    log.info("%s: advert ricevuto dopo richieste senza risposta, la ripeto subito", t["label"])
+                    self.wakeup.set()
+            lat, lon = info.get("lat"), info.get("lon")
+            if lat is None or prev_ts is None or prev[1:] == [str(lat), str(lon)]:
+                continue
+            if not adv_ts or abs(time.time() - adv_ts) > self.ADVERT_MAX_AGE_S:
+                continue       # ora del nodo sbagliata o advert vecchio: posizione non affidabile
+            last = self.db.last_position(tid)
+            if last and time.time() - last["ts"] < 60 and (last["lat"], last["lon"]) == (lat, lon):
+                continue
+            await self._store_position(t, lat, lon, None, None, src="advert")
+            self.events.publish("state")
+            log.info("%s: posizione dall'advert", t["label"])
 
     COVERAGE_MAX_AGE_S = 3600   # oltre, l'ultima posizione nota non dice dove fosse il dispositivo
 
@@ -243,6 +307,19 @@ class Core:
             due = time.time() + t["moving_interval_min"] * 60
             if self.next_due.get(t["id"], due + 1) > due:
                 self.next_due[t["id"]] = due
+
+    RETRY_MIN = (2, 5, 10)   # dopo 1, 2, 3+ richieste senza risposta si riprova dopo questi minuti
+    JITTER = 0.1             # ±10% sull'intervallo: richieste non sincronizzate con altro traffico periodico
+
+    def next_delay_s(self, t):
+        """Secondi fino alla prossima richiesta automatica. Dopo una richiesta senza risposta si
+        riprova presto (un buco di copertura dura spesso poco), allungando via via fino
+        all'intervallo normale; sempre con una piccola variazione casuale."""
+        mins = self.interval_min(t)
+        fails = self.fail_streak.get(t["id"], 0)
+        if fails:
+            mins = min(mins, self.RETRY_MIN[min(fails, len(self.RETRY_MIN)) - 1])
+        return mins * 60 * random.uniform(1 - self.JITTER, 1 + self.JITTER)
 
     def interval_min(self, t):
         """Intervallo in uso: quello "in movimento" se attivo e il dispositivo si sposta."""
@@ -589,27 +666,37 @@ class Core:
         return {"gateway": gw, "nodes": [c for c in contacts if c["lat"] is not None], "links": links}
 
     # ---------- cicli periodici
+    AUTO_ATTEMPTS = 2   # richieste automatiche: percorso salvato (o flood) e flood; poi si riprova tra poco
+    POLL_GAP_S = 2      # pausa tra le richieste a due tracker, per non trasmettere a raffica
+
     async def tracker_loop(self):
         """Un unico ciclo per tutti i tracker: interroga quelli scaduti, uno alla volta."""
         while True:
+            self.wakeup.clear()   # prima del giro: una sveglia arrivata durante il giro non va persa
             now = time.time()
             for t in self.db.trackers():
                 tid = t["id"]
                 due = self.next_due.get(tid, 0)
                 if now < due:
                     continue
-                self.next_due[tid] = now + self.interval_min(t) * 60
+                self.next_due[tid] = now + self.next_delay_s(t)
+                self.soon.pop(tid, None)   # anticipo già usato: conta solo quello di un advert durante la richiesta
                 if t["paused"] or not in_active_hours(t["active_hours"]):
                     continue
                 try:
-                    await self.poll_tracker(tid)
+                    await self.poll_tracker(tid, attempts=self.AUTO_ATTEMPTS)
                 except Exception as e:
                     log.exception("Errore poll %s: %s", t["label"], e)
-                # la richiesta può aver cambiato lo stato "in movimento"
-                self.next_due[tid] = now + self.interval_min(t) * 60
-            self.wakeup.clear()
+                # la richiesta può aver cambiato lo stato "in movimento" o quello dei fallimenti;
+                # un advert arrivato durante la richiesta può aver anticipato la prossima
+                due = time.time() + self.next_delay_s(t)
+                soon = self.soon.pop(tid, due)
+                self.next_due[tid] = min(due, soon) if self.fail_streak.get(tid) else due
+                await asyncio.sleep(self.POLL_GAP_S)
+            # si dorme fino alla prossima scadenza (al massimo 30 s), es. una richiesta anticipata da un advert
+            nearest = min(self.next_due.values(), default=time.time() + 30)
             try:
-                await asyncio.wait_for(self.wakeup.wait(), timeout=30)
+                await asyncio.wait_for(self.wakeup.wait(), timeout=max(1, min(30, nearest - time.time())))
             except asyncio.TimeoutError:
                 pass
 

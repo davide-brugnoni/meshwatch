@@ -112,6 +112,10 @@ class DB:
             cols = [r[1] for r in self.conn.execute("PRAGMA table_info(trackers)")]
             if "moving_interval_min" not in cols:
                 self.conn.execute("ALTER TABLE trackers ADD COLUMN moving_interval_min INTEGER DEFAULT 0")
+            # da dove arriva la posizione: NULL = risposta alla telemetria, 'advert' = advert del nodo
+            cols = [r[1] for r in self.conn.execute("PRAGMA table_info(positions)")]
+            if "src" not in cols:
+                self.conn.execute("ALTER TABLE positions ADD COLUMN src TEXT")
             self.conn.commit()
 
     def _exec(self, sql, args=()):
@@ -200,9 +204,9 @@ class DB:
             self._exec(f"UPDATE tracker_polls SET lat=NULL, lon=NULL {where}", args)
         return self._exec(f"DELETE FROM positions {where}", args).rowcount
 
-    def add_position(self, tid, lat, lon, alt, batt_v):
-        self._exec("INSERT INTO positions (ts, lat, lon, alt, batt_v, tracker_id) VALUES (?,?,?,?,?,?)",
-                   (int(time.time()), lat, lon, alt, batt_v, tid))
+    def add_position(self, tid, lat, lon, alt, batt_v, src=None):
+        self._exec("INSERT INTO positions (ts, lat, lon, alt, batt_v, tracker_id, src) VALUES (?,?,?,?,?,?,?)",
+                   (int(time.time()), lat, lon, alt, batt_v, tid, src))
 
     def add_tracker_poll(self, tid, ok, hops=None, path=None, lat=None, lon=None, est=None):
         self._exec("INSERT INTO tracker_polls (ts, ok, tracker_id, hops, path, lat, lon, est) VALUES (?,?,?,?,?,?,?,?)",
@@ -232,6 +236,13 @@ class DB:
         if r:
             r["path"] = r["path"].split(",") if r["path"] else []
         return r
+
+    def path_failures(self, tid, path, since):
+        """Richieste recenti sul percorso indicato (prefissi dei ripetitori): (riuscite, fallite).
+        Le fallite contano il percorso provato per primo, le riuscite quello della risposta."""
+        r = self._one("SELECT SUM(ok) AS ok, SUM(1 - ok) AS ko FROM tracker_polls "
+                      "WHERE tracker_id=? AND ts>=? AND hops>0 AND path=?", (tid, since, ",".join(path)))
+        return (r["ok"] or 0, r["ko"] or 0) if r else (0, 0)
 
     def last_position(self, tid):
         return self._one("SELECT * FROM positions WHERE tracker_id=? ORDER BY ts DESC LIMIT 1", (tid,))

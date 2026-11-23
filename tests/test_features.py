@@ -905,6 +905,79 @@ def test_bot_update():
     check("non si può aggiornare" in chat.sent[-1] and kbs[-1] is None, "/aggiornamento: motivo se non si può")
 
 
+def test_reliability():
+    """Recupero rapido dopo un fallimento, posizioni dagli advert, percorso inaffidabile,
+    attese adattive."""
+    import random as _random
+    db, mesh, core, c, v, anon, tid = setup()
+    t = db.tracker(tid)
+    db.update_tracker(tid, interval_min=30)
+    t = db.tracker(tid)
+    _random.seed(1)
+    d = core.next_delay_s(t)
+    check(27 * 60 <= d <= 33 * 60, "intervallo normale con variazione casuale del 10%")
+    mesh.answer = False
+    asyncio.run(core.poll_tracker(tid, attempts=2))
+    check(core.fail_streak[tid] == 1 and core.next_delay_s(t) <= 2 * 60 * 1.1, "dopo un fallimento si riprova dopo 2 minuti")
+    asyncio.run(core.poll_tracker(tid))
+    check(core.next_delay_s(t) <= 5 * 60 * 1.1, "poi dopo 5 minuti")
+    for _ in range(3):
+        asyncio.run(core.poll_tracker(tid))
+    check(9 * 60 <= core.next_delay_s(t) <= 11 * 60, "poi ogni 10 minuti")
+    db.update_tracker(tid, interval_min=5)
+    check(core.next_delay_s(db.tracker(tid)) <= 5 * 60 * 1.1, "mai oltre l'intervallo normale")
+    db.update_tracker(tid, interval_min=30)
+
+    # advert di un tracker che non rispondeva: richiesta anticipata
+    core.next_due[tid] = time.time() + 600
+    now = int(time.time())
+    info = {"name": "Alice", "last_advert": now - 5, "lat": 43.1, "lon": 12.1}
+    asyncio.run(core.on_advert(info))
+    check(core.next_due[tid] <= time.time() + core.ADVERT_POLL_DELAY_S and core.soon.get(tid),
+          "advert dopo richieste senza risposta: si chiede subito la posizione")
+    n = len(db.positions_since(tid, 0))
+    check(n == 0, "primo advert: posizione solo ricordata (potrebbe essere impostata a mano)")
+    asyncio.run(core.on_advert(info))
+    check(len(db.positions_since(tid, 0)) == 0, "advert ripetuto ignorato")
+    asyncio.run(core.on_advert({**info, "last_advert": now - 2}))
+    check(len(db.positions_since(tid, 0)) == 0, "stessa posizione dell'advert precedente: non è GPS, ignorata")
+    asyncio.run(core.on_advert({**info, "last_advert": now - 1, "lat": 43.2}))
+    pos = db.positions_since(tid, 0)
+    check(len(pos) == 1 and pos[0]["lat"] == 43.2 and pos[0]["src"] == "advert", "posizione nuova dall'advert salvata")
+    asyncio.run(core.on_advert({**info, "last_advert": now - 3 * 3600, "lat": 43.3}))
+    check(len(db.positions_since(tid, 0)) == 1, "advert con l'ora vecchia di ore: posizione ignorata")
+    asyncio.run(core.on_advert({"name": "Altro", "last_advert": now, "lat": 1.0, "lon": 1.0}))
+    check(len(db.positions_since(tid, 0)) == 1, "advert di un contatto che non è un tracker ignorato")
+
+    # risposta: tutto torna normale
+    mesh.answer = True
+    asyncio.run(core.poll_tracker(tid))
+    check(core.fail_streak[tid] == 0 and core.next_delay_s(t) >= 27 * 60, "dopo una risposta si torna all'intervallo normale")
+
+    # percorso che fallisce spesso: si parte in flood anche da fermi
+    core.moving[tid] = False
+    check(not core.path_unreliable(tid), "percorso affidabile")
+    route = db.last_route(tid)["path"]
+    db.add_tracker_poll(tid, False, len(route), route)
+    check(not core.path_unreliable(tid), "un solo fallimento sul percorso: ancora affidabile")
+    for _ in range(2):
+        db.add_tracker_poll(tid, False, len(route), route)
+    check(core.path_unreliable(tid), "percorso che ha fallito più volte di quante ha risposto: inaffidabile")
+    asyncio.run(core.poll_tracker(tid))
+    check(mesh.flood_first, "con il percorso inaffidabile il primo tentativo è in flood")
+
+    # attese adattive
+    m = Mesh()
+    check(m.wait_for(False) == m.DIRECT_WAIT_S and m.wait_for(True) == m.FLOOD_WAIT_S, "attese minime senza misure")
+    for x in (10, 20, 40):
+        m._record_latency(True, x)
+    check(m.wait_for(True) == 52 and m.wait_for(False) == m.DIRECT_WAIT_S, "flood lento: si aspetta di più prima di ritrasmettere")
+    for x in (200, 200, 200):
+        m._record_latency(True, x)
+    check(m.wait_for(True) == m.MAX_WAIT_S, "attesa mai oltre il massimo")
+    check(m.wait_for(False, 25) == 25, "attesa suggerita dalla radio rispettata")
+
+
 def main():
     test_sensors()
     test_battery_alerts()
@@ -916,6 +989,7 @@ def main():
     test_bot_images()
     test_bot_update()
     test_telemetry_retries()
+    test_reliability()
     print("Tutti i test superati.")
 
 
