@@ -248,10 +248,10 @@ class DB:
 
     def path_failures(self, tid, path, since):
         """Primi tentativi diretti recenti sul percorso indicato (prefissi dei ripetitori):
-        (con risposta, senza risposta)."""
-        r = self._one("SELECT SUM(direct_ok) AS ok, SUM(1 - direct_ok) AS ko FROM tracker_polls "
+        (con risposta, senza risposta, ora dell'ultimo)."""
+        r = self._one("SELECT SUM(direct_ok) AS ok, SUM(1 - direct_ok) AS ko, MAX(ts) AS last FROM tracker_polls "
                       "WHERE tracker_id=? AND ts>=? AND direct_path=?", (tid, since, ",".join(path)))
-        return (r["ok"] or 0, r["ko"] or 0) if r else (0, 0)
+        return (r["ok"] or 0, r["ko"] or 0, r["last"]) if r else (0, 0, None)
 
     def fail_streak(self, tid):
         """Richieste consecutive senza risposta, dalla più recente."""

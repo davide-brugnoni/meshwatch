@@ -966,6 +966,9 @@ def test_reliability():
     core.next_due[tid] = time.time() + 600
     asyncio.run(core.on_advert({**info, "last_advert": now - 4}))
     check(core.next_due[tid] > time.time() + 500, "un solo anticipo per serie di fallimenti (collegamento a senso unico)")
+    core.boosted[tid] -= core.ADVERT_REBOOST_S
+    asyncio.run(core.on_advert({**info, "last_advert": now - 3}))
+    check(core.next_due[tid] < time.time() + 500, "mezz'ora dopo un altro advert anticipa di nuovo")
     n = len(db.positions_since(tid, 0))
     check(n == 0, "primo advert: posizione solo ricordata (potrebbe essere impostata a mano)")
     asyncio.run(core.on_advert(info))
@@ -1005,6 +1008,8 @@ def test_reliability():
     check(core.path_unreliable(tid), "percorso che ha fallito più volte di quante ha risposto: inaffidabile")
     asyncio.run(core.poll_tracker(tid))
     check(mesh.flood_first, "con il percorso inaffidabile il primo tentativo è in flood")
+    db._exec("UPDATE tracker_polls SET ts=ts-4*3600 WHERE direct_path IS NOT NULL")
+    check(not core.path_unreliable(tid), "percorso inaffidabile non provato da ore: si riprova in diretto")
 
     # un giro del ciclo vero: richiesta, ripianificazione, tracker eliminato tolto dalle scadenze
     async def loop_run():

@@ -354,6 +354,8 @@ class Mesh:
         del previsto e prima quella risposta andava persa.
         Il percorso provato per primo resta in self.tried[name] (hops, path), anche se non risponde."""
         async with self.lock:
+            self.direct[name] = None     # nessun giudizio sul percorso se non si trasmette niente
+            self.tried.pop(name, None)
             c = await self.contact(name)
             if not c:
                 log.warning("Contatto '%s' non trovato", name)
@@ -363,7 +365,6 @@ class Mesh:
                 await self.mc.commands.reset_path(c)
                 info = {**info, "hops": -1, "path": []}
             self.tried[name] = (info["hops"], info["path"])
-            self.direct[name] = None
             tags, last, done = {}, None, asyncio.get_running_loop().create_future()
             first = []    # tag del primo tentativo, se diretto
 
