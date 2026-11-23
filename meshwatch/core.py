@@ -192,7 +192,11 @@ class Core:
         if not t or not self.mesh.connected:
             return None
         last = self.db.last_position(tid)
-        res = await self.mesh.request_telemetry(t["contact"])
+        # in movimento o dopo una richiesta andata a vuoto il percorso salvato è probabilmente
+        # quello del ripetitore di prima: si parte subito in flood invece di perdere un tentativo
+        prev_poll = self.db.last_poll(tid)
+        flood_first = self.moving.get(tid, False) or bool(prev_poll and not prev_poll["ok"])
+        res = await self.mesh.request_telemetry(t["contact"], flood_first=flood_first)
         ok = res is not None
         # senza risposta si salva il percorso provato per primo, per capire dove si interrompe
         tried = getattr(self.mesh, "tried", {}).get(t["contact"], (None, None))
