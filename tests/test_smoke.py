@@ -28,7 +28,7 @@ class FakeMesh:
         self.reconnects += 1
         self.connected = True
 
-    async def request_telemetry(self, name):
+    async def request_telemetry(self, name, attempts=3, flood_first=False):
         self.n += 1
         return {"lat": 45.0 + self.n * 0.001, "lon": 9.0, "alt": 500, "batt_v": 3.9}
 

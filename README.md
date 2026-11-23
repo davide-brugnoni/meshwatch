@@ -48,6 +48,7 @@ Gira su un Raspberry Pi con una radio MeshCore in modalità *Companion USB* (Hel
 ## Cosa fa
 
 - **Tracciamento GPS**: a intervalli regolari chiede la telemetria ai dispositivi scelti e salva la traccia. Più dispositivi, ognuno con il suo colore, intervallo, fascia oraria e soglie di avviso.
+- **Cambio di ripetitore**: quando il dispositivo passa da un ripetitore all'altro il percorso salvato non vale più: la richiesta passa in flood (subito, se si sta spostando o la richiesta prima è andata a vuoto) e una risposta che arriva in ritardo viene accettata comunque.
 - **Intervallo adattivo**: facoltativo, per dispositivo. Se tra due posizioni si è spostato più di 150 m viene interrogato più spesso; quando si ferma torna all'intervallo normale.
 - **Pulizia tracce**: dal cestino sulla mappa (tutti i dispositivi) o da "Cancella traccia" (uno solo) si eliminano tutte le posizioni salvate, compresa l'ultima: sulla mappa non resta nulla. Solo admin.
 - **Sensori**: tutti i valori della telemetria (temperatura, umidità, pressione, luce, tensione, …) salvati a ogni risposta, anche senza fix GPS, con grafico per sensore e **soglie di avviso** su Telegram.
@@ -593,6 +594,7 @@ curl -s http://localhost:8080/api/health
 | radio non trovata / "permission denied" sulla porta | radio con firmware **Companion USB** (non Repeater o Room Server); utente nel gruppo `dialout`; prova a fissare `serial_port` con il percorso da `/dev/serial/by-id/` |
 | la radio si scollega spesso | alimentatore e cavo USB (`vcgencmd get_throttled`), cavo dati e non solo ricarica, hub USB alimentato |
 | il dispositivo non risponde alla posizione | nell'app MeshCore del dispositivo: gateway tra i *preferiti* e telemetria posizione consentita; nome del contatto identico; il dispositivo deve essere raggiungibile da un ripetitore; prova *azzera percorso* nella rubrica |
+| in movimento non risponde quando passa da un ripetitore all'altro | MeshWatch prova prima il percorso salvato e poi due volte in flood, e accetta anche le risposte in ritardo; se si sta spostando o la richiesta prima è andata a vuoto parte subito in flood. Nel registro (`journalctl -u meshwatch \| grep Telemetria`) si vede a quale tentativo risponde. Sul dispositivo: nell'app MeshCore azzera il percorso verso il gateway, così risponde lungo la strada nuova |
 | posizione arriva ma senza coordinate | il GPS non ha il fix (al chiuso): i sensori vengono salvati comunque |
 | ripetitore senza statistiche | password admin o guest del ripetitore corretta; ripetitore nella rubrica del gateway |
 | il bot non risponde | token corretto; chat ID in `allowed_chat_ids` (il bot lo dice scrivendogli `/start`); Internet sul Raspberry; nel registro cerca `Telegram` |

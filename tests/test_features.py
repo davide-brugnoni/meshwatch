@@ -7,6 +7,7 @@ import os
 import sys
 import tempfile
 import time
+from types import SimpleNamespace
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -16,6 +17,7 @@ from meshwatch import maintenance  # noqa: E402
 from meshwatch.auth import Auth  # noqa: E402
 from meshwatch.core import Core, fmt_sensor, sensor_info  # noqa: E402
 from meshwatch.db import DB  # noqa: E402
+from meshcore import EventType  # noqa: E402
 from meshwatch.mesh import Mesh, decode_path, parse_lpp  # noqa: E402
 from meshwatch.web import create_app  # noqa: E402
 from tests.test_chat import ALICE, REP, REP2, ChatMesh, contact  # noqa: E402
@@ -31,7 +33,8 @@ class SensorMesh(ChatMesh):
         self.answer = True
         self.route = (2, ["b2", "c3"])
 
-    async def request_telemetry(self, name, attempts=2):
+    async def request_telemetry(self, name, attempts=2, flood_first=False):
+        self.flood_first = flood_first
         self.asked = getattr(self, "asked", []) + [name]
         if not self.answer or name in getattr(self, "silent", ()):
             return None
@@ -743,23 +746,38 @@ def test_telemetry_retries():
     anche senza risposta e mostrato dal bot."""
     from meshwatch.bot import Bot
 
+    GPS = [{"channel": 1, "type": "gps", "value": {"latitude": 43.35, "longitude": 12.57, "altitude": 500}}]
+
     class Cmds:
-        def __init__(self, answer_at):
-            self.answer_at, self.calls, self.resets = answer_at, 0, 0
+        """answer_at: tentativo a cui il nodo risponde; late: la risposta arriva dopo la scadenza
+        di quel tentativo (durante il successivo)."""
+        def __init__(self, mc, answer_at, late=False):
+            self.mc, self.answer_at, self.late, self.calls, self.resets = mc, answer_at, late, 0, 0
 
         async def reset_path(self, c):
             self.resets += 1
             c.update(out_path_len=-1, out_path="")
 
-        async def req_telemetry_sync(self, c, min_timeout=0):
+        async def send_binary_req(self, c, req, timeout=None, min_timeout=0):
             self.calls += 1
+            tag = f"{self.calls:08x}"
             if self.calls == self.answer_at:
-                return [{"channel": 1, "type": "gps", "value": {"latitude": 43.35, "longitude": 12.57, "altitude": 500}}]
-            return None
+                delay = 0.045 if self.late else 0.005
+                asyncio.get_running_loop().call_later(delay, self.mc.emit, {"tag": tag, "lpp": GPS})
+            return SimpleNamespace(type=EventType.MSG_SENT, payload={"expected_ack": bytes.fromhex(tag), "suggested_timeout": 0})
 
     class MC:
-        def __init__(self, cmds, raw):
-            self.commands, self.raw = cmds, raw
+        def __init__(self, raw, answer_at, late=False):
+            self.raw, self.subs = raw, []
+            self.commands = Cmds(self, answer_at, late)
+
+        def subscribe(self, ev, cb):
+            self.subs.append(cb)
+            return SimpleNamespace(unsubscribe=lambda: self.subs.remove(cb))
+
+        def emit(self, payload):
+            for cb in list(self.subs):
+                cb(SimpleNamespace(payload=payload))
 
         async def ensure_contacts(self, follow=False):
             pass
@@ -767,11 +785,11 @@ def test_telemetry_retries():
         def get_contact_by_name(self, name):
             return next((c for c in self.raw.values() if c["adv_name"] == name), None)
 
-    def radio(answer_at):
+    def radio(answer_at, late=False):
         m = Mesh()
-        m.RETRY_DELAY_S = 0
+        m.RETRY_DELAY_S, m.DIRECT_WAIT_S, m.FLOOD_WAIT_S = 0, 0.03, 0.03
         raw = {ALICE: {**contact(ALICE, "Alice", 1), "out_path_len": 1, "out_path": "b2", "out_path_hash_mode": 0}}
-        m.mc = MC(Cmds(answer_at), raw)
+        m.mc = MC(raw, answer_at, late)
         return m
 
     m = radio(answer_at=3)
@@ -781,6 +799,15 @@ def test_telemetry_retries():
     check(m.tried["Alice"] == (1, ["b2"]), "percorso provato per primo ricordato")
     m = radio(answer_at=0)
     check(asyncio.run(m.request_telemetry("Alice")) is None and m.mc.commands.calls == 3, "nessuna risposta dopo tre tentativi")
+    m = radio(answer_at=1, late=True)
+    res = asyncio.run(m.request_telemetry("Alice"))
+    check(res and res["lat"] == 43.35 and m.mc.commands.calls == 2,
+          "risposta in ritardo al primo tentativo accettata durante il secondo")
+    check(not m.mc.subs, "nessun ascolto rimasto attivo")
+    m = radio(answer_at=1)
+    res = asyncio.run(m.request_telemetry("Alice", flood_first=True))
+    check(res and m.mc.commands.resets == 1 and m.tried["Alice"] == (-1, []),
+          "in movimento: primo tentativo già in flood")
 
     db, mesh, core, c, v, anon, tid = setup()
     bot = Bot({"token": "123456:TEST", "allowed_chat_ids": [1]}, core)
@@ -798,6 +825,12 @@ def test_telemetry_retries():
     p = db.last_poll(tid)
     check(not p["ok"] and p["hops"] == 1 and p["path"] == ["c3"] and db.last_route(tid)["hops"] == 2,
           "percorso provato salvato senza cambiare quello dell'ultima risposta")
+    check("tre volte in flood" not in fail, "testo dei tentativi col percorso salvato")
+    mesh.answer = True
+    asyncio.run(core.poll_tracker(tid))
+    check(mesh.flood_first, "dopo una richiesta senza risposta si parte subito in flood")
+    asyncio.run(core.poll_tracker(tid))
+    check(not mesh.flood_first, "dopo una risposta, da fermo, si riprova prima il percorso salvato")
 
 
 def test_bot_update():

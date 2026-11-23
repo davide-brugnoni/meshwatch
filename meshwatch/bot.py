@@ -731,9 +731,11 @@ class Bot:
             txt = f"❌ {t['label']} non ha risposto."
             p = self.core.db.last_poll(t["id"])
             if p and not p["ok"] and p["ts"] >= start:
-                first = ("in flood" if p["hops"] is None or p["hops"] < 0
-                         else "sul percorso salvato (" + self.route_desc(t, p["hops"], p["path"]) + ")")
-                txt += f"\nTentativi: prima {first}, poi due volte in flood."
+                if p["hops"] is None or p["hops"] < 0:
+                    txt += "\nTentativi: tre volte in flood."
+                else:
+                    txt += ("\nTentativi: prima sul percorso salvato ("
+                            + self.route_desc(t, p["hops"], p["path"]) + "), poi due volte in flood.")
             await chat.send_message(txt)
         await self.last_position(chat, t)
 

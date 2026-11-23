@@ -5,6 +5,7 @@ import logging
 import time
 
 from meshcore import EventType, MeshCore
+from meshcore.packets import BinaryReqType
 
 log = logging.getLogger("meshwatch.mesh")
 
@@ -294,11 +295,19 @@ class Mesh:
             return None
         return self.mc.get_contact_by_key_prefix(key)
 
-    RETRY_DELAY_S = 5   # pausa prima dell'ultimo tentativo: in movimento i buchi di copertura durano pochi secondi
+    RETRY_DELAY_S = 5     # pausa prima dell'ultimo tentativo: in movimento i buchi di copertura durano pochi secondi
+    DIRECT_WAIT_S = 15    # attesa minima della risposta sul percorso salvato
+    FLOOD_WAIT_S = 30     # attesa minima in flood: andata e ritorno attraversano più ripetitori
+    LISTEN_S = 150        # per quanto si accetta ancora la risposta a un tentativo già scaduto
 
-    async def request_telemetry(self, name, attempts=3):
+    async def request_telemetry(self, name, attempts=3, flood_first=False):
         """Chiede la telemetria al nodo. Ritorna dict (lat, lon, alt, batt_v, sensors, hops, path) o None.
-        Primo tentativo sul percorso salvato, poi in flood; l'ultimo dopo una breve pausa.
+        Primo tentativo sul percorso salvato (in flood se flood_first: il dispositivo si sta
+        spostando o l'ultima richiesta è andata a vuoto, quindi il percorso è probabilmente
+        vecchio), poi in flood; l'ultimo dopo una breve pausa.
+        La risposta a un tentativo precedente viene accettata anche se arriva in ritardo, durante
+        i tentativi successivi: passando da un ripetitore all'altro il flood può impiegare più
+        del previsto e prima quella risposta andava persa.
         Il percorso provato per primo resta in self.tried[name] (hops, path), anche se non risponde."""
         async with self.lock:
             c = await self.contact(name)
@@ -306,25 +315,63 @@ class Mesh:
                 log.warning("Contatto '%s' non trovato", name)
                 return None
             info = self.contact_info(c)
+            if flood_first and info["hops"] >= 0:
+                await self.mc.commands.reset_path(c)
+                info = {**info, "hops": -1, "path": []}
             self.tried[name] = (info["hops"], info["path"])
-            for i in range(attempts):
-                try:
-                    if i > 0:
-                        if i == attempts - 1:
-                            await asyncio.sleep(self.RETRY_DELAY_S)
-                        await self.mc.commands.reset_path(c)   # tentativi successivi in flood
-                    lpp = await self.mc.commands.req_telemetry_sync(c, min_timeout=20)
-                    if lpp is not None:
-                        res = parse_lpp(lpp)
-                        # percorso che il gateway usa ora per raggiungere il nodo
-                        info = self.contact_info(self.mc.get_contact_by_name(name) or c)
-                        res["hops"], res["path"] = info["hops"], info["path"]
-                        return res
+            tags, last, done = set(), None, asyncio.get_running_loop().create_future()
+
+            def on_telemetry(ev):
+                if ev.payload.get("tag") in tags and not done.done():
+                    done.set_result((ev.payload.get("tag"), ev.payload.get("lpp")))
+
+            sub = self.mc.subscribe(EventType.TELEMETRY_RESPONSE, on_telemetry)
+            try:
+                for i in range(attempts):
+                    flood = i > 0 or info["hops"] < 0
+                    try:
+                        if i > 0:
+                            if i == attempts - 1:
+                                await asyncio.wait([done], timeout=self.RETRY_DELAY_S)
+                            if not done.done():
+                                await self.mc.commands.reset_path(c)   # tentativi successivi in flood
+                        if not done.done():
+                            sent = await self.mc.commands.send_binary_req(
+                                c, BinaryReqType.TELEMETRY, timeout=self.LISTEN_S)
+                            if sent.type == EventType.ERROR:
+                                log.warning("Telemetria %s: la radio ha rifiutato la richiesta (%s)", name, sent.payload)
+                            else:
+                                last = sent.payload["expected_ack"].hex()
+                                tags.add(last)
+                                wait = max(self.FLOOD_WAIT_S if flood else self.DIRECT_WAIT_S,
+                                           sent.payload.get("suggested_timeout", 0) / 800)
+                                await asyncio.wait([done], timeout=wait)
+                    except Exception as e:
+                        log.error("Telemetria %s: %s", name, e)
+                    if done.done():
+                        tag, lpp = done.result()
+                        if i:
+                            log.info("Telemetria %s: risposta durante il tentativo %d/%d%s", name, i + 1, attempts,
+                                     "" if tag == last else " (in ritardo, a un tentativo precedente)")
+                        return await self._telemetry_result(name, c, lpp)
                     log.info("Telemetria %s: nessuna risposta al tentativo %d/%d (%s)", name, i + 1, attempts,
-                             "flood" if i > 0 or info["hops"] < 0 else f"{info['hops']} salti via {','.join(info['path']) or 'diretto'}")
-                except Exception as e:
-                    log.error("Telemetria %s: %s", name, e)
-            return None
+                             "flood" if flood else f"{info['hops']} salti via {','.join(info['path']) or 'diretto'}")
+                return None
+            finally:
+                sub.unsubscribe()
+
+    async def _telemetry_result(self, name, c, lpp):
+        res = parse_lpp(lpp)
+        # percorso che il gateway usa ora per raggiungere il nodo: dopo una risposta in flood
+        # la radio l'ha appena aggiornato (PATH_UPDATE), quindi si rilegge la rubrica
+        try:
+            await asyncio.sleep(0.3)
+            await self.mc.ensure_contacts(follow=True)
+        except Exception as e:
+            log.warning("Rubrica non aggiornata dopo la telemetria: %s", e)
+        info = self.contact_info(self.mc.get_contact_by_name(name) or c)
+        res["hops"], res["path"] = info["hops"], info["path"]
+        return res
 
     async def request_status(self, name, password, attempts=2):
         """Login sul ripetitore e richiesta statistiche. Ritorna dict o None."""
