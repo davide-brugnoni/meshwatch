@@ -2,6 +2,7 @@
 import asyncio
 import os
 import shutil
+import subprocess
 import time
 
 # Il servizio gira come utente senza privilegi: riavvio e spegnimento passano da sudo,
@@ -11,6 +12,7 @@ SUDO_CMDS = {
     "poweroff": ["sudo", "-n", "/usr/bin/systemctl", "poweroff"],
 }
 
+HWMON_DIR = "/sys/class/hwmon"
 THROTTLE_PATHS = ("/sys/devices/platform/soc/soc:firmware/get_throttled",
                   "/sys/devices/platform/soc/soc:firmware/raspberrypi-hwmon/get_throttled")
 
@@ -23,24 +25,59 @@ def _read(path):
         return None
 
 
+_UV_SEEN = False  # tensione bassa vista almeno una volta da quando gira il servizio
+
+
+def _from_bits(n):
+    return {"undervoltage_now": bool(n & 0x1), "undervoltage_since_boot": bool(n & 0x10000),
+            "throttled_now": bool(n & 0x4), "throttled_since_boot": bool(n & 0x40000)}
+
+
+def _hwmon_alarm():
+    """Driver rpi_volt: /sys/class/hwmon/hwmonN sono symlink, os.walk non li segue."""
+    base = HWMON_DIR
+    try:
+        names = sorted(os.listdir(base))
+    except OSError:
+        return None
+    for d in names:
+        path = os.path.join(base, d)
+        if _read(os.path.join(path, "name")) not in (None, "rpi_volt"):
+            continue
+        v = _read(os.path.join(path, "in0_lcrit_alarm"))
+        if v is not None:
+            return v == "1"
+    return None
+
+
+def _vcgencmd():
+    try:
+        out = subprocess.run(["vcgencmd", "get_throttled"], capture_output=True, text=True,
+                             timeout=2).stdout
+        return int(out.strip().split("=", 1)[1], 16)
+    except (OSError, subprocess.SubprocessError, IndexError, ValueError):
+        return None
+
+
 def _throttled():
     """Bit del firmware Raspberry: 0 = tensione bassa ora, 16 = tensione bassa dall'avvio."""
-    for p in THROTTLE_PATHS:
+    global _UV_SEEN
+    for p in THROTTLE_PATHS:  # kernel vecchi
         v = _read(p)
         if v:
             try:
-                n = int(v, 16)
-                return {"undervoltage_now": bool(n & 0x1), "undervoltage_since_boot": bool(n & 0x10000),
-                        "throttled_now": bool(n & 0x4), "throttled_since_boot": bool(n & 0x40000)}
+                return _from_bits(int(v, 16))
             except ValueError:
                 pass
-    # alternativa: il driver hwmon segnala l'allarme sulla tensione
-    for root, _, files in os.walk("/sys/class/hwmon"):
-        if "in0_lcrit_alarm" in files:
-            v = _read(os.path.join(root, "in0_lcrit_alarm"))
-            if v is not None:
-                return {"undervoltage_now": v == "1", "undervoltage_since_boot": None,
-                        "throttled_now": None, "throttled_since_boot": None}
+    # kernel recenti: get_throttled non c'è più in sysfs, il driver hwmon segnala l'allarme
+    alarm = _hwmon_alarm()
+    if alarm is not None:
+        _UV_SEEN = _UV_SEEN or alarm
+        return {"undervoltage_now": alarm, "undervoltage_since_boot": _UV_SEEN,
+                "throttled_now": None, "throttled_since_boot": None}
+    n = _vcgencmd()  # ultima risorsa (richiede il gruppo video)
+    if n is not None:
+        return _from_bits(n)
     return {}
 
 
