@@ -70,7 +70,7 @@ def test_sensors():
     db, mesh, core, c, v, anon, tid = setup()
     notes = []
 
-    async def collect(text):
+    async def collect(text, actions=None):
         notes.append(text)
     core.notifiers.append(collect)
 
@@ -146,7 +146,7 @@ def test_battery_alerts():
     db, mesh, core, c, v, anon, tid = setup()
     notes = []
 
-    async def collect(text):
+    async def collect(text, actions=None):
         notes.append(text)
     core.notifiers.append(collect)
     alert = lambda volt: asyncio.run(core._battery_alert(("t", tid), volt, 3.5, f"batt {volt}"))
@@ -405,16 +405,18 @@ class FakeMsg:
 
 class FakeChat:
     def __init__(self, cid=1):
-        self.id, self.sent, self.locations, self.photos = cid, [], [], []
+        self.id, self.sent, self.locations, self.photos, self.kbs = cid, [], [], [], []
 
-    async def send_photo(self, photo, caption="", **kw):
+    async def send_photo(self, photo, caption="", reply_markup=None, **kw):
         self.photos.append((photo, caption))
+        self.kbs.append(reply_markup)
 
     async def send_action(self, action):
         pass
 
-    async def send_message(self, text, **kw):
+    async def send_message(self, text, reply_markup=None, **kw):
         self.sent.append(text)
+        self.kbs.append(reply_markup)
 
     async def send_location(self, latitude, longitude, live_period=None, **kw):
         m = FakeMsg(self, latitude, longitude)
@@ -826,13 +828,8 @@ def test_bot_update():
     bot = Bot({"token": "123456:TEST", "allowed_chat_ids": [1, 2], "admin_chat_ids": [1]}, core, None, up)
     chat, viewer = FakeChat(1), FakeChat(2)
     run = asyncio.run
-    kbs = []
+    kbs = chat.kbs
     upd = FakeUpdate(chat)
-
-    async def reply(text, reply_markup=None, **kw):
-        chat.sent.append(text)
-        kbs.append(reply_markup)
-    upd.message.reply_text = reply
 
     run(bot.update_cmd(FakeUpdate(viewer), Ctx()))
     check("Solo le chat admin" in viewer.sent[-1], "/aggiornamento: solo chat admin")
@@ -872,6 +869,114 @@ def test_bot_update():
     check("non si può aggiornare" in chat.sent[-1] and kbs[-1] is None, "/aggiornamento: motivo se non si può")
 
 
+def test_bot_buttons():
+    """Pulsanti sotto avvisi e risposte: azioni con un tocco, periodi, segui, solo admin dove serve."""
+    from meshwatch import bot as botmod
+    from meshwatch.bot import Bot
+    db, mesh, core, c, v, anon, tid = setup()
+    bot = Bot({"token": "123456:TEST", "allowed_chat_ids": [1, 2], "admin_chat_ids": [1]}, core)
+    core.notifiers.remove(bot.broadcast)   # niente Telegram vero: gli avvisi li raccoglie il test
+    chat, viewer = FakeChat(1), FakeChat(2)
+    run = asyncio.run
+    datas = lambda kb: [b.callback_data for row in kb.inline_keyboard for b in row] if kb else []
+
+    # avviso "non risponde": arriva con le azioni, diventano pulsanti in ogni chat
+    got, sent = [], []
+
+    async def collect(text, actions=None):
+        got.append((text, actions))
+    core.notifiers.append(collect)
+    run(core.poll_tracker(tid))
+    db._exec("UPDATE tracker_polls SET ts = ts - 7200")
+    db.update_tracker(tid, offline_alert_min=30)
+    run(core._tracker_fail(db.tracker(tid)))
+    core.notifiers.remove(collect)
+    check(got and "non risponde" in got[-1][0] and got[-1][1] == [("pos", tid), ("last", tid), ("pause", tid)],
+          "avviso non risponde: con le azioni proposte")
+
+    class FakeTgBot:
+        async def send_message(self, cid, text, reply_markup=None, **kw):
+            sent.append((cid, datas(reply_markup)))
+    bot.app = type("A", (), {"bot": FakeTgBot()})()
+    run(bot.broadcast("🆕 Nuova versione", [("upd",), ("rep", "Rip-Monte")]))
+    check(dict(sent) == {1: ["updchk", "rep:Rip-Monte"], 2: ["rep:Rip-Monte"]},
+          "avviso: Installa solo nelle chat admin")
+    sent.clear()
+    run(bot.broadcast("📻 Radio scollegata"))
+    check(dict(sent) == {1: [], 2: []}, "avviso senza azioni: nessun pulsante")
+    check(datas(botmod.alert_buttons([("pos", tid), ("last", tid), ("pause", tid), ("interval", tid, 60), ("sens", tid)], True))
+          == [f"a:pos:{tid}:", f"a:last:{tid}:", f"a:pause:{tid}:", f"a:interval:{tid}:60", f"a:sens:{tid}:"],
+          "pulsanti degli avvisi")
+    check(all(len(d.encode()) <= 64 for d in datas(botmod.alert_buttons([("rep", "R" * 200)], True))),
+          "callback_data entro i 64 byte di Telegram")
+
+    class Q:
+        def __init__(self, chat, data):
+            self.message = type("M", (), {"chat": chat})()
+            self.data, self.removed = data, False
+
+        async def answer(self):
+            pass
+
+        async def edit_message_reply_markup(self, markup):
+            self.removed = True
+
+    def press(ch, data):
+        q = Q(ch, data)
+        run(bot.on_button(type("U", (), {"callback_query": q})(), None))
+        return q
+
+    # Pausa dall'avviso: il pulsante resta, la risposta offre Riprendi
+    q = press(viewer, f"a:pause:{tid}:")
+    check(db.tracker(tid)["paused"] == 1 and not q.removed and datas(viewer.kbs[-1]) == [f"a:resume:{tid}:"],
+          "Pausa dal pulsante: pulsante lasciato, risposta con Riprendi")
+    press(viewer, f"a:resume:{tid}:")
+    check(db.tracker(tid)["paused"] == 0 and datas(viewer.kbs[-1]) == [f"a:pause:{tid}:"], "Riprendi dal pulsante")
+    press(viewer, f"a:interval:{tid}:60")
+    check(db.tracker(tid)["interval_min"] == 60, "intervallo dal pulsante dell'avviso")
+    press(FakeChat(99), f"a:pause:{tid}:")
+    check(db.tracker(tid)["paused"] == 0, "chat non autorizzata: pulsante ignorato")
+    press(viewer, "a:bogus:1:")
+    press(viewer, "a:pos:9999:")
+    check("non più presente" in viewer.sent[-1], "pulsante su un dispositivo cancellato")
+    # scelta del dispositivo: lì i pulsanti spariscono dopo l'uso
+    check(press(viewer, f"last:{tid}:").removed, "scelta del dispositivo: pulsanti tolti dopo l'uso")
+
+    # posizione: Di nuovo · Mappa · Segui
+    mesh.fix = True
+    run(core.poll_tracker(tid))
+    press(chat, f"a:last:{tid}:")
+    check(datas(chat.kbs[-1]) == [f"a:pos:{tid}:", f"a:map:{tid}:1", f"a:follow:{tid}:2"], "posizione: pulsanti di seguito")
+
+    # statistiche e mappa: gli altri periodi
+    press(chat, f"a:stats:{tid}:7")
+    check("ultimi 7 giorni" in chat.sent[-1] and datas(chat.kbs[-1]) == [f"a:stats:{tid}:1", f"a:stats:{tid}:30"],
+          "statistiche: pulsanti per gli altri periodi")
+    check(datas(botmod.period_buttons("map", "all", 1)) == ["a:map:all:7", "a:map:all:30"], "mappa: pulsanti dei periodi")
+
+    # segui: Basta e altre durate
+    press(chat, f"a:follow:{tid}:2")
+    check((1, tid) in bot.live and datas(chat.kbs[-1]) == [f"stop:{tid}", f"a:follow:{tid}:1", f"a:follow:{tid}:4",
+                                                            f"a:follow:{tid}:8"], "segui: Basta e altre durate")
+    live = chat.locations[-1]
+    press(chat, f"stop:{tid}")
+    check(live.stopped and (1, tid) not in bot.live and "fermata" in chat.sent[-1], "⏹ Basta dal pulsante")
+    press(chat, f"stop:{tid}")
+    check("già terminata" in chat.sent[-1], "⏹ Basta su una posizione in diretta già finita")
+
+    # ripetitore e nodi
+    press(viewer, "rep:Sconosciuto")
+    check("non è più tra i ripetitori" in viewer.sent[-1], "Interroga ora: ripetitore rimosso")
+    check(datas(botmod.NODES_BUTTONS) == ["nodes:refresh"] and "Stato" in bot.nodes_text(), "/nodi con il pulsante Interroga")
+
+    # Installa: solo admin, ricontrolla la versione
+    n = len(viewer.sent)
+    press(viewer, "updchk")
+    check(len(viewer.sent) == n, "Installa da una chat non admin: ignorato")
+    press(chat, "updchk")
+    check("Aggiornamento non disponibile" in chat.sent[-1], "Installa: passa dal controllo della versione")
+
+
 def main():
     test_sensors()
     test_battery_alerts()
@@ -882,6 +987,7 @@ def main():
     test_bot()
     test_bot_images()
     test_bot_update()
+    test_bot_buttons()
     test_telemetry_retries()
     print("Tutti i test superati.")
 

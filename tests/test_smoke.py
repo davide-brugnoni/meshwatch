@@ -268,7 +268,7 @@ def main():
 
     # radio: avviso, riconnessione, ritorno
     notes = []
-    async def collect(text):
+    async def collect(text, actions=None):
         notes.append(text)
     async def watchdog():
         core.notifiers.append(collect)
@@ -288,7 +288,7 @@ def main():
         async def check(self):
             return {"available": True, "problems": [], "latest": {"sha": self.sha, "message": "Novità"}}
     upd_notes = []
-    async def collect_upd(text):
+    async def collect_upd(text, actions=None):
         upd_notes.append(text)
     async def upd_watch():
         core.notifiers.append(collect_upd)

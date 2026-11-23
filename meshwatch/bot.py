@@ -28,6 +28,7 @@ KEYBOARD = ReplyKeyboardMarkup(
      [KeyboardButton(BTN_NODES), KeyboardButton(BTN_SYSTEM)]],
     resize_keyboard=True)
 KEYBOARD_VERSION = "2"
+NODES_BUTTONS = InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Interroga i ripetitori", callback_data="nodes:refresh")]])
 KEYBOARD_NEWS = ("🆕 Nuovi pulsanti: 🗺 Mappa con la traccia, 👣 Segui (posizione in diretta per 2 ore), "
                  "📊 Statistiche, 📝 Riepilogo della giornata, 🖥 Sistema. La traccia in link resta con /traccia.")
 NO_PIL = ("Per la mappa serve la libreria Pillow: aggiorna MeshWatch dalla pagina "
@@ -57,6 +58,10 @@ COMMANDS = [
     ("aiuto", "elenco dei comandi"),
 ]
 FOLLOW_MAX_H = 8
+FOLLOW_HOURS = (1, 2, 4, 8)   # durate proposte con i pulsanti sotto la posizione in diretta
+PERIODS = (1, 7, 30)          # periodi proposti con i pulsanti sotto mappa e statistiche
+# azioni dei pulsanti "a:azione:id:arg" sotto avvisi e risposte: restano sul messaggio dopo l'uso
+BUTTON_ACTIONS = ("pos", "last", "pause", "resume", "interval", "stats", "sens", "route", "follow", "map")
 REPORT_WINDOW_MIN = 30   # riepilogo automatico: se a quell'ora il servizio era fermo, lo manda entro 30 min
 
 
@@ -70,6 +75,56 @@ def thin(seq, n):
 
 def period_text(days):
     return "ultime 24 ore" if days == 1 else f"ultimi {days} giorni"
+
+
+def _btn(label, data):
+    return InlineKeyboardButton(label, callback_data=data[:64])   # Telegram: al massimo 64 byte
+
+
+def _rows(buttons, per_row=2):
+    return InlineKeyboardMarkup([buttons[i:i + per_row] for i in range(0, len(buttons), per_row)]) if buttons else None
+
+
+def period_buttons(action, tid, current):
+    """Sotto mappa e statistiche: gli altri periodi, senza riscrivere /mappa 7."""
+    return InlineKeyboardMarkup([[_btn("📅 " + ("24 ore" if d == 1 else f"{d} giorni"), f"a:{action}:{tid}:{d}")
+                                  for d in PERIODS if d != current]])
+
+
+def position_buttons(t):
+    tid = t["id"]
+    return InlineKeyboardMarkup([[_btn("🔄 Di nuovo", f"a:pos:{tid}:"), _btn("🗺 Mappa", f"a:map:{tid}:1"),
+                                  _btn("👣 Segui", f"a:follow:{tid}:2")]])
+
+
+def follow_buttons(t, hours):
+    tid = t["id"]
+    return _rows([_btn("⏹ Basta", f"stop:{tid}")]
+                 + [_btn(f"⏱ {h} or{'a' if h == 1 else 'e'}", f"a:follow:{tid}:{h}") for h in FOLLOW_HOURS if h != hours],
+                 per_row=4)
+
+
+def alert_buttons(actions, admin):
+    """Pulsanti per le azioni proposte con un avviso (vedi Core.notify). Quelle solo per
+    admin non compaiono nelle altre chat."""
+    out = []
+    for a in actions or []:
+        kind = a[0]
+        if kind == "pos":
+            out.append(_btn("📍 Riprova ora", f"a:pos:{a[1]}:"))
+        elif kind == "last":
+            out.append(_btn("🕓 Ultima posizione", f"a:last:{a[1]}:"))
+        elif kind == "pause":
+            out.append(_btn("⏸ Pausa", f"a:pause:{a[1]}:"))
+        elif kind == "interval":
+            out.append(_btn(f"⏱ Ogni {a[2]} min", f"a:interval:{a[1]}:{a[2]}"))
+        elif kind == "sens":
+            out.append(_btn("🌡️ Sensori", f"a:sens:{a[1]}:"))
+        elif kind == "rep":
+            out.append(_btn("🔄 Interroga ora", f"rep:{a[1]}"))
+        elif kind == "upd" and admin:
+            out.append(_btn("⬆️ Installa", "updchk"))
+    return _rows(out)
 
 
 class _Chat:
@@ -227,12 +282,14 @@ class Bot:
         self.core.db.set("tg_keyboard", KEYBOARD_VERSION)
         self.core.db.set("tg_keyboard_chats", "")
 
-    async def broadcast(self, text):
-        """Avvisi: se la rete cade, riprova per qualche minuto invece di perderli."""
+    async def broadcast(self, text, actions=None):
+        """Avvisi: se la rete cade, riprova per qualche minuto invece di perderli. Le azioni
+        proposte (vedi Core.notify) diventano pulsanti sotto il messaggio."""
         for chat in self.allowed:
+            kb = alert_buttons(actions, chat in self.admins)
             for attempt in range(6):
                 try:
-                    await self.app.bot.send_message(chat, text, disable_web_page_preview=True)
+                    await self.app.bot.send_message(chat, text, disable_web_page_preview=True, reply_markup=kb)
                     break
                 except (NetworkError, TimedOut) as e:
                     log.warning("Avviso non inviato (tentativo %d): %s", attempt + 1, e)
@@ -308,7 +365,8 @@ class Bot:
         elif action == "track":
             await self.track(chat, t)
         elif action == "stats":
-            await chat.send_message(self.stats_text(t, int(arg or 1)))
+            days = max(1, min(int(arg or 1), 365))
+            await chat.send_message(self.stats_text(t, days), reply_markup=period_buttons("stats", t["id"], days))
         elif action == "sens":
             await chat.send_message(self.sensors_text(t))
         elif action == "route":
@@ -320,12 +378,14 @@ class Bot:
         elif action == "pause":
             self.core.db.update_tracker(t["id"], paused=1)
             self.core.audit(f"telegram:{chat.id}", "pausa tracciamento", t["label"])
-            await chat.send_message(f"⏸ Tracciamento di {t['label']} sospeso.")
+            await chat.send_message(f"⏸ Tracciamento di {t['label']} sospeso.",
+                                    reply_markup=_rows([_btn("▶️ Riprendi", f"a:resume:{t['id']}:")]))
         elif action == "resume":
             self.core.db.update_tracker(t["id"], paused=0)
             self.core.schedule_now(t["id"])
             self.core.audit(f"telegram:{chat.id}", "ripresa tracciamento", t["label"])
-            await chat.send_message(f"▶️ Tracciamento di {t['label']} riattivato.")
+            await chat.send_message(f"▶️ Tracciamento di {t['label']} riattivato.",
+                                    reply_markup=_rows([_btn("⏸ Pausa", f"a:pause:{t['id']}:")]))
         elif action == "interval":
             m = max(5, min(int(arg), 720))
             self.core.db.update_tracker(t["id"], interval_min=m)
@@ -414,7 +474,8 @@ class Bot:
         self.core.audit(f"telegram:{chat.id}", "posizione in diretta", f"{t['label']}: {hours} h")
         await chat.send_message(
             f"📡 Posizione in diretta di {t['label']} per {hours} or{'a' if hours == 1 else 'e'}: si sposta a ogni nuova "
-            f"posizione (ogni {self.core.interval_min(t)} min). /basta per smettere.")
+            f"posizione (ogni {self.core.interval_min(t)} min). /basta per smettere.",
+            reply_markup=follow_buttons(t, hours))
 
     async def on_position(self, t, p):
         for (chat_id, tid), (msg, until) in list(self.live.items()):
@@ -437,6 +498,13 @@ class Bot:
         except Exception:
             pass   # già scaduta o fermata da Telegram
 
+    async def stop_one(self, chat, tid):
+        """Pulsante ⏹ Basta: ferma la posizione in diretta di quel dispositivo in questa chat."""
+        item = self.live.pop((chat.id, tid), None)
+        if item:
+            await self._stop_live(item[0])
+        await chat.send_message("Posizione in diretta fermata." if item else "Posizione in diretta già terminata.")
+
     async def unfollow(self, update: Update, ctx):
         if not self.ok(update):
             return
@@ -447,8 +515,9 @@ class Bot:
         await update.message.reply_text("Posizione in diretta fermata." if mine else "Nessuna posizione in diretta attiva.")
 
     # ---------- mappa (immagine)
-    async def _photo(self, chat, data, caption):
-        await chat.send_photo(photo=data, caption=caption[:1024], read_timeout=60, write_timeout=60)
+    async def _photo(self, chat, data, caption, reply_markup=None):
+        await chat.send_photo(photo=data, caption=caption[:1024], read_timeout=60, write_timeout=60,
+                              reply_markup=reply_markup)
 
     async def _busy(self, chat):
         try:   # "sta inviando una foto…": disegnare sul Raspberry richiede qualche secondo
@@ -515,6 +584,7 @@ class Bot:
             await chat.send_message("Nessuna posizione registrata" + (f" per {t['label']}." if t else "."))
             return
         title = f"🗺 {t['label'] if t else 'Tutti i dispositivi'} – {period_text(days)}"
+        kb = period_buttons("map", t["id"] if t else "all", days)
         try:
             img = await charts.static_map(self._get_tile, tracks, markers + self._net_markers())
         except Exception as e:   # un errore nel disegno non deve lasciare la chat senza risposta
@@ -522,9 +592,9 @@ class Bot:
             img = None
         if not img:
             await chat.send_message(title + "\n" + "\n".join(lines) + "\n(immagine della mappa non disponibile)",
-                                    disable_web_page_preview=True)
+                                    disable_web_page_preview=True, reply_markup=kb)
             return
-        await self._photo(chat, img, title + "\n" + "\n".join(lines))
+        await self._photo(chat, img, title + "\n" + "\n".join(lines), reply_markup=kb)
 
     # ---------- sistema
     def system_text(self):
@@ -704,7 +774,7 @@ class Bot:
               "oppure scegliere con i pulsanti.",
             reply_markup=KEYBOARD)
 
-    async def _send_pos(self, chat, p, title, route=None):
+    async def _send_pos(self, chat, p, title, route=None, t=None):
         await chat.send_location(latitude=p["lat"], longitude=p["lon"])
         txt = f"{title}\n{fmt_ts(p['ts'])}\n{maps_link(p['lat'], p['lon'])}"
         if p.get("alt") is not None:
@@ -713,7 +783,7 @@ class Bot:
             txt += f" · batteria {p['batt_v']:.2f} V"
         if route:
             txt += f"\n🛰 {route}"
-        await chat.send_message(txt, disable_web_page_preview=True)
+        await chat.send_message(txt, disable_web_page_preview=True, reply_markup=position_buttons(t) if t else None)
 
     async def position_now(self, chat, t):
         await chat.send_message(f"Chiedo la posizione a {t['label']}… (può volerci un paio di minuti)")
@@ -721,7 +791,7 @@ class Bot:
         res = await self.core.poll_tracker(t["id"])
         if res and res["lat"] is not None:
             res["ts"] = int(time.time())
-            await self._send_pos(chat, res, f"📍 {t['label']} adesso", route=self.route_desc(t, res.get("hops"), res.get("path")))
+            await self._send_pos(chat, res, f"📍 {t['label']} adesso", route=self.route_desc(t, res.get("hops"), res.get("path")), t=t)
             return
         if res:
             await chat.send_message(f"{t['label']} ha risposto ma il GPS non ha ancora il fix."
@@ -742,7 +812,7 @@ class Bot:
         if not p:
             await chat.send_message(f"Nessuna posizione registrata per {t['label']}.")
             return
-        await self._send_pos(chat, p, f"🕓 Ultima posizione di {t['label']}")
+        await self._send_pos(chat, p, f"🕓 Ultima posizione di {t['label']}", t=t)
 
     async def track(self, chat, t):
         pts = self.core.db.positions_since(t["id"], int(time.time()) - 12 * 3600)
@@ -765,8 +835,19 @@ class Bot:
         await self.pick(update, "interval", str(m), " ".join(ctx.args[1:]))
 
     async def nodes(self, update: Update, ctx):
-        if not self.ok(update):
-            return
+        if self.ok(update):
+            await update.message.reply_text(self.nodes_text(), reply_markup=NODES_BUTTONS)
+
+    @staticmethod
+    def repeater_line(r):
+        s = r["status"]
+        head = "🟢" if r["last_ok"] else ("🔴" if r["last_poll"] else "⚪")
+        if not s:
+            return f"{head} {r['name']}: nessun dato"
+        return (f"{head} {r['name']}: {(s['bat_mv'] or 0) / 1000:.2f} V · up {fmt_uptime(s['uptime'])}"
+                f" · rumore {s['noise']} dBm · SNR {s['snr']} · {fmt_ts(s['ts'])}")
+
+    def nodes_text(self):
         st = self.core.state()
         lines = ["📡 Stato", f"Radio gateway: {'collegata' if st['radio_connected'] else 'NON collegata'}"]
         for t in st["trackers"]:
@@ -775,22 +856,31 @@ class Bot:
         if st["repeaters"]:
             lines.append("")
         for r in st["repeaters"]:
-            s = r["status"]
-            head = "🟢" if r["last_ok"] else ("🔴" if r["last_poll"] else "⚪")
-            if s:
-                lines.append(
-                    f"{head} {r['name']}: {(s['bat_mv'] or 0) / 1000:.2f} V · up {fmt_uptime(s['uptime'])}"
-                    f" · rumore {s['noise']} dBm · SNR {s['snr']} · {fmt_ts(s['ts'])}")
-            else:
-                lines.append(f"{head} {r['name']}: nessun dato")
-        await update.message.reply_text("\n".join(lines))
+            lines.append(self.repeater_line(r))
+        return "\n".join(lines)
 
     async def refresh_nodes(self, update: Update, ctx):
-        if not self.ok(update):
-            return
-        await update.message.reply_text("Interrogo i ripetitori…")
+        if self.ok(update):
+            await self.refresh_all(update.effective_chat)
+
+    async def refresh_all(self, chat):
+        await chat.send_message("Interrogo i ripetitori…")
         await self.core.poll_repeaters()
-        await self.nodes(update, ctx)
+        await chat.send_message(self.nodes_text(), reply_markup=NODES_BUTTONS)
+
+    async def repeater_now(self, chat, name):
+        """Pulsante sotto l'avviso "ripetitore muto": lo interroga subito."""
+        if not self.core.db.repeater(name):
+            await chat.send_message(f"{name} non è più tra i ripetitori configurati.")
+            return
+        if not self.core.mesh.connected:
+            await chat.send_message("Radio gateway non collegata: non posso interrogare il ripetitore.")
+            return
+        await chat.send_message(f"Interrogo {name}… (può volerci un minuto)")
+        st = await self.core.poll_repeater(name)
+        r = next((x for x in self.core.state()["repeaters"] if x["name"] == name), None)
+        await chat.send_message((self.repeater_line(r) if r else name)
+                                + ("" if st is not None else "\n❌ Non ha risposto."))
 
     async def advert(self, update: Update, ctx):
         if self.ok(update):
@@ -817,38 +907,43 @@ class Bot:
         if not self.is_admin(update):
             await update.message.reply_text("Solo le chat admin possono aggiornare MeshWatch.")
             return
+        await self.update_check(update.effective_chat)
+
+    async def update_check(self, chat):
+        """Controlla GitHub e, se c'è una versione nuova, chiede conferma (anche dal pulsante
+        "Installa" dell'avviso: su un avviso vecchio ricontrolla prima la versione)."""
         if self.updater is None:
-            await update.message.reply_text("Aggiornamento non disponibile.")
+            await chat.send_message("Aggiornamento non disponibile.")
             return
         from .updater import UpdateError
-        await update.message.reply_text("Controllo se c'è una nuova versione…")
+        await chat.send_message("Controllo se c'è una nuova versione…")
         try:
             st = await self.updater.check()
         except UpdateError as e:
-            await update.message.reply_text(f"❌ {e}")
+            await chat.send_message(f"❌ {e}")
             return
         lines = [f"⬆️ MeshWatch {__version__}", "Installata: " + self._version_line(st["installed"])]
         if st.get("rolled_back"):
             lines.append(f"⚠️ L'ultimo aggiornamento non partiva: rimessa la versione precedente ({st['rolled_back']}).")
         if st["job"]["state"] in ("download", "check", "deps", "install", "restarting"):
             lines.append(f"\nAggiornamento già in corso: {st['job']['message']}")
-            await update.message.reply_text("\n".join(lines))
+            await chat.send_message("\n".join(lines))
             return
         if not st["available"]:
             lines.append("\n✅ Hai già l'ultima versione.")
-            await update.message.reply_text("\n".join(lines))
+            await chat.send_message("\n".join(lines))
             return
         lines.append("Nuova: " + self._version_line(st["latest"]))
         if st["problems"]:
             lines.append("\nDa qui non si può aggiornare: " + "; ".join(st["problems"])
                          + ". Vedi il README, sezione Aggiornamenti.")
-            await update.message.reply_text("\n".join(lines))
+            await chat.send_message("\n".join(lines))
             return
         lines.append("\nDurante l'installazione (circa un minuto, di più se cambiano le librerie) pagina, radio "
                      "e bot si fermano. Se la nuova versione non parte torna da sola alla precedente.")
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬆️ Aggiorna ora", callback_data="upd:go"),
                                     InlineKeyboardButton("✖ Annulla", callback_data="upd:no")]])
-        await update.message.reply_text("\n".join(lines), reply_markup=kb)
+        await chat.send_message("\n".join(lines), reply_markup=kb)
 
     async def update_button(self, chat, q, what):
         if what != "go":
@@ -897,6 +992,21 @@ class Bot:
         if chat.id not in self.allowed:
             return
         action, _, rest = q.data.partition(":")
+        if action == "a":   # sotto avvisi e risposte: il pulsante resta, si può premere di nuovo
+            act, _, rest = rest.partition(":")
+            tid, _, arg = rest.partition(":")
+            if act in BUTTON_ACTIONS:
+                await self.do(chat, act, tid, arg)
+            return
+        if action == "stop":
+            await self.stop_one(chat, int(rest))
+            return
+        if action == "rep":
+            await self.repeater_now(chat, rest)
+            return
+        if action == "nodes":
+            await self.refresh_all(chat)
+            return
         if action in ("pos", "last", "track", "pause", "resume", "interval", "stats", "sens", "route", "follow",
                       "map"):
             tid, _, arg = rest.partition(":")
@@ -907,6 +1017,9 @@ class Bot:
             return
         if action == "upd":
             await self.update_button(chat, q, rest)
+            return
+        if action == "updchk":
+            await self.update_check(chat)
             return
         if action == "node":
             self.sessions[chat.id] = (rest, time.time() + 600)

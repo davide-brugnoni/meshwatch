@@ -312,6 +312,18 @@ La tastiera del bot ha i pulsanti 📍 Posizione ora, 🕓 Ultima posizione, �
 
 Con più dispositivi si scrive il nome dopo il comando, anche solo l'inizio e senza badare alle maiuscole: `/dove escursionista`, `/stats 7 esc`, `/intervallo 15 ciclista`, `/segui 3 esc`. Senza nome il bot chiede quale con dei pulsanti. Scrivendo `/` Telegram mostra l'elenco dei comandi.
 
+### Pulsanti sotto i messaggi
+
+Le cose che si fanno più spesso dopo una risposta o un avviso hanno un pulsante, così dal telefono non serve scrivere il comando. Questi pulsanti restano sul messaggio e si possono premere di nuovo; quelli per scegliere il dispositivo invece spariscono dopo la scelta.
+
+| Sotto | Pulsanti |
+|---|---|
+| una posizione (adesso o ultima) | 🔄 Di nuovo · 🗺 Mappa · 👣 Segui |
+| mappa e statistiche | 📅 gli altri periodi: 24 ore · 7 giorni · 30 giorni |
+| posizione in diretta | ⏹ Basta · altre durate (1, 2, 4, 8 ore) |
+| pausa / ripresa del tracciamento | ▶️ Riprendi / ⏸ Pausa |
+| `/nodi` | 🔄 Interroga i ripetitori |
+
 Con `/segui` conviene attivare l'intervallo adattivo del dispositivo: in movimento le posizioni arrivano più spesso e il pin si sposta di conseguenza.
 
 ### Avvisi
@@ -324,6 +336,16 @@ Arrivano a tutte le chat in `allowed_chat_ids`:
 - ripetitore che non risponde;
 - radio scollegata e ricollegata;
 - nuova versione disponibile (una volta per versione), esito di aggiornamenti e ripristini.
+
+Gli avvisi su cui si può fare qualcosa arrivano con i pulsanti:
+
+| Avviso | Pulsanti |
+|---|---|
+| dispositivo che non risponde | 📍 Riprova ora · 🕓 Ultima posizione · ⏸ Pausa |
+| batteria bassa del dispositivo | ⏸ Pausa · ⏱ Ogni 60 min (se l'intervallo è più breve, per risparmiare batteria) |
+| sensore fuori soglia | 🌡️ Sensori |
+| ripetitore che non risponde | 🔄 Interroga ora |
+| nuova versione | ⬆️ Installa, solo nelle chat admin: ricontrolla la versione e chiede conferma come `/aggiornamento` |
 
 ### Mappa e riepilogo su Telegram
 
@@ -772,7 +794,7 @@ A ogni push e pull request GitHub Actions ([`.github/workflows/test.yml`](.githu
 | `test_smoke.py` | database, ruoli, scheduler, manutenzione, intervallo adattivo, radio |
 | `test_chat.py` | chat, rubrica del gateway, mappa della rete, coda della radio |
 | `test_update.py` | aggiornamento dalla pagina e ripristino della versione precedente |
-| `test_features.py` | sensori e soglie, percorsi, copertura, tempo reale, comandi del bot |
+| `test_features.py` | sensori e soglie, percorsi, copertura, tempo reale, comandi e pulsanti del bot |
 | `test_tiles.py` | cache delle mappe con un server delle mappe finto: scadenza, 304, senza Internet, spazio massimo |
 | `test_restore.py` | ripristino dalla pagina: password, file non validi, avvisi, applicazione al riavvio, annullamento, kit SD |
 | `test_permissions.py` | **ogni** endpoint dell'API per ospite, viewer e admin; fallisce se se ne aggiunge uno senza dichiarare chi può usarlo |
