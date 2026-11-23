@@ -169,7 +169,7 @@ cp config.example.yaml config.yaml && nano config.yaml
 Copia `config.example.yaml` in `config.yaml` (con il kit SD il file è `meshwatch-config.yaml` sulla scheda). Le modifiche al file valgono dal riavvio successivo del servizio.
 
 - `serial_port: auto` trova da solo la radio, qualunque sia la scheda: se ci sono più dispositivi USB li prova uno alla volta, cominciando da quelli con i chip delle radio più diffuse. Per fissarla: `ls /dev/serial/by-id/`.
-- `telegram.token`: crealo con @BotFather. `allowed_chat_ids`: chi può usare il bot e riceve gli avvisi; `admin_chat_ids`: chi può usare il terminale. Il tuo ID te lo dà il bot stesso scrivendogli `/start` (oppure @userinfobot).
+- `telegram.token`: crealo con @BotFather. `allowed_chat_ids`: chi può usare il bot e riceve gli avvisi; `admin_chat_ids`: chi può anche gestire (terminale, pausa, intervallo, aggiornamento, …). Il tuo ID te lo dà il bot stesso scrivendogli `/start` (oppure @userinfobot).
 - Le sezioni `tracker` e `repeaters` vengono importate solo al primo avvio: poi dispositivi, ripetitori e utenti si gestiscono dalla pagina (scheda **Gestione**).
 
 ### Tutte le opzioni
@@ -191,7 +191,8 @@ Copia `config.example.yaml` in `config.yaml` (con il kit SD il file è `meshwatc
 | `repeater_low_battery_v` | — | soglia di batteria bassa dei ripetitori in volt |
 | `telegram.token` | — | token di @BotFather; vuoto o di esempio = bot disattivato |
 | `telegram.allowed_chat_ids` | `[]` | chat autorizzate a usare il bot e a ricevere gli avvisi |
-| `telegram.admin_chat_ids` | `[]` | chat che possono usare il terminale e cambiare il riepilogo (vuoto = tutte le autorizzate) |
+| `telegram.admin_chat_ids` | `[]` | chat che possono gestire: terminale, pausa, intervallo, advert, aggiornamento, riepilogo automatico (vuoto = tutte le autorizzate). Una chat admin è anche autorizzata |
+| `telegram.admin_user_ids` | `[]` | nei **gruppi**: utenti che possono gestire. Vale anche chi ha la propria chat privata in `admin_chat_ids` |
 | `telegram.daily_report` | — | ora del riepilogo giornaliero, es. `"21:00"` (quello impostato dalla pagina ha la precedenza) |
 | `web.mode` | `lan` | `lan` (solo in casa) o `public` (dietro Cloudflare Tunnel, login obbligatorio) |
 | `web.host` | `0.0.0.0` | indirizzo di ascolto; in modalità `public` usa `127.0.0.1` |
@@ -286,7 +287,7 @@ echo 'meshwatch-svc ALL=(root) NOPASSWD: /usr/bin/systemctl reboot, /usr/bin/sys
 
 1. Su Telegram scrivi a **@BotFather** → `/newbot` → copia il token in `telegram.token`.
 2. Riavvia MeshWatch e scrivi `/start` al bot: risponde con il tuo **chat ID**.
-3. Mettilo in `telegram.allowed_chat_ids` (e in `admin_chat_ids` se deve poter usare il terminale) e riavvia.
+3. Mettilo in `telegram.allowed_chat_ids` (e in `admin_chat_ids` se deve poter gestire: terminale, pausa, intervallo, …) e riavvia.
 
 Il bot funziona in *polling*: non serve aprire porte né esporre il Raspberry. Senza token valido il resto del programma funziona normalmente. I comandi arrivati mentre il servizio era fermo vengono eseguiti alla ripartenza, tranne quelli più vecchi di 3 minuti.
 
@@ -297,15 +298,15 @@ Il bot funziona in *polling*: non serve aprire porte né esporre il Raspberry. S
 | `/start` · `/aiuto` | tastiera del bot (e chat ID se non autorizzato) · elenco dei comandi |
 | `/posizione` | chiede subito la posizione (pin + link Google Maps) |
 | `/dove` · `/ultima` · `/traccia` | ultima posizione ricevuta · punti delle ultime 12 ore |
-| `/segui 2` · `/basta` | posizione **in diretta** di Telegram per 2 ore (massimo 8): il pin si sposta a ogni nuova posizione · la ferma |
+| `/segui 2` · `/basta` | posizione **in diretta** di Telegram per 2 ore (massimo 8): il pin si sposta a ogni nuova posizione, anche dopo un riavvio o un aggiornamento · la ferma |
 | `/stats` · `/stats 7` | km percorsi, ore in movimento, risposte, quota e batteria delle ultime 24 ore · degli ultimi 7 giorni |
 | `/sensori` · `/percorso` | ultimi valori dei sensori · ripetitori attraversati dall'ultima risposta |
 | `/mappa` · `/mappa 7` | **immagine della mappa** con la traccia delle ultime 24 ore · degli ultimi 7 giorni, l'ultima posizione, gateway e ripetitori della zona |
-| `/nodi` · `/aggiorna` | stato di dispositivi e ripetitori · interroga subito i ripetitori |
+| `/nodi` · `/aggiorna` | stato di dispositivi e ripetitori · interroga subito i ripetitori (solo chat admin) |
 | `/sistema` | Raspberry (temperatura, memoria, disco, tensione bassa), radio, database, ultimo backup |
 | `/riepilogo` | riepilogo della giornata con la mappa; `/riepilogo 21:00` ogni giorno a quell'ora, `/riepilogo no` lo spegne |
-| `/intervallo 30` · `/pausa` · `/riprendi` | gestione del tracciamento |
-| `/advert` | il gateway si annuncia sulla mesh |
+| `/intervallo 30` · `/pausa` · `/riprendi` | gestione del tracciamento (solo chat admin) |
+| `/advert` | il gateway si annuncia sulla mesh (solo chat admin) |
 | `/aggiornamento` · `/versione` | versione installata e, se ne è uscita una nuova, pulsante **Aggiorna ora** con conferma (solo chat admin) |
 | `/terminale` · `/fine` | comandi CLI a un ripetitore (solo chat admin) · chiude il terminale |
 
@@ -313,11 +314,19 @@ La tastiera del bot ha i pulsanti 📍 Posizione ora, 🕓 Ultima posizione, �
 
 Con più dispositivi si scrive il nome dopo il comando, anche solo l'inizio e senza badare alle maiuscole: `/dove escursionista`, `/stats 7 esc`, `/intervallo 15 ciclista`, `/segui 3 esc`. Senza nome il bot chiede quale con dei pulsanti. Scrivendo `/` Telegram mostra l'elenco dei comandi.
 
+### Chi può fare cosa
+
+Come sulla pagina: tutte le chat autorizzate vedono (posizione, mappa, statistiche, sensori, nodi, sistema, riepilogo) e possono chiedere la posizione adesso o seguirla in diretta, come un *viewer*. Le azioni che cambiano qualcosa (pausa, riprendi, intervallo, interroga i ripetitori, advert, terminale, aggiornamento, orario del riepilogo) sono solo per le chat in `admin_chat_ids`; da una chat non admin il bot risponde *Solo le chat admin possono farlo*.
+
+In un **gruppo** la chat è di tutti i membri: se il gruppo è tra le chat admin, per gestire conta anche chi scrive o preme il pulsante. Deve essere in `admin_user_ids` oppure avere la propria chat privata in `admin_chat_ids`; gli altri membri vedono soltanto. Il tuo ID utente è quello che il bot ti risponde con `/start` in chat privata.
+
+Due richieste di posizione allo stesso dispositivo nello stesso momento (dalla pagina e da Telegram, o da due chat) diventano una sola via radio: tutti ricevono lo stesso esito.
+
 Con `/segui` conviene attivare l'intervallo adattivo del dispositivo: in movimento le posizioni arrivano più spesso e il pin si sposta di conseguenza.
 
 ### Avvisi
 
-Arrivano a tutte le chat in `allowed_chat_ids`:
+Arrivano a tutte le chat in `allowed_chat_ids` (e in `admin_chat_ids`), in parallelo. Se la rete cade il bot riprova per qualche minuto, se Telegram chiede di rallentare aspetta; una chat che ha bloccato il bot viene saltata senza togliere l'avviso alle altre:
 
 - dispositivo che non risponde da più di `offline_alert_min` minuti, e quando torna;
 - batteria bassa di dispositivi e ripetitori (ripetizione e fascia di silenzio in **Gestione → Dispositivi → Avvisi batteria bassa**);
@@ -598,7 +607,7 @@ curl -s http://localhost:8080/api/health
 | posizione arriva ma senza coordinate | il GPS non ha il fix (al chiuso): i sensori vengono salvati comunque |
 | ripetitore senza statistiche | password admin o guest del ripetitore corretta; ripetitore nella rubrica del gateway |
 | il bot non risponde | token corretto; chat ID in `allowed_chat_ids` (il bot lo dice scrivendogli `/start`); Internet sul Raspberry; nel registro cerca `Telegram` |
-| `/terminale` "non autorizzato" | la chat deve essere in `admin_chat_ids` (se la lista non è vuota) |
+| "Solo le chat admin possono farlo" | la chat deve essere in `admin_chat_ids` (se la lista non è vuota); in un gruppo anche chi scrive deve essere in `admin_user_ids` o avere la sua chat privata in `admin_chat_ids` |
 | nomi senza accenti nella mappa di Telegram | `sudo apt install fonts-dejavu-core` |
 | riavvio/spegnimento dalla pagina dà "permesso mancante" | esegui il comando di [Riavvio e spegnimento](#riavvio-e-spegnimento-dalla-pagina) |
 | l'aggiornamento dalla pagina non è disponibile | schede prima della 1.1: [abilita gli aggiornamenti](#casi-particolari); con `install.sh` la cartella deve essere un clone git; il Raspberry deve raggiungere GitHub |

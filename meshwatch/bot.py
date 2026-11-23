@@ -1,11 +1,12 @@
 import asyncio
+import json
 import logging
 import secrets
 import time
 from datetime import datetime, timedelta
 
 import httpx
-from telegram.error import NetworkError, TimedOut
+from telegram.error import BadRequest, Forbidden, NetworkError, RetryAfter, TimedOut
 from telegram.request import HTTPXRequest
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup, Update
 from telegram.ext import (Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler,
@@ -57,6 +58,9 @@ COMMANDS = [
     ("aiuto", "elenco dei comandi"),
 ]
 FOLLOW_MAX_H = 8
+# azioni che cambiano qualcosa: come sulla pagina, solo admin (le altre sono da viewer)
+ADMIN_ACTIONS = {"pause", "resume", "interval"}
+NOT_ADMIN = "Solo le chat admin possono farlo."
 REPORT_WINDOW_MIN = 30   # riepilogo automatico: se a quell'ora il servizio era fermo, lo manda entro 30 min
 
 
@@ -111,11 +115,18 @@ class Bot:
         self.tiles = tiles   # cache delle mappe condivisa con la pagina (vedi __main__)
         self.report_task = self.keyboard_task = None
         self.allowed = set(int(x) for x in cfg.get("allowed_chat_ids") or [])
-        # chi può usare il terminale; se vuoto, tutte le chat autorizzate
-        self.admins = set(int(x) for x in cfg.get("admin_chat_ids") or []) or self.allowed
+        # chi può gestire (terminale, pausa, intervallo, ...); se vuoto, tutte le chat autorizzate.
+        # Una chat admin è anche autorizzata, anche se manca in allowed_chat_ids.
+        self.admins = set(int(x) for x in cfg.get("admin_chat_ids") or []) or set(self.allowed)
+        self.allowed |= self.admins
+        # nei gruppi la chat è di tutti i membri: per le azioni da admin conta chi scrive,
+        # che deve stare qui oppure avere la sua chat privata tra le chat admin
+        self.admin_users = set(int(x) for x in cfg.get("admin_user_ids") or [])
         self.sessions = {}   # chat_id -> (nome ripetitore, scadenza)
         self.pending = {}    # token -> (chat_id, nodo, comando)
-        self.live = {}       # (chat_id, tracker_id) -> (messaggio con la posizione in diretta, scadenza)
+        # (chat_id, tracker_id) -> (id del messaggio con la posizione in diretta, scadenza);
+        # salvate nel database: dopo un riavvio il pin continua a spostarsi
+        self.live = self._load_live()
         # concurrent_updates: un comando che aspetta la radio non blocca gli altri
         self.app = (Application.builder().token(cfg["token"]).concurrent_updates(True)
                     .request(self._request()).get_updates_request(self._request(read_timeout=30))
@@ -227,29 +238,50 @@ class Bot:
         self.core.db.set("tg_keyboard", KEYBOARD_VERSION)
         self.core.db.set("tg_keyboard_chats", "")
 
+    @staticmethod
+    async def _deliver(chat, what, send, attempts, wait):
+        """Una consegna a una chat: se la rete cade riprova per qualche minuto, se Telegram chiede
+        di rallentare aspetta quanto dice; una chat che ha bloccato il bot (o un ID sbagliato)
+        si salta. Mai un'eccezione: le altre chat ricevono comunque."""
+        for attempt in range(attempts):
+            try:
+                await send()
+                return True
+            except RetryAfter as e:
+                ra = e.retry_after
+                delay = ra.total_seconds() if hasattr(ra, "total_seconds") else float(ra)
+                log.warning("%s per %s: Telegram chiede di aspettare %.0f s", what, chat, delay)
+                await asyncio.sleep(delay + 1)
+            except (NetworkError, TimedOut) as e:
+                if isinstance(e, BadRequest):   # BadRequest deriva da NetworkError ma non si risolve riprovando
+                    log.warning("%s non inviato a %s: %s", what, chat, e)
+                    return False
+                log.warning("%s non inviato a %s (tentativo %d): %s", what, chat, attempt + 1, e)
+                await asyncio.sleep(wait(attempt))
+            except Forbidden as e:
+                log.warning("%s non inviato a %s: la chat ha bloccato il bot (%s)", what, chat, e)
+                return False
+            except Exception as e:
+                log.warning("%s non inviato a %s: %r", what, chat, e)
+                return False
+        return False
+
     async def broadcast(self, text):
-        """Avvisi: se la rete cade, riprova per qualche minuto invece di perderli."""
-        for chat in self.allowed:
-            for attempt in range(6):
-                try:
-                    await self.app.bot.send_message(chat, text, disable_web_page_preview=True)
-                    break
-                except (NetworkError, TimedOut) as e:
-                    log.warning("Avviso non inviato (tentativo %d): %s", attempt + 1, e)
-                    await asyncio.sleep(min(60, 10 * (attempt + 1)))
+        """Avvisi a tutte le chat autorizzate, in parallelo: una chat lenta o bloccata non
+        ritarda né fa perdere l'avviso alle altre."""
+        await asyncio.gather(*(
+            self._deliver(chat, "Avviso", lambda chat=chat: self.app.bot.send_message(
+                chat, text, disable_web_page_preview=True), 6, lambda a: min(60, 10 * (a + 1)))
+            for chat in self.allowed))
 
     async def send_file(self, data, filename, caption=""):
         """Backup: solo alle chat admin (contiene password)."""
         from telegram import InputFile
-        for chat in self.admins:
-            for attempt in range(4):
-                try:
-                    await self.app.bot.send_document(chat, InputFile(data, filename=filename), caption=caption,
-                                                     read_timeout=60, write_timeout=60)
-                    break
-                except (NetworkError, TimedOut) as e:
-                    log.warning("Backup non inviato (tentativo %d): %s", attempt + 1, e)
-                    await asyncio.sleep(30 * (attempt + 1))
+        await asyncio.gather(*(
+            self._deliver(chat, "Backup", lambda chat=chat: self.app.bot.send_document(
+                chat, InputFile(data, filename=filename), caption=caption, read_timeout=60, write_timeout=60),
+                4, lambda a: 30 * (a + 1))
+            for chat in self.admins))
 
     def ok(self, update: Update):
         if not (update.effective_chat and update.effective_chat.id in self.allowed):
@@ -259,8 +291,17 @@ class Bot:
             return False   # comando vecchio, arrivato mentre il servizio era fermo
         return True
 
+    def admin_ok(self, chat, user):
+        """Chat admin e, nei gruppi, anche chi scrive o preme il pulsante è un admin."""
+        if not chat or chat.id not in self.admins:
+            return False
+        if getattr(chat, "type", "private") == "private":
+            return True
+        uid = getattr(user, "id", None)
+        return uid is not None and (uid in self.admin_users or uid in self.admins)
+
     def is_admin(self, update: Update):
-        return update.effective_chat and update.effective_chat.id in self.admins
+        return self.ok(update) and self.admin_ok(update.effective_chat, update.effective_user)
 
     # ---------- scelta del dispositivo
     def _by_name(self, action):
@@ -273,13 +314,17 @@ class Bot:
         sono più di uno, chiede quale con dei pulsanti."""
         if not self.ok(update):
             return
+        msg = update.effective_message
+        if action in ADMIN_ACTIONS and not self.is_admin(update):
+            await msg.reply_text(NOT_ADMIN)
+            return
         ts = self.core.find_trackers(name)
         if not self.core.trackers():
-            await update.message.reply_text("Nessun dispositivo da tracciare. Aggiungilo dalla pagina web → Gestione.")
+            await msg.reply_text("Nessun dispositivo da tracciare. Aggiungilo dalla pagina web → Gestione.")
             return
         if not ts:
             names = ", ".join(t["label"] for t in self.core.trackers())
-            await update.message.reply_text(f"Nessun dispositivo si chiama \"{name}\". Dispositivi: {names}.")
+            await msg.reply_text(f"Nessun dispositivo si chiama \"{name}\". Dispositivi: {names}.")
             return
         if len(ts) == 1:
             await self.do(update.effective_chat, action, ts[0]["id"], arg)
@@ -287,7 +332,7 @@ class Bot:
         kb = [[InlineKeyboardButton(t["label"], callback_data=f"{action}:{t['id']}:{arg}")] for t in ts]
         if action in ("pos", "last", "stats", "sens", "map") and not name:
             kb.append([InlineKeyboardButton("Tutti", callback_data=f"{action}:all:{arg}")])
-        await update.message.reply_text("Quale dispositivo?", reply_markup=InlineKeyboardMarkup(kb))
+        await msg.reply_text("Quale dispositivo?", reply_markup=InlineKeyboardMarkup(kb))
 
     async def do(self, chat, action, tid, arg=""):
         if tid == "all" and action == "map":   # una sola mappa con tutti
@@ -401,6 +446,18 @@ class Bot:
         hours = int(args.pop(0)) if args and args[0].isdigit() else 2
         await self.pick(update, "follow", str(max(1, min(hours, FOLLOW_MAX_H))), " ".join(args))
 
+    def _load_live(self):
+        try:
+            items = json.loads(self.core.db.get("tg_live") or "[]")
+            now = time.time()
+            return {(int(c), int(t)): (int(m), float(u)) for c, t, m, u in items if float(u) > now}
+        except (ValueError, TypeError) as e:
+            log.info("Posizioni in diretta salvate non leggibili: %s", e)
+            return {}
+
+    def _save_live(self):
+        self.core.db.set("tg_live", json.dumps([[c, t, m, u] for (c, t), (m, u) in self.live.items()]))
+
     async def follow_start(self, chat, t, hours):
         p = self.core.db.last_position(t["id"])
         if not p:
@@ -408,32 +465,44 @@ class Bot:
             return
         old = self.live.pop((chat.id, t["id"]), None)
         if old:
-            await self._stop_live(old[0])
+            await self._stop_live(chat.id, old[0])
         msg = await chat.send_location(latitude=p["lat"], longitude=p["lon"], live_period=hours * 3600)
-        self.live[(chat.id, t["id"])] = (msg, time.time() + hours * 3600)
+        self.live[(chat.id, t["id"])] = (msg.message_id, time.time() + hours * 3600)
+        self._save_live()
         self.core.audit(f"telegram:{chat.id}", "posizione in diretta", f"{t['label']}: {hours} h")
         await chat.send_message(
             f"📡 Posizione in diretta di {t['label']} per {hours} or{'a' if hours == 1 else 'e'}: si sposta a ogni nuova "
             f"posizione (ogni {self.core.interval_min(t)} min). /basta per smettere.")
 
     async def on_position(self, t, p):
-        for (chat_id, tid), (msg, until) in list(self.live.items()):
+        changed = False
+        for (chat_id, tid), (msg_id, until) in list(self.live.items()):
             if tid != t["id"]:
                 continue
             if time.time() > until:
                 self.live.pop((chat_id, tid), None)
+                changed = True
                 continue
             try:
-                await msg.edit_live_location(latitude=p["lat"], longitude=p["lon"])
-            except Exception as e:
-                if "not modified" not in str(e).lower():
+                await self.app.bot.edit_message_live_location(
+                    chat_id=chat_id, message_id=msg_id, latitude=p["lat"], longitude=p["lon"])
+            except (NetworkError, TimedOut) as e:
+                if isinstance(e, BadRequest) and "not modified" not in str(e).lower():
                     log.info("Posizione in diretta terminata (%s): %s", t["label"], e)
                     self.live.pop((chat_id, tid), None)
+                    changed = True
+                elif not isinstance(e, BadRequest):   # rete giù: si riprova alla prossima posizione
+                    log.info("Posizione in diretta non aggiornata (%s): %s", t["label"], e)
+            except Exception as e:   # fermata dall'utente, chat che ha bloccato il bot…
+                log.info("Posizione in diretta terminata (%s): %s", t["label"], e)
+                self.live.pop((chat_id, tid), None)
+                changed = True
+        if changed:
+            self._save_live()
 
-    @staticmethod
-    async def _stop_live(msg):
+    async def _stop_live(self, chat_id, msg_id):
         try:
-            await msg.stop_live_location()
+            await self.app.bot.stop_message_live_location(chat_id=chat_id, message_id=msg_id)
         except Exception:
             pass   # già scaduta o fermata da Telegram
 
@@ -443,8 +512,10 @@ class Bot:
         chat = update.effective_chat.id
         mine = [k for k in self.live if k[0] == chat]
         for k in mine:
-            await self._stop_live(self.live.pop(k)[0])
-        await update.message.reply_text("Posizione in diretta fermata." if mine else "Nessuna posizione in diretta attiva.")
+            await self._stop_live(chat, self.live.pop(k)[0])
+        if mine:
+            self._save_live()
+        await update.effective_message.reply_text("Posizione in diretta fermata." if mine else "Nessuna posizione in diretta attiva.")
 
     # ---------- mappa (immagine)
     async def _photo(self, chat, data, caption):
@@ -568,7 +639,7 @@ class Bot:
 
     async def system_cmd(self, update: Update, ctx):
         if self.ok(update):
-            await update.message.reply_text(self.system_text())
+            await update.effective_message.reply_text(self.system_text())
 
     # ---------- riepilogo giornaliero
     def report_time(self):
@@ -627,26 +698,26 @@ class Bot:
         if not arg:
             await self.send_report(update.effective_chat)
             when = self.report_time()
-            await update.message.reply_text(
+            await update.effective_message.reply_text(
                 f"Riepilogo automatico: ogni giorno alle {when}." if when else
                 "Riepilogo automatico spento. Si accende dalla pagina (Gestione → Telegram) "
                 "oppure, da una chat admin, con /riepilogo 21:00")
             return
         if not self.is_admin(update):
-            await update.message.reply_text("Solo le chat admin possono cambiare il riepilogo automatico.")
+            await update.effective_message.reply_text("Solo le chat admin possono cambiare il riepilogo automatico.")
             return
         if arg in ("no", "off", "basta", "stop"):
             self.core.set_report_time("")
             self.core.audit(f"telegram:{update.effective_chat.id}", "riepilogo automatico", "disattivato")
-            await update.message.reply_text("Riepilogo automatico disattivato.")
+            await update.effective_message.reply_text("Riepilogo automatico disattivato.")
             return
         when = parse_hhmm(arg)
         if not when:
-            await update.message.reply_text("Uso: /riepilogo (adesso) · /riepilogo 21:00 (ogni giorno) · /riepilogo no")
+            await update.effective_message.reply_text("Uso: /riepilogo (adesso) · /riepilogo 21:00 (ogni giorno) · /riepilogo no")
             return
         self.core.set_report_time(when)
         self.core.audit(f"telegram:{update.effective_chat.id}", "riepilogo automatico", when)
-        await update.message.reply_text(f"Riepilogo automatico ogni giorno alle {when}, a tutte le chat autorizzate.")
+        await update.effective_message.reply_text(f"Riepilogo automatico ogni giorno alle {when}, a tutte le chat autorizzate.")
 
     @staticmethod
     def report_slot(when, now=None):
@@ -688,17 +759,17 @@ class Bot:
     async def start(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         cid = update.effective_chat.id
         if not self.ok(update):
-            await update.message.reply_text(
+            await update.effective_message.reply_text(
                 f"Non sei autorizzato.\nIl tuo chat ID è {cid}: aggiungilo in "
                 f"telegram.allowed_chat_ids nel config e riavvia MeshWatch.")
             return
-        await update.message.reply_text("MeshWatch attivo.", reply_markup=KEYBOARD)
+        await update.effective_message.reply_text("MeshWatch attivo.", reply_markup=KEYBOARD)
         await self.help(update, ctx)
 
     async def help(self, update: Update, ctx):
         if not self.ok(update):
             return
-        await update.message.reply_text(
+        await update.effective_message.reply_text(
             "\n".join(f"/{c} – {d}" for c, d in COMMANDS)
             + "\n\nCon più dispositivi si può scrivere il nome dopo il comando (/dove escursionista) "
               "oppure scegliere con i pulsanti.",
@@ -762,7 +833,7 @@ class Bot:
         try:
             m = int(ctx.args[0])
         except (IndexError, ValueError):
-            await update.message.reply_text("Uso: /intervallo 30 (oppure /intervallo 30 nome)")
+            await update.effective_message.reply_text("Uso: /intervallo 30 (oppure /intervallo 30 nome)")
             return
         await self.pick(update, "interval", str(m), " ".join(ctx.args[1:]))
 
@@ -785,20 +856,27 @@ class Bot:
                     f" · rumore {s['noise']} dBm · SNR {s['snr']} · {fmt_ts(s['ts'])}")
             else:
                 lines.append(f"{head} {r['name']}: nessun dato")
-        await update.message.reply_text("\n".join(lines))
+        await update.effective_message.reply_text("\n".join(lines))
 
     async def refresh_nodes(self, update: Update, ctx):
         if not self.ok(update):
             return
-        await update.message.reply_text("Interrogo i ripetitori…")
+        if not self.is_admin(update):
+            await update.effective_message.reply_text(NOT_ADMIN)
+            return
+        await update.effective_message.reply_text("Interrogo i ripetitori…")
         await self.core.poll_repeaters()
         await self.nodes(update, ctx)
 
     async def advert(self, update: Update, ctx):
-        if self.ok(update):
-            await self.core.mesh.send_advert()
-            self.core.audit(f"telegram:{update.effective_chat.id}", "advert gateway")
-            await update.message.reply_text("Advert inviato.")
+        if not self.ok(update):
+            return
+        if not self.is_admin(update):
+            await update.effective_message.reply_text(NOT_ADMIN)
+            return
+        await self.core.mesh.send_advert()
+        self.core.audit(f"telegram:{update.effective_chat.id}", "advert gateway")
+        await update.effective_message.reply_text("Advert inviato.")
 
     # ---------- aggiornamento del programma
     @staticmethod
@@ -817,40 +895,40 @@ class Bot:
         if not self.ok(update):
             return
         if not self.is_admin(update):
-            await update.message.reply_text("Solo le chat admin possono aggiornare MeshWatch.")
+            await update.effective_message.reply_text("Solo le chat admin possono aggiornare MeshWatch.")
             return
         if self.updater is None:
-            await update.message.reply_text("Aggiornamento non disponibile.")
+            await update.effective_message.reply_text("Aggiornamento non disponibile.")
             return
         from .updater import UpdateError
-        await update.message.reply_text("Controllo se c'è una nuova versione…")
+        await update.effective_message.reply_text("Controllo se c'è una nuova versione…")
         try:
             st = await self.updater.check()
         except UpdateError as e:
-            await update.message.reply_text(f"❌ {e}")
+            await update.effective_message.reply_text(f"❌ {e}")
             return
         lines = [f"⬆️ MeshWatch {__version__}", "Installata: " + self._version_line(st["installed"])]
         if st.get("rolled_back"):
             lines.append(f"⚠️ L'ultimo aggiornamento non partiva: rimessa la versione precedente ({st['rolled_back']}).")
         if st["job"]["state"] in ("download", "check", "deps", "install", "restarting"):
             lines.append(f"\nAggiornamento già in corso: {st['job']['message']}")
-            await update.message.reply_text("\n".join(lines))
+            await update.effective_message.reply_text("\n".join(lines))
             return
         if not st["available"]:
             lines.append("\n✅ Hai già l'ultima versione.")
-            await update.message.reply_text("\n".join(lines))
+            await update.effective_message.reply_text("\n".join(lines))
             return
         lines.append("Nuova: " + self._version_line(st["latest"]))
         if st["problems"]:
             lines.append("\nDa qui non si può aggiornare: " + "; ".join(st["problems"])
                          + ". Vedi il README, sezione Aggiornamenti.")
-            await update.message.reply_text("\n".join(lines))
+            await update.effective_message.reply_text("\n".join(lines))
             return
         lines.append("\nDurante l'installazione (circa un minuto, di più se cambiano le librerie) pagina, radio "
                      "e bot si fermano. Se la nuova versione non parte torna da sola alla precedente.")
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬆️ Aggiorna ora", callback_data="upd:go"),
                                     InlineKeyboardButton("✖ Annulla", callback_data="upd:no")]])
-        await update.message.reply_text("\n".join(lines), reply_markup=kb)
+        await update.effective_message.reply_text("\n".join(lines), reply_markup=kb)
 
     async def update_button(self, chat, q, what):
         if what != "go":
@@ -899,13 +977,19 @@ class Bot:
         if chat.id not in self.allowed:
             return
         action, _, rest = q.data.partition(":")
+        admin = self.admin_ok(chat, q.from_user)
         if action in ("pos", "last", "track", "pause", "resume", "interval", "stats", "sens", "route", "follow",
                       "map"):
+            if action in ADMIN_ACTIONS and not admin:
+                await chat.send_message(NOT_ADMIN)
+                return
             tid, _, arg = rest.partition(":")
             await q.edit_message_reply_markup(None)
             await self.do(chat, action, tid, arg)
             return
-        if chat.id not in self.admins:
+        if not admin:
+            if action in ("upd", "node", "ok", "no"):
+                await chat.send_message(NOT_ADMIN)
             return
         if action == "upd":
             await self.update_button(chat, q, rest)
@@ -929,18 +1013,21 @@ class Bot:
 
     # ---------- terminale
     async def term_start(self, update: Update, ctx):
+        if not self.ok(update):
+            return
         if not self.is_admin(update):
+            await update.effective_message.reply_text(NOT_ADMIN)
             return
         reps = [r["name"] for r in self.core.db.repeaters()]
         if not reps:
-            await update.message.reply_text("Nessun ripetitore configurato.")
+            await update.effective_message.reply_text("Nessun ripetitore configurato.")
             return
         kb = InlineKeyboardMarkup([[InlineKeyboardButton(n, callback_data="node:" + n[:50])] for n in reps])
-        await update.message.reply_text("Terminale: scegli il ripetitore.", reply_markup=kb)
+        await update.effective_message.reply_text("Terminale: scegli il ripetitore.", reply_markup=kb)
 
     async def term_end(self, update: Update, ctx):
-        if self.sessions.pop(update.effective_chat.id, None):
-            await update.message.reply_text("Terminale chiuso.", reply_markup=KEYBOARD)
+        if self.is_admin(update) and self.sessions.pop(update.effective_chat.id, None):
+            await update.effective_message.reply_text("Terminale chiuso.", reply_markup=KEYBOARD)
 
     async def term_text(self, update: Update, ctx):
         chat = update.effective_chat.id
@@ -950,18 +1037,18 @@ class Bot:
         node, exp = sess
         if time.time() > exp:
             self.sessions.pop(chat, None)
-            await update.message.reply_text("Sessione scaduta. /terminale per riaprirla.")
+            await update.effective_message.reply_text("Sessione scaduta. /terminale per riaprirla.")
             return
         self.sessions[chat] = (node, time.time() + 600)
-        cmd = update.message.text.strip()
+        cmd = (update.effective_message.text or "").strip()
         if is_dangerous(cmd):
             tok = secrets.token_hex(4)
             self.pending[tok] = (chat, node, cmd)
             kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ Conferma", callback_data="ok:" + tok),
                                         InlineKeyboardButton("✖ Annulla", callback_data="no:" + tok)]])
-            await update.message.reply_text(f"⚠️ \"{cmd}\" modifica o riavvia {node}. Confermi?", reply_markup=kb)
+            await update.effective_message.reply_text(f"⚠️ \"{cmd}\" modifica o riavvia {node}. Confermi?", reply_markup=kb)
             return
-        await update.message.reply_text(f"> {cmd} @ {node}\n… in attesa della risposta via radio")
+        await update.effective_message.reply_text(f"> {cmd} @ {node}\n… in attesa della risposta via radio")
         await self._exec(update.effective_chat, node, cmd)
 
     async def _exec(self, chat_obj, node, cmd):
