@@ -116,6 +116,11 @@ class DB:
             cols = [r[1] for r in self.conn.execute("PRAGMA table_info(positions)")]
             if "src" not in cols:
                 self.conn.execute("ALTER TABLE positions ADD COLUMN src TEXT")
+            # affidabilità del percorso salvato: percorso provato col primo tentativo diretto e se ha risposto
+            cols = [r[1] for r in self.conn.execute("PRAGMA table_info(tracker_polls)")]
+            for col, typ in (("direct_path", "TEXT"), ("direct_ok", "INTEGER")):
+                if col not in cols:
+                    self.conn.execute(f"ALTER TABLE tracker_polls ADD COLUMN {col} {typ}")
             self.conn.commit()
 
     def _exec(self, sql, args=()):
@@ -208,9 +213,13 @@ class DB:
         self._exec("INSERT INTO positions (ts, lat, lon, alt, batt_v, tracker_id, src) VALUES (?,?,?,?,?,?,?)",
                    (int(time.time()), lat, lon, alt, batt_v, tid, src))
 
-    def add_tracker_poll(self, tid, ok, hops=None, path=None, lat=None, lon=None, est=None):
-        self._exec("INSERT INTO tracker_polls (ts, ok, tracker_id, hops, path, lat, lon, est) VALUES (?,?,?,?,?,?,?,?)",
-                   (int(time.time()), 1 if ok else 0, tid, hops, ",".join(path) if path else None, lat, lon, est))
+    def add_tracker_poll(self, tid, ok, hops=None, path=None, lat=None, lon=None, est=None, direct=None):
+        """direct: (percorso, risposto) del primo tentativo se è stato diretto, altrimenti None."""
+        dpath, dok = (",".join(direct[0]), 1 if direct[1] else 0) if direct else (None, None)
+        self._exec("INSERT INTO tracker_polls (ts, ok, tracker_id, hops, path, lat, lon, est, direct_path, direct_ok) "
+                   "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                   (int(time.time()), 1 if ok else 0, tid, hops, ",".join(path) if path else None, lat, lon, est,
+                    dpath, dok))
 
     def coverage_polls(self, since, tid=None):
         sql = "SELECT ts, ok, tracker_id, hops, lat, lon, est FROM tracker_polls WHERE ts>=? AND lat IS NOT NULL"
@@ -238,11 +247,17 @@ class DB:
         return r
 
     def path_failures(self, tid, path, since):
-        """Richieste recenti sul percorso indicato (prefissi dei ripetitori): (riuscite, fallite).
-        Le fallite contano il percorso provato per primo, le riuscite quello della risposta."""
-        r = self._one("SELECT SUM(ok) AS ok, SUM(1 - ok) AS ko FROM tracker_polls "
-                      "WHERE tracker_id=? AND ts>=? AND hops>0 AND path=?", (tid, since, ",".join(path)))
+        """Primi tentativi diretti recenti sul percorso indicato (prefissi dei ripetitori):
+        (con risposta, senza risposta)."""
+        r = self._one("SELECT SUM(direct_ok) AS ok, SUM(1 - direct_ok) AS ko FROM tracker_polls "
+                      "WHERE tracker_id=? AND ts>=? AND direct_path=?", (tid, since, ",".join(path)))
         return (r["ok"] or 0, r["ko"] or 0) if r else (0, 0)
+
+    def fail_streak(self, tid):
+        """Richieste consecutive senza risposta, dalla più recente."""
+        r = self._one("SELECT COUNT(*) AS n FROM tracker_polls WHERE tracker_id=? AND ok=0 AND ts > "
+                      "COALESCE((SELECT MAX(ts) FROM tracker_polls WHERE tracker_id=? AND ok=1), 0)", (tid, tid))
+        return r["n"] if r else 0
 
     def last_position(self, tid):
         return self._one("SELECT * FROM positions WHERE tracker_id=? ORDER BY ts DESC LIMIT 1", (tid,))

@@ -706,7 +706,8 @@ class Bot:
 
     async def _send_pos(self, chat, p, title, route=None):
         await chat.send_location(latitude=p["lat"], longitude=p["lon"])
-        txt = f"{title}\n{fmt_ts(p['ts'])}\n{maps_link(p['lat'], p['lon'])}"
+        txt = f"{title}\n{fmt_ts(p['ts'])}" + (" (dall'advert)" if p.get("src") == "advert" else "")
+        txt += f"\n{maps_link(p['lat'], p['lon'])}"
         if p.get("alt") is not None:
             txt += f"\nQuota {p['alt']:.0f} m"
         if p.get("batt_v") is not None:

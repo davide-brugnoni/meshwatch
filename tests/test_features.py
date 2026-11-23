@@ -797,6 +797,7 @@ def test_telemetry_retries():
     check(res and res["lat"] == 43.35 and m.mc.commands.calls == 3 and m.mc.commands.resets == 2,
           "risposta al terzo tentativo, dopo due tentativi in flood")
     check(m.tried["Alice"] == (1, ["b2"]), "percorso provato per primo ricordato")
+    check(m.direct["Alice"] == (["b2"], False), "tentativo diretto senza risposta registrato")
     m = radio(answer_at=0)
     check(asyncio.run(m.request_telemetry("Alice")) is None and m.mc.commands.calls == 3, "nessuna risposta dopo tre tentativi")
     m = radio(answer_at=1, late=True)
@@ -804,10 +805,31 @@ def test_telemetry_retries():
     check(res and res["lat"] == 43.35 and m.mc.commands.calls == 2,
           "risposta in ritardo al primo tentativo accettata durante il secondo")
     check(not m.mc.subs, "nessun ascolto rimasto attivo")
+    check(m.direct["Alice"] == (["b2"], True), "risposta in ritardo al tentativo diretto: il percorso funziona")
     m = radio(answer_at=1)
     res = asyncio.run(m.request_telemetry("Alice", flood_first=True))
     check(res and m.mc.commands.resets == 1 and m.tried["Alice"] == (-1, []),
           "in movimento: primo tentativo già in flood")
+    check(m.direct["Alice"] is None, "partendo in flood il percorso salvato non viene giudicato")
+
+    # advert: rubrica riletta e on_advert chiamato solo per i contatti che interessano
+    m = radio(answer_at=1)
+    got, reads = [], []
+
+    async def ensure(follow=False):
+        reads.append(1)
+    m.mc.ensure_contacts = ensure
+    m.mc.get_contact_by_key_prefix = lambda k: next((c for c in m.mc.raw.values() if c["public_key"].startswith(k)), None)
+
+    async def on_adv(info):
+        got.append(info["name"])
+    m.on_advert, m.wants_advert = on_adv, lambda n: n == "Alice"
+    asyncio.run(m._on_advert(SimpleNamespace(payload={"public_key": ALICE})))
+    check(got == ["Alice"] and reads, "advert di un tracker passato al ciclo dei dispositivi")
+    m.wants_advert = lambda n: False
+    got.clear(), reads.clear()
+    asyncio.run(m._on_advert(SimpleNamespace(payload={"public_key": ALICE})))
+    check(not got and not reads, "advert di altri nodi: nessuna lettura in più della rubrica")
 
     db, mesh, core, c, v, anon, tid = setup()
     bot = Bot({"token": "123456:TEST", "allowed_chat_ids": [1]}, core)
@@ -921,9 +943,15 @@ def test_reliability():
     check(core.fail_streak[tid] == 1 and core.next_delay_s(t) <= 2 * 60 * 1.1, "dopo un fallimento si riprova dopo 2 minuti")
     asyncio.run(core.poll_tracker(tid))
     check(core.next_delay_s(t) <= 5 * 60 * 1.1, "poi dopo 5 minuti")
-    for _ in range(3):
+    asyncio.run(core.poll_tracker(tid))
+    check(9 * 60 <= core.next_delay_s(t) <= 11 * 60, "poi dopo 10 minuti")
+    asyncio.run(core.poll_tracker(tid))
+    check(18 * 60 <= core.next_delay_s(t) <= 22 * 60, "poi il doppio: 20 minuti")
+    for _ in range(20):
         asyncio.run(core.poll_tracker(tid))
-    check(9 * 60 <= core.next_delay_s(t) <= 11 * 60, "poi ogni 10 minuti")
+    check(27 * 60 <= core.next_delay_s(t) <= 33 * 60, "spento a lungo: si torna all'intervallo normale")
+    check(Core({}, db, mesh).fail_streak.get(tid) == core.fail_streak[tid], "fallimenti di fila ricordati dopo un riavvio")
+    core.fail_streak[tid] = 1
     db.update_tracker(tid, interval_min=5)
     check(core.next_delay_s(db.tracker(tid)) <= 5 * 60 * 1.1, "mai oltre l'intervallo normale")
     db.update_tracker(tid, interval_min=30)
@@ -933,8 +961,11 @@ def test_reliability():
     now = int(time.time())
     info = {"name": "Alice", "last_advert": now - 5, "lat": 43.1, "lon": 12.1}
     asyncio.run(core.on_advert(info))
-    check(core.next_due[tid] <= time.time() + core.ADVERT_POLL_DELAY_S and core.soon.get(tid),
-          "advert dopo richieste senza risposta: si chiede subito la posizione")
+    check(core.next_due[tid] <= time.time() + core.ADVERT_POLL_GAP_S and core.soon.get(tid),
+          "advert dopo richieste senza risposta: si chiede subito la posizione (ma non a meno di un minuto dall'ultima)")
+    core.next_due[tid] = time.time() + 600
+    asyncio.run(core.on_advert({**info, "last_advert": now - 4}))
+    check(core.next_due[tid] > time.time() + 500, "un solo anticipo per serie di fallimenti (collegamento a senso unico)")
     n = len(db.positions_since(tid, 0))
     check(n == 0, "primo advert: posizione solo ricordata (potrebbe essere impostata a mano)")
     asyncio.run(core.on_advert(info))
@@ -944,10 +975,17 @@ def test_reliability():
     asyncio.run(core.on_advert({**info, "last_advert": now - 1, "lat": 43.2}))
     pos = db.positions_since(tid, 0)
     check(len(pos) == 1 and pos[0]["lat"] == 43.2 and pos[0]["src"] == "advert", "posizione nuova dall'advert salvata")
-    asyncio.run(core.on_advert({**info, "last_advert": now - 3 * 3600, "lat": 43.3}))
-    check(len(db.positions_since(tid, 0)) == 1, "advert con l'ora vecchia di ore: posizione ignorata")
+    asyncio.run(core.on_advert({**info, "last_advert": now, "lat": 43.3}))
+    asyncio.run(core.on_advert({**info, "last_advert": now - 30, "lat": 43.4}))
+    check(len(db.positions_since(tid, 0)) == 2, "advert più vecchio dell'ultimo ricevuto ignorato")
+    db.set(f"advert_{tid}", f"{now + 10 ** 6},43.3,12.1")
+    asyncio.run(core.on_advert({**info, "last_advert": now + 1, "lat": 43.5}))
+    check(len(db.positions_since(tid, 0)) == 3, "dopo un advert con l'ora nel futuro i successivi valgono ancora")
+    asyncio.run(core.on_advert({**info, "last_advert": now + 3 * 3600, "lat": 43.6}))
+    check(len(db.positions_since(tid, 0)) == 3, "advert con l'ora sbagliata di ore: posizione ignorata")
+    check(mesh.wants_advert("Alice") and not mesh.wants_advert("Bob"), "advert letti solo per i tracker")
     asyncio.run(core.on_advert({"name": "Altro", "last_advert": now, "lat": 1.0, "lon": 1.0}))
-    check(len(db.positions_since(tid, 0)) == 1, "advert di un contatto che non è un tracker ignorato")
+    check(len(db.positions_since(tid, 0)) == 3, "advert di un contatto che non è un tracker ignorato")
 
     # risposta: tutto torna normale
     mesh.answer = True
@@ -958,23 +996,43 @@ def test_reliability():
     core.moving[tid] = False
     check(not core.path_unreliable(tid), "percorso affidabile")
     route = db.last_route(tid)["path"]
-    db.add_tracker_poll(tid, False, len(route), route)
-    check(not core.path_unreliable(tid), "un solo fallimento sul percorso: ancora affidabile")
-    for _ in range(2):
-        db.add_tracker_poll(tid, False, len(route), route)
+    for _ in range(5):
+        db.add_tracker_poll(tid, True, len(route), route)   # risposte in flood: non contano per il percorso
+    db.add_tracker_poll(tid, True, len(route), route, direct=(route, True))
+    db.add_tracker_poll(tid, False, len(route), route, direct=(route, False))
+    check(not core.path_unreliable(tid), "un solo fallimento del tentativo diretto: ancora affidabile")
+    db.add_tracker_poll(tid, True, len(route), route, direct=(route, False))   # diretto a vuoto, poi risposta in flood
     check(core.path_unreliable(tid), "percorso che ha fallito più volte di quante ha risposto: inaffidabile")
     asyncio.run(core.poll_tracker(tid))
     check(mesh.flood_first, "con il percorso inaffidabile il primo tentativo è in flood")
 
+    # un giro del ciclo vero: richiesta, ripianificazione, tracker eliminato tolto dalle scadenze
+    async def loop_run():
+        core.POLL_GAP_S = 0
+        core.next_due.clear()
+        mesh.answer = False
+        core.next_due[999] = time.time() - 5     # tracker eliminato
+        task = asyncio.create_task(core.tracker_loop())
+        await asyncio.sleep(0.3)
+        task.cancel()
+    asyncio.run(loop_run())
+    check(999 not in core.next_due and time.time() + 60 < core.next_due[tid] <= time.time() + 2 * 60 * 1.1,
+          "ciclo: dopo una richiesta a vuoto la prossima tra 2 minuti; scadenze dei tracker eliminati tolte")
+    mesh.answer = True
+
     # attese adattive
     m = Mesh()
     check(m.wait_for(False) == m.DIRECT_WAIT_S and m.wait_for(True) == m.FLOOD_WAIT_S, "attese minime senza misure")
-    for x in (10, 20, 40):
-        m._record_latency(True, x)
-    check(m.wait_for(True) == 52 and m.wait_for(False) == m.DIRECT_WAIT_S, "flood lento: si aspetta di più prima di ritrasmettere")
-    for x in (200, 200, 200):
-        m._record_latency(True, x)
-    check(m.wait_for(True) == m.MAX_WAIT_S, "attesa mai oltre il massimo")
+    m._record_latency(False, 40, "Alice")
+    check(m.wait_for(False, name="Alice") == m.DIRECT_WAIT_S, "una sola risposta lenta non cambia l'attesa")
+    for x in (10, 20, 40, 40, 40, 40, 40, 40, 150):
+        m._record_latency(True, x, "Alice")
+    check(m.wait_for(True, name="Alice") == 52 and m.wait_for(False, name="Alice") == m.DIRECT_WAIT_S,
+          "flood lento: si aspetta di più prima di ritrasmettere (il valore anomalo non conta)")
+    check(m.wait_for(True, name="Bob") == m.FLOOD_WAIT_S, "tempi misurati per ogni nodo")
+    for _ in range(20):
+        m._record_latency(True, 200, "Alice")
+    check(m.wait_for(True, name="Alice") == m.MAX_WAIT_S[True], "attesa mai oltre il massimo")
     check(m.wait_for(False, 25) == 25, "attesa suggerita dalla radio rispettata")
 
 

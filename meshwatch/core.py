@@ -103,6 +103,7 @@ class Core:
         self.moving = {}             # tracker_id -> True se all'ultima posizione si stava spostando
         self.fail_streak = {}        # tracker_id -> richieste consecutive senza risposta
         self.soon = {}               # tracker_id -> richiesta anticipata da un advert (vale anche se arriva durante una richiesta)
+        self.boosted = set()         # tracker già anticipati da un advert in questa serie di fallimenti
         self.file_senders = []       # funzioni async(data, filename, caption) per i backup (Telegram)
         self.tasks = set()           # invii della chat in corso
         self.events = Events()       # notifiche in tempo reale per le pagine aperte
@@ -111,6 +112,12 @@ class Core:
         db.seed_from_config(cfg)
         mesh.on_message = self.on_message
         mesh.on_advert = self.on_advert
+        mesh.wants_advert = lambda name: any(t["contact"] == name for t in self.db.trackers())
+        # dopo un riavvio: i tracker che non rispondevano restano nel recupero rapido
+        for t in db.trackers():
+            n = db.fail_streak(t["id"])
+            if n:
+                self.fail_streak[t["id"]] = n
         # invii rimasti a metà quando il programma si è fermato
         db._exec("UPDATE messages SET status='failed' WHERE dir='out' AND status IN ('queued','sending','sent')")
 
@@ -199,6 +206,8 @@ class Core:
         route = self.db.last_route(tid)
         if not route or not route["path"]:
             return False
+        # si contano solo i primi tentativi diretti su quel percorso: le risposte arrivate in flood
+        # non dicono niente sul percorso salvato
         ok, ko = self.db.path_failures(tid, route["path"], int(time.time()) - self.PATH_STATS_S)
         return ko >= 2 and ko > ok
 
@@ -219,10 +228,13 @@ class Core:
         res = await self.mesh.request_telemetry(t["contact"], attempts=attempts, flood_first=flood_first)
         ok = res is not None
         self.fail_streak[tid] = 0 if ok else self.fail_streak.get(tid, 0) + 1
+        if ok:
+            self.boosted.discard(tid)
         # senza risposta si salva il percorso provato per primo, per capire dove si interrompe
         tried = getattr(self.mesh, "tried", {}).get(t["contact"], (None, None))
+        direct = getattr(self.mesh, "direct", {}).get(t["contact"])
         self.db.add_tracker_poll(tid, ok, *((res.get("hops"), res.get("path")) if ok else tried),
-                                 *self._poll_place(t, res, last))
+                                 *self._poll_place(t, res, last), direct=direct)
         if ok:
             if res["lat"] is not None:
                 await self._store_position(t, res["lat"], res["lon"], res["alt"], res["batt_v"])
@@ -237,6 +249,7 @@ class Core:
         return res
 
     async def _store_position(self, t, lat, lon, alt, batt_v, src=None):
+        """Salva la posizione, aggiorna lo stato "in movimento" e la inoltra (Telegram /segui)."""
         prev = self.db.last_position(t["id"])
         self.db.add_position(t["id"], lat, lon, alt, batt_v, src)
         self._update_moving(t, prev, {"lat": lat, "lon": lon})
@@ -248,11 +261,14 @@ class Core:
 
     ADVERT_MAX_AGE_S = 900     # advert con l'ora più vecchia di così: posizione non attuale
     ADVERT_POLL_DELAY_S = 10   # dopo l'advert di un tracker che non rispondeva, richiesta entro pochi secondi
+    ADVERT_POLL_GAP_S = 60     # ...ma non prima di così dall'ultima richiesta
 
     async def on_advert(self, info):
         """Advert di un contatto. Se è un tracker:
         - se le ultime richieste sono andate a vuoto, è appena tornato in copertura: lo si
-          interroga subito invece di aspettare il prossimo turno;
+          interroga subito invece di aspettare il prossimo turno (una volta sola per serie di
+          fallimenti: se gli advert arrivano ma le risposte no, il collegamento funziona in una
+          sola direzione e richieste continue servirebbero solo a intasare la rete);
         - se porta una posizione diversa da quella dell'advert precedente (quindi presa dal GPS e
           non impostata a mano) e recente, la si salva come posizione senza usare la radio."""
         name = info.get("name")
@@ -263,14 +279,19 @@ class Core:
             key = f"advert_{tid}"
             prev = (self.db.get(key) or "").split(",")
             prev_ts = int(prev[0]) if prev[0].isdigit() else None
-            if prev_ts is not None and adv_ts and adv_ts <= prev_ts:
+            if prev_ts is not None and prev_ts > time.time() + self.ADVERT_MAX_AGE_S:
+                prev_ts = 0    # ora del nodo sbagliata nel futuro: altrimenti si scarterebbero tutti gli advert dopo
+            if prev_ts and adv_ts and adv_ts <= prev_ts:
                 continue       # lo stesso advert ripetuto da un altro ripetitore, o uno vecchio
             self.db.set(key, f"{adv_ts},{info.get('lat')},{info.get('lon')}")
             if t["paused"] or not in_active_hours(t["active_hours"]):
                 continue
-            if self.fail_streak.get(tid):
-                due = time.time() + self.ADVERT_POLL_DELAY_S
+            if self.fail_streak.get(tid) and tid not in self.boosted:
+                lp = self.db.last_poll(tid)
+                due = max(time.time() + self.ADVERT_POLL_DELAY_S,
+                          (lp["ts"] if lp else 0) + self.ADVERT_POLL_GAP_S)
                 if self.next_due.get(tid, due + 1) > due:
+                    self.boosted.add(tid)
                     self.next_due[tid] = self.soon[tid] = due
                     log.info("%s: advert ricevuto dopo richieste senza risposta, la ripeto subito", t["label"])
                     self.wakeup.set()
@@ -308,7 +329,7 @@ class Core:
             if self.next_due.get(t["id"], due + 1) > due:
                 self.next_due[t["id"]] = due
 
-    RETRY_MIN = (2, 5, 10)   # dopo 1, 2, 3+ richieste senza risposta si riprova dopo questi minuti
+    RETRY_MIN = (2, 5, 10)   # dopo 1, 2, 3 richieste senza risposta si riprova dopo questi minuti, poi il doppio ogni volta
     JITTER = 0.1             # ±10% sull'intervallo: richieste non sincronizzate con altro traffico periodico
 
     def next_delay_s(self, t):
@@ -318,7 +339,9 @@ class Core:
         mins = self.interval_min(t)
         fails = self.fail_streak.get(t["id"], 0)
         if fails:
-            mins = min(mins, self.RETRY_MIN[min(fails, len(self.RETRY_MIN)) - 1])
+            n = len(self.RETRY_MIN)
+            retry = self.RETRY_MIN[fails - 1] if fails <= n else self.RETRY_MIN[-1] * 2 ** min(fails - n, 10)
+            mins = min(mins, retry)
         return mins * 60 * random.uniform(1 - self.JITTER, 1 + self.JITTER)
 
     def interval_min(self, t):
@@ -674,7 +697,8 @@ class Core:
         while True:
             self.wakeup.clear()   # prima del giro: una sveglia arrivata durante il giro non va persa
             now = time.time()
-            for t in self.db.trackers():
+            trackers = self.db.trackers()
+            for t in trackers:
                 tid = t["id"]
                 due = self.next_due.get(tid, 0)
                 if now < due:
@@ -690,10 +714,18 @@ class Core:
                 # la richiesta può aver cambiato lo stato "in movimento" o quello dei fallimenti;
                 # un advert arrivato durante la richiesta può aver anticipato la prossima
                 due = time.time() + self.next_delay_s(t)
-                soon = self.soon.pop(tid, due)
-                self.next_due[tid] = min(due, soon) if self.fail_streak.get(tid) else due
+                soon = self.soon.pop(tid, None)
+                if soon and self.fail_streak.get(tid):
+                    due = min(due, max(soon, time.time() + self.ADVERT_POLL_GAP_S))
+                if self.db.tracker(tid):   # eliminato durante la richiesta: non si ripianifica
+                    self.next_due[tid] = due
                 await asyncio.sleep(self.POLL_GAP_S)
             # si dorme fino alla prossima scadenza (al massimo 30 s), es. una richiesta anticipata da un advert
+            ids = {t["id"] for t in self.db.trackers()}
+            for d in (self.next_due, self.fail_streak, self.soon):
+                for tid in [k for k in d if k not in ids]:
+                    d.pop(tid)
+            self.boosted &= ids
             nearest = min(self.next_due.values(), default=time.time() + 30)
             try:
                 await asyncio.wait_for(self.wakeup.wait(), timeout=max(1, min(30, nearest - time.time())))

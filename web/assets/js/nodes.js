@@ -76,9 +76,11 @@ function trackerCard(t) {
   const p = t.last_position;
   const meta = [];
   const bs = (t.sensors || []).find(s => s.type === 'voltage' && s.channel === 1);
-  if (bs && (!p || bs.ts >= p.ts)) meta.push(`batteria ${bs.value.toFixed(2)} V`);
+  // le posizioni dagli advert non hanno la batteria: si usa l'ultima lettura del sensore
+  if (bs && (!p || bs.ts >= p.ts || p.batt_v == null)) meta.push(`batteria ${bs.value.toFixed(2)} V`);
   else if (p && p.batt_v != null) meta.push(`batteria ${p.batt_v.toFixed(2)} V`);
   if (p && p.alt != null) meta.push(`quota ${Math.round(p.alt)} m`);
+  if (p && p.src === 'advert') meta.push('posizione dall\'advert');
   meta.push(`ultima risposta ${fmtTs(t.last_ok)}`);
   const rt = routeText(t.route);
   if (rt) meta.push(rt);
