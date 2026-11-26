@@ -400,13 +400,16 @@ async function loadMaintenance() {
     cell('Ultimo backup Telegram', m.last_backup ? fmtTs(m.last_backup) : 'mai'));
   $('form-mnt').retention_days.value = m.retention_days;
   $('mnt-purge').disabled = !m.retention_days;
+  $('bk-data-note').textContent = `Adesso il database occupa ${fmtSize(m.db_size)} (${m.positions} posizioni`
+    + (m.oldest ? ` dal ${new Date(m.oldest * 1000).toLocaleDateString('it-IT')}` : '') + ').';
   const b = $('form-tgb');
   b.backup_telegram.checked = m.backup_telegram; b.backup_telegram.disabled = !m.telegram;
+  b.backup_kind.value = m.backup_kind || 'completo'; b.backup_kind.disabled = !m.telegram;
   b.querySelector('.primary').disabled = !m.telegram;
   $('mnt-telegram').disabled = !m.telegram;
   $('tgb-last').textContent = !m.telegram ? 'Telegram non configurato.'
     : 'Ultimo backup inviato: ' + (m.last_backup ? fmtTs(m.last_backup) : 'mai') + '.'
-      + (m.backup_protected ? ' 🔒 Protetto da password.' : ' Senza password (si imposta in Sistema → Manutenzione e backup).');
+      + (m.backup_protected ? ' 🔒 Protetto da password.' : ' Senza password (si imposta in Sistema → Backup).');
   const st = $('bkpw-state');
   st.className = 'lock ' + (m.backup_protected ? 'on' : 'off');
   st.textContent = !m.backup_crypto ? 'Per proteggere i backup serve la libreria pyzipper: aggiorna MeshWatch.'
@@ -435,7 +438,7 @@ $('form-mnt').onsubmit = e => {
 };
 $('form-tgb').onsubmit = e => {
   e.preventDefault(); const f = e.target;
-  action(f.querySelector('.primary'), () => put('/api/maintenance', { backup_telegram: f.backup_telegram.checked }),
+  action(f.querySelector('.primary'), () => put('/api/maintenance', { backup_telegram: f.backup_telegram.checked, backup_kind: f.backup_kind.value }),
     f.backup_telegram.checked ? 'Backup settimanale attivo' : 'Backup settimanale spento').then(loadMaintenance);
 };
 
@@ -445,7 +448,7 @@ const fmtWhen = ts => ts ? new Date(ts * 1000).toLocaleString('it-IT', { day: '2
 async function loadRestore() {
   let s; try { s = await api('/api/restore'); } catch (e) { return; }
   $('rst-undo-row').hidden = !s.prev;
-  if (s.prev) $('rst-undo-note').textContent = `rimette lo stato del ${fmtWhen(s.prev.ts)} (${[s.prev.data && 'dati', s.prev.config && 'configurazione'].filter(Boolean).join(' e ')})`;
+  if (s.prev) $('rst-undo-note').textContent = `rimette lo stato del ${fmtWhen(s.prev.ts)} (${[s.prev.data && 'dati', s.prev.settings && 'impostazioni della pagina', s.prev.config && 'file di configurazione'].filter(Boolean).join(', ')})`;
   const l = s.last, last = $('rst-last');
   last.hidden = !l;
   if (l) {
@@ -480,7 +483,8 @@ $('form-rst').onsubmit = async e => {
 function showRestore(c, name) {
   rst = { ...(rst || {}), check: c };
   $('rst-result').hidden = false;
-  $('rst-title').textContent = `${name}: backup ${c.backup_ts ? 'del ' + fmtWhen(c.backup_ts) : 'di MeshWatch'}${c.encrypted ? ' · 🔒 protetto da password' : ''}`;
+  const kindName = { configurazione: 'backup della configurazione', dati: 'backup dei dati', completo: 'backup completo' }[c.kind] || 'backup';
+  $('rst-title').textContent = `${name}: ${kindName} ${c.backup_ts ? 'del ' + fmtWhen(c.backup_ts) : 'di MeshWatch'}${c.encrypted ? ' · 🔒 protetto da password' : ''}`;
   const cells = [];
   if (c.has_data) {
     const d = c.data;
@@ -489,6 +493,13 @@ function showRestore(c, name) {
       cell('Utenti', d.users.map(u => `${u.username} (${u.role})`).join(', ')),
       cell('Posizioni', `${d.positions}${d.first_ts ? ` dal ${fmtWhen(d.first_ts).slice(0, 10)} al ${fmtWhen(d.last_ts).slice(0, 10)}` : ''}`),
       cell('Messaggi', String(d.messages)), cell('Database', fmtSize(d.size)));
+  }
+  if (c.has_settings && !c.has_data) {
+    const d = c.settings;
+    cells.push(cell('Dispositivi', d.trackers.length ? d.trackers.join(', ') : 'nessuno'),
+      cell('Ripetitori', d.repeaters.length ? d.repeaters.join(', ') : 'nessuno'),
+      cell('Utenti', d.users.map(u => `${u.username} (${u.role})`).join(', ')),
+      cell('Regole dei sensori', String(d.sensor_rules)), cell('Impostazioni', String(d.settings)));
   }
   if (c.has_config) {
     const k = c.config;
@@ -500,8 +511,12 @@ function showRestore(c, name) {
   $('rst-warn').replaceChildren(...warns.map(w => el('p', { className: 'note warn', textContent: '⚠️ ' + w })));
   const f = $('form-rst-apply');
   f.data.checked = c.has_data; f.data.disabled = !c.has_data;
+  $('rst-data-row').hidden = !c.has_data;
+  f.settings.checked = c.has_settings && !c.has_data; f.settings.disabled = !c.has_settings;
+  $('rst-set-row').hidden = !c.has_settings;
   const cfgOk = c.has_config && !!c.config_mode;
   f.config.checked = false; f.config.disabled = !cfgOk;
+  $('rst-cfg-row').hidden = !c.has_config;
   $('rst-cfg-note').textContent = !c.has_config ? 'il backup non contiene il config'
     : cfgOk ? 'token Telegram, radio, pagina web (config.yaml)' : 'non disponibile: ' + c.config_reason;
   $('rst-result').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -510,14 +525,14 @@ $('rst-cancel').onclick = () => { $('rst-result').hidden = true; $('form-rst').r
 $('form-rst-apply').onsubmit = async e => {
   e.preventDefault(); const f = e.target, c = rst && rst.check;
   if (!c) return;
-  const what = [f.data.checked && 'i dati', f.config.checked && 'la configurazione'].filter(Boolean);
+  const what = [f.data.checked && 'i dati', f.settings.checked && 'le impostazioni della pagina', f.config.checked && 'il file di configurazione'].filter(Boolean);
   if (!what.length) { toast('Scegli cosa ripristinare', true); return; }
   if (!confirm(`Ripristinare ${what.join(' e ')} dal backup${c.backup_ts ? ' del ' + fmtWhen(c.backup_ts) : ''}?\n\n`
     + 'Lo stato attuale viene salvato (si può annullare). Il servizio si riavvia: per circa un minuto pagina e bot non rispondono.'
-    + (f.data.checked ? '\nDopo il riavvio si entra con utenti e password del backup.' : ''))) return;
+    + (f.data.checked || f.settings.checked ? '\nDopo il riavvio si entra con utenti e password del backup.' : ''))) return;
   const btn = $('rst-apply'); btn.disabled = true;
   try {
-    await post('/api/restore/apply', { token: c.token, data: f.data.checked, config: f.config.checked });
+    await post('/api/restore/apply', { token: c.token, data: f.data.checked, config: f.config.checked, settings: f.settings.checked });
     $('rst-result').hidden = true;
     waitBack($('rst-log'), 'Ripristino in corso: il servizio si riavvia, la pagina si ricarica da sola…');
   } catch (err) { if (err.message !== 'login') toast('Errore: ' + err.message, true); btn.disabled = false; }
@@ -559,8 +574,8 @@ $('mnt-purge').onclick = e => {
   if (!confirm(`Cancellare adesso i dati più vecchi di ${$('form-mnt').retention_days.value} giorni?`)) return;
   action(e.target, () => post('/api/maintenance/purge'), r => r.deleted ? `Eliminate ${r.deleted} righe` : 'Niente da cancellare').then(loadMaintenance);
 };
-$('mnt-telegram').onclick = e => action(e.target, () => post('/api/backup/telegram'), 'Backup inviato').then(loadMaintenance);
-$('mnt-download').onclick = () => setTimeout(loadAdmin, 1500);   // il registro mostra il download
+$('mnt-telegram').onclick = e => action(e.target, () => post('/api/backup/telegram?kind=' + $('form-tgb').backup_kind.value), 'Backup inviato').then(loadMaintenance);
+['mnt-download', 'bk-cfg', 'bk-data'].forEach(id => { $(id).onclick = () => setTimeout(loadAdmin, 1500); });   // il registro mostra il download
 
 // ---------- avvisi batteria bassa
 async function loadBatteryAlerts() {

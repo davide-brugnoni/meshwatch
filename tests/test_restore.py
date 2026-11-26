@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import yaml  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from meshwatch import restore, updater  # noqa: E402
+from meshwatch import maintenance, restore, updater  # noqa: E402
 from meshwatch.auth import Auth, hash_password  # noqa: E402
 from meshwatch.core import Core  # noqa: E402
 from meshwatch.db import DB  # noqa: E402
@@ -260,7 +260,190 @@ def main():
     except restore.RestoreError as e:
         expired = "scaduto" in str(e)
     check(expired, "caricamento non confermato entro un'ora: scaduto")
+    config_and_data_backups()
+    bot_backup()
     print("Tutti i test superati.")
+
+
+def bot_backup():
+    """/backup su Telegram: solo admin, arriva solo alla chat che lo chiede, backup settimanale."""
+    from types import SimpleNamespace
+    from meshwatch import bot as botmod
+    from tests.test_features import Ctx, FakeChat, FakeUpdate
+    cfg = install(tempfile.mkdtemp())
+    db, core, _, _ = app_for(cfg)
+    db.add_tracker(contact="Bob", label="Bob")
+    bot = botmod.Bot({"token": "123456:TEST", "allowed_chat_ids": [1, 2], "admin_chat_ids": [1]}, core)
+    docs = []
+
+    class DocBot:
+        async def send_document(self, cid, doc, caption="", **kw):
+            docs.append((cid, doc.filename, caption))
+    bot.app = SimpleNamespace(bot=DocBot())
+    admin, viewer = FakeChat(1), FakeChat(2)
+    asyncio.run(bot.backup_cmd(FakeUpdate(viewer), Ctx()))
+    check(viewer.sent[-1] == botmod.NOT_ADMIN and not docs, "/backup solo per le chat admin")
+    asyncio.run(bot.backup_cmd(FakeUpdate(admin), Ctx()))
+    check("Configurazione" in admin.sent[-1] and "Dati" in admin.sent[-1] and "automatico: spento" in admin.sent[-1],
+          "/backup: spiega i tipi di backup e lo stato del backup automatico")
+    asyncio.run(bot.backup_cmd(FakeUpdate(admin), Ctx("config")))
+    check(docs and docs[-1][0] == 1 and docs[-1][1].startswith("meshwatch-configurazione-") and "Ripristina" in docs[-1][2],
+          "/backup config: la configurazione arriva solo a questa chat")
+    kb = bot.backup_keyboard()
+    datas = [b.callback_data for row in kb.inline_keyboard for b in row]
+    check({"bk:send:configurazione", "bk:send:dati", "bk:send:completo", "bk:week:dati", "bk:week:off"} <= set(datas),
+          "/backup: pulsanti per inviare subito e per il backup settimanale")
+
+    class Q:
+        def __init__(self, chat, user, data):
+            self.message = SimpleNamespace(chat=chat)
+            self.from_user, self.data, self.text = SimpleNamespace(id=user), data, None
+
+        async def answer(self):
+            pass
+
+        async def edit_message_text(self, text, **kw):
+            self.text = text
+    asyncio.run(bot.on_button(SimpleNamespace(callback_query=Q(viewer, 2, "bk:send:dati")), Ctx()))
+    check(viewer.sent[-1] == botmod.NOT_ADMIN and len(docs) == 1, "pulsante del backup: solo admin")
+    asyncio.run(bot.on_button(SimpleNamespace(callback_query=Q(admin, 1, "bk:send:dati")), Ctx()))
+    check(docs[-1][1].startswith("meshwatch-dati-"), "pulsante Dati: arriva il database")
+    q = Q(admin, 1, "bk:week:configurazione")
+    asyncio.run(bot.on_button(SimpleNamespace(callback_query=q), Ctx()))
+    st = maintenance.settings(db)
+    check(st["backup_telegram"] and st["backup_kind"] == "configurazione" and "ogni settimana, configurazione" in q.text,
+          "backup settimanale della configurazione attivato dal bot")
+    asyncio.run(bot.on_button(SimpleNamespace(callback_query=Q(admin, 1, "bk:week:off")), Ctx()))
+    check(not maintenance.settings(db)["backup_telegram"], "backup settimanale spento dal bot")
+    orig = botmod.TG_MAX_FILE
+    botmod.TG_MAX_FILE = 10
+    try:
+        n = len(docs)
+        asyncio.run(bot.backup_cmd(FakeUpdate(admin), Ctx("dati")))
+        check(len(docs) == n and "50 MB" in admin.sent[-1], "backup troppo grande per Telegram: lo dice")
+    finally:
+        botmod.TG_MAX_FILE = orig
+    acts = [x["action"] for x in db.audit()]
+    check("backup inviato su Telegram" in acts, "nel registro attività")
+
+
+def config_and_data_backups():
+    """Backup della configurazione (config.yaml + impostazioni.json) e dei dati (solo database)."""
+    import json
+    # ---------- l'installazione da cui si fanno i backup
+    src_cfg = install(tempfile.mkdtemp(), token="TOKEN-DEL-BACKUP")
+    sdb, _, sc, sv = app_for(src_cfg)
+    bob = sdb.add_tracker(contact="Bob", label="Bob dal backup", interval_min=15, color="#123456")
+    sdb._exec("INSERT INTO sensor_rules (tracker_id, type, channel, op, value) VALUES (?,?,?,?,?)",
+              (bob, "temperature", 1, ">", 30.0))
+    sdb.set_repeater("Rip-Config", "pw-rip")
+    sdb.set("tg_report_time", "06:45")
+    sdb.set("fw_schedule", '{"gateway": {"enabled": true, "day": 0, "time": "08:00"}}')
+    sdb.set("last_purge", 123)
+    sdb._exec("INSERT INTO positions (ts, lat, lon, alt, batt_v, tracker_id) VALUES (?,?,?,?,?,?)",
+              (int(time.time()), 44.0, 8.0, 1, 4.0, bob))
+
+    r = sc.get("/api/backup?kind=configurazione")
+    zc = zipfile.ZipFile(io.BytesIO(r.content))
+    check(r.status_code == 200 and "meshwatch-configurazione-" in r.headers["content-disposition"]
+          and set(zc.namelist()) == {"LEGGIMI.txt", "config.yaml", "impostazioni.json"},
+          "backup della configurazione: config.yaml e impostazioni.json, senza il database")
+    st = json.loads(zc.read("impostazioni.json"))
+    check([t["label"] for t in st["trackers"]] == ["Bob dal backup"] and st["repeaters"] == [{"name": "Rip-Config", "password": "pw-rip"}]
+          and {u["username"] for u in st["users"]} == {"admin1", "fam"} and st["settings"]["tg_report_time"] == "06:45"
+          and len(st["sensor_rules"]) == 1, "impostazioni.json: dispositivi, ripetitori, utenti, regole, impostazioni")
+    check("last_purge" not in st["settings"] and "session_secret" not in st["settings"] and "seeded" not in st["settings"],
+          "impostazioni.json senza lo stato del programma (ultima pulizia, sessioni)")
+    check("configurazione" in zc.read("LEGGIMI.txt").decode(), "LEGGIMI.txt dice che tipo di backup è")
+    r = sc.get("/api/backup?kind=dati")
+    check(set(zipfile.ZipFile(io.BytesIO(r.content)).namelist()) == {"LEGGIMI.txt", "meshwatch.db"}
+          and "meshwatch-dati-" in r.headers["content-disposition"], "backup dei dati: solo il database")
+    check(set(zipfile.ZipFile(io.BytesIO(sc.get("/api/backup").content)).namelist()) == {"LEGGIMI.txt", "meshwatch.db", "config.yaml"},
+          "backup completo come prima")
+    check(sc.get("/api/backup?kind=altro").status_code == 400, "tipo di backup sconosciuto")
+    check(sv.get("/api/backup?kind=configurazione").status_code == 403, "backup della configurazione solo per gli admin")
+    check(sc.put("/api/maintenance", json={"backup_kind": "configurazione"}).status_code == 200
+          and sc.get("/api/maintenance").json()["backup_kind"] == "configurazione"
+          and sc.put("/api/maintenance", json={"backup_kind": "tutto"}).status_code == 422,
+          "tipo di backup per Telegram salvato e controllato")
+    cfg_zip = r_cfg = sc.get("/api/backup?kind=configurazione").content
+    sc.put("/api/maintenance", json={"backup_password": "segreta-123"})
+    locked = sc.get("/api/backup?kind=configurazione").content
+
+    # ---------- un altro Raspberry con dati suoi
+    cfg = install(tempfile.mkdtemp())
+    db, _, c, _ = app_for(cfg)
+    alice = db.add_tracker(contact="Alice", label="Alice")
+    db.add_tracker(contact="Carla", label="Carla")
+    bob2 = db.add_tracker(contact="Bob", label="Bob qui")
+    for tid in (alice, bob2):
+        db._exec("INSERT INTO positions (ts, lat, lon, alt, batt_v, tracker_id) VALUES (?,?,?,?,?,?)",
+                 (int(time.time()), 45.0, 9.0, 1, 4.0, tid))
+    db.set("tile_cache_mb", "999")
+    db.set("last_purge", 777)
+
+    check(upload(c, locked).json()["detail"]["code"] == "password", "configurazione protetta: chiede la password")
+    j = upload(c, r_cfg).json()
+    check(j["kind"] == "configurazione" and j["has_settings"] and j["has_config"] and not j["has_data"]
+          and j["settings"]["trackers"] == ["Bob dal backup"] and j["settings"]["repeaters"] == ["Rip-Config"],
+          "controllo del backup della configurazione: riassunto")
+    check(any("Alice" in w and "Carla" in w and "storico resta" in w for w in j["warnings"]),
+          "avviso: dispositivi che spariranno dalla mappa (con lo storico che resta)")
+    check(c.post("/api/restore/apply", json={"token": j["token"], "data": True}).status_code == 400,
+          "niente dati nel backup della configurazione")
+    j = upload(c, locked, "segreta-123").json()
+    r = c.post("/api/restore/apply", json={"token": j["token"], "settings": True})
+    check(r.status_code == 200 and r.json().get("settings"), "ripristino delle impostazioni avviato")
+    root = restore.base_dir(cfg)
+    check((root / "prev" / "impostazioni.json").exists() and not (root / "prev" / "meshwatch.db").exists(),
+          "salvate le impostazioni attuali (non serve copiare tutto il database)")
+    db.conn.close()
+    done = restore.apply_pending(cfg)
+    check(done["ok"] and done["settings"], "all'avvio le impostazioni vanno nel database")
+    d2 = DB(cfg["database"])
+    trk = d2.trackers()
+    check([(t["id"], t["label"], t["interval_min"], t["color"]) for t in trk] == [(bob2, "Bob dal backup", 15, "#123456")],
+          "dispositivo riconosciuto dal contatto: stesso id, impostazioni del backup")
+    n = lambda tid: d2._one("SELECT COUNT(*) AS n FROM positions WHERE tracker_id=?", (tid,))["n"]  # noqa: E731
+    check(n(bob2) == 1 and n(alice) == 1, "lo storico resta: posizioni di Bob e anche quelle di Alice")
+    check(d2._all("SELECT tracker_id, type FROM sensor_rules") == [{"tracker_id": bob2, "type": "temperature"}],
+          "regole dei sensori legate al dispositivo giusto")
+    check(d2.repeater("Rip-Config") and {u["username"] for u in d2.users()} == {"admin1", "fam"}
+          and d2.get("tg_report_time") == "06:45" and d2.get("tile_cache_mb") is None and d2.get("last_purge") == "777"
+          and d2.get("backup_password") == "segreta-123",
+          "ripetitori, utenti e impostazioni del backup; lo stato del programma resta quello locale")
+    d2.conn.close()
+
+    # ---------- annulla: tornano le impostazioni di prima, con lo storico di Alice collegato
+    restore.undo(DB(cfg["database"]), cfg, "admin1")
+    restore.apply_pending(cfg)
+    d3 = DB(cfg["database"])
+    check([(t["label"]) for t in d3.trackers()] == ["Alice", "Carla", "Bob qui"] and d3.tracker(alice)["contact"] == "Alice"
+          and d3.get("tile_cache_mb") == "999" and not d3.repeater("Rip-Config"),
+          "annullato: dispositivi (stessi id, storico ricollegato), ripetitori e impostazioni di prima")
+    c = TestClient(create_app(Core(cfg, d3, ChatMesh()), Auth(d3), {"mode": "lan"}))
+    c.post("/api/login", json={"username": "admin1", "password": "segreto1"})
+
+    # ---------- un Raspberry nuovo: la configurazione si ripristina anche senza dati
+    nc = install(tempfile.mkdtemp(), token="TOKEN-NUOVO")
+    ndb = DB(nc["database"])
+    ndb.set_user("admin", hash_password("primo-avvio"), "admin")
+    up = restore.check(_tmpzip(cfg_zip), "", ndb, nc)
+    restore.apply(up["token"], False, True, ndb, nc, "admin", settings=True)
+    ndb.conn.close()
+    check(restore.apply_pending(nc)["ok"], "Raspberry nuovo: configurazione ripristinata")
+    nd = DB(nc["database"])
+    check([t["label"] for t in nd.trackers()] == ["Bob dal backup"] and nd.repeater("Rip-Config")
+          and {u["username"] for u in nd.users()} == {"admin1", "fam"}
+          and yaml.safe_load(Path(nc["_config_path"]).read_text())["telegram"]["token"] == "TOKEN-DEL-BACKUP",
+          "Raspberry nuovo: dispositivi, ripetitori, utenti e config.yaml come nel backup")
+
+    # ---------- impostazioni.json non valide
+    bad = json.dumps({"format": "meshwatch-impostazioni", "version": 1, "users": [{"username": "x", "password_hash": "h", "role": "viewer"}]})
+    check("nessun utente admin" in upload(c, zip_of({"impostazioni.json": bad})).json()["detail"], "impostazioni senza admin rifiutate")
+    check("non è un file di MeshWatch" in upload(c, zip_of({"impostazioni.json": "{}"})).json()["detail"], "impostazioni.json estraneo")
+    check("versione più recente" in upload(c, zip_of({"impostazioni.json": json.dumps({"format": "meshwatch-impostazioni", "version": 99})})).json()["detail"],
+          "impostazioni di una versione più recente")
 
 
 def _tmpzip(data):

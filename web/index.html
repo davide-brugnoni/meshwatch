@@ -337,6 +337,11 @@
     <h2>Backup su Telegram</h2>
     <form class="edit" id="form-tgb">
       <label class="switch"><input type="checkbox" name="backup_telegram"> Backup settimanale alle chat admin</label>
+      <label>Cosa inviare <select name="backup_kind">
+        <option value="completo">Completo (dati e configurazione)</option>
+        <option value="configurazione">Solo configurazione (pochi kB)</option>
+        <option value="dati">Solo dati</option>
+      </select></label>
       <div class="formacts">
         <button class="primary">Salva</button>
         <button type="button" id="mnt-telegram">Invia backup ora</button>
@@ -349,13 +354,17 @@
     <h2>Comandi del bot</h2>
     <div class="cmds">
       <div><b>📍 Posizione ora</b><span>chiede subito la posizione</span></div>
+      <div><b>🕓 Ultima posizione</b><span>l'ultima ricevuta, con l'orario · <span class="mono">/traccia</span> le ultime 12 ore</span></div>
       <div><b>🗺 Mappa</b><span>traccia del giorno come immagine · <span class="mono">/mappa 7</span> per la settimana</span></div>
       <div><b>👣 Segui 2 ore</b><span>posizione in diretta di Telegram · <span class="mono">/basta</span> la ferma</span></div>
       <div><b>📊 Statistiche</b><span>km, risposte, quota e batteria · <span class="mono">/stats 7</span></span></div>
       <div><b>📝 Riepilogo</b><span>la giornata in un messaggio</span></div>
+      <div><b>📡 Nodi</b><span>stato di dispositivi e ripetitori · <span class="mono">/aggiorna</span> li interroga subito (chat admin)</span></div>
       <div><b>🖥 Sistema</b><span>Raspberry, radio e database</span></div>
       <div><b>📶 Rete</b><span>nodi nuovi e spariti, ripetitori, collegamenti · <span class="mono">/rete</span></span></div>
       <div><b>/terminale</b><span>comandi CLI ai ripetitori (chat admin)</span></div>
+      <div><b>/firmware</b><span>versioni del firmware, aggiorna il gateway (chat admin)</span></div>
+      <div><b>/aggiornamento</b><span>nuova versione di MeshWatch: controlla e installa (chat admin)</span></div>
       <div><b>/aiuto</b><span>tutti i comandi</span></div>
     </div>
   </section>
@@ -388,12 +397,34 @@
       Se la nuova versione non parte, al terzo tentativo torna da sola a quella precedente.</p></details>
   </section>
 <section class="card">
-    <h2>Manutenzione e backup</h2>
+    <h2>Manutenzione</h2>
     <div id="mnt-info" class="grid stats mono"><p class="muted">Caricamento…</p></div>
     <form class="edit" id="form-mnt">
       <label>Conserva i dati per (giorni, 0 = per sempre) <input type="number" name="retention_days" min="0" max="3650"></label>
       <div class="formacts"><button class="primary">Salva</button></div>
     </form>
+    <div class="row">
+      <button id="mnt-purge">Pulisci ora</button>
+    </div>
+    <details class="help"><summary>Come funziona</summary><p>La pulizia gira da sola una volta al giorno: cancella posizioni, statistiche dei ripetitori e della rete, comandi, messaggi e registro più vecchi del limite. Restano sempre l'ultima posizione di ogni dispositivo e l'ultimo stato di ogni ripetitore. Le impostazioni non vengono mai toccate.</p></details>
+  </section>
+<section class="card wide" id="bk-card">
+    <h2>Backup</h2>
+    <div class="bk-grid">
+      <div class="bk">
+        <h3>⚙️ Backup configurazione</h3>
+        <p>Tutto quello che hai impostato, senza lo storico: <strong>dispositivi</strong> (intervalli, fasce orarie, colori, soglie dei sensori), <strong>ripetitori</strong> con le password, <strong>utenti</strong> della pagina, avvisi, riepilogo, backup, cache delle mappe, controllo del firmware e il file <span class="mono">config.yaml</span> (token Telegram, radio, pagina web).</p>
+        <p class="muted" id="bk-cfg-note">Pochi kB. Scaricalo dopo ogni modifica importante e prima di cambiare SD o Raspberry.</p>
+        <div class="row"><a class="btn primary" id="bk-cfg" href="/api/backup?kind=configurazione">Scarica configurazione</a></div>
+      </div>
+      <div class="bk">
+        <h3>🗄️ Backup dati</h3>
+        <p>Il <strong>database completo</strong>: posizioni e tracce, sensori, copertura, statistiche dei ripetitori e della rete, messaggi della chat, registro attività (e anche le impostazioni della pagina, come sono adesso).</p>
+        <p class="muted" id="bk-data-note">Può essere grande: dipende da quanti giorni di dati conservi.</p>
+        <div class="row"><a class="btn" id="bk-data" href="/api/backup?kind=dati">Scarica dati</a></div>
+      </div>
+    </div>
+    <p class="note">Serve tutto in un solo file? <a href="/api/backup?kind=completo" id="mnt-download">Backup completo</a> (database e config.yaml, come nelle versioni precedenti).</p>
     <form class="edit" id="form-bkpw">
       <div class="formacts"><span class="lock" id="bkpw-state">…</span></div>
       <label>Nuova password del backup <input type="password" name="pw" minlength="8" maxlength="128" autocomplete="new-password" placeholder="almeno 8 caratteri" required></label>
@@ -403,13 +434,11 @@
         <button type="button" id="bkpw-remove" class="danger" hidden>Togli la password</button>
       </div>
     </form>
-    <div class="row">
-      <a class="btn" id="mnt-download" href="/api/backup">Scarica backup</a>
-      <button id="mnt-purge">Pulisci ora</button>
-    </div>
-    <details class="help"><summary>Come funziona</summary><p>La pulizia gira da sola una volta al giorno: cancella posizioni, statistiche dei ripetitori, comandi e registro più vecchi del limite. Restano sempre l'ultima posizione di ogni dispositivo e l'ultimo stato di ogni ripetitore.
-      Il backup è uno zip con database e config.yaml: contiene password e posizioni, conservalo con cura. Come ripristinarlo è spiegato nel file LEGGIMI.txt dentro lo zip.</p></details>
-    <details class="help"><summary>Backup con password</summary><p>Con la password, database e config nello zip sono cifrati (AES-256): vale per il backup scaricato e per quello su Telegram. Il file LEGGIMI.txt resta leggibile.
+    <details class="help"><summary>Quale backup scegliere</summary><p><strong>Configurazione</strong>: il più utile da tenere sempre aggiornato. Su una SD nuova (o dopo aver rifatto il Raspberry) basta ripristinarlo da <strong>Ripristina un backup</strong> per ritrovare dispositivi, ripetitori, utenti e avvisi come prima; lo storico riparte da zero. Ripristinato su un Raspberry che ha già dei dati, cambia solo le impostazioni: posizioni e statistiche restano.
+      <strong>Dati</strong>: per non perdere lo storico, per esempio prima di cambiare SD. Ripristinandolo il database torna esattamente com'era, impostazioni comprese.
+      Per spostare tutto su un altro Raspberry: ripristina i dati e poi la configurazione (oppure il backup completo).
+      Tutti i backup contengono password: conservali con cura. Come ripristinarli è spiegato anche nel file LEGGIMI.txt dentro lo zip.</p></details>
+    <details class="help"><summary>Backup con password</summary><p>Con la password, i file nello zip sono cifrati (AES-256): vale per tutti i backup scaricati e per quello su Telegram. Il file LEGGIMI.txt resta leggibile.
       Su Windows lo zip si apre con <strong>7-Zip</strong> (gratuito): Esplora risorse non apre questo tipo di zip. Su Linux: <span class="mono">7z x</span> (pacchetto p7zip-full).
       Il Raspberry conserva la password per i backup automatici: protegge le copie che escono dal Raspberry, non la SD. Se la dimentichi i backup fatti con quella password non si aprono più: annotala in un posto sicuro.</p></details>
   </section>
@@ -441,8 +470,9 @@
       <div class="grid stats mono" id="rst-info"></div>
       <div id="rst-warn"></div>
       <form class="edit" id="form-rst-apply">
-        <label class="switch"><input type="checkbox" name="data"> <span>Dati <small>dispositivi, posizioni, ripetitori, messaggi, utenti e impostazioni della pagina</small></span></label>
-        <label class="switch"><input type="checkbox" name="config"> <span>Configurazione <small id="rst-cfg-note">token Telegram, radio, pagina web (config.yaml)</small></span></label>
+        <label class="switch" id="rst-data-row"><input type="checkbox" name="data"> <span>Dati <small id="rst-data-note">il database completo: posizioni, statistiche, messaggi, registro, utenti e impostazioni della pagina</small></span></label>
+        <label class="switch" id="rst-set-row"><input type="checkbox" name="settings"> <span>Impostazioni della pagina <small id="rst-set-note">dispositivi, ripetitori, utenti, avvisi e altre impostazioni; lo storico resta</small></span></label>
+        <label class="switch" id="rst-cfg-row"><input type="checkbox" name="config"> <span>File di configurazione <small id="rst-cfg-note">token Telegram, radio, pagina web (config.yaml)</small></span></label>
         <div class="formacts">
           <button class="primary danger-fill" id="rst-apply">Ripristina e riavvia</button>
           <button type="button" id="rst-cancel">Annulla</button>
@@ -457,7 +487,8 @@
     <p class="upd-log" id="rst-log" hidden></p>
     <details class="help"><summary>Come funziona</summary><p>Prima si controlla il backup: niente cambia finché non premi <strong>Ripristina e riavvia</strong>. Il Raspberry verifica password, integrità del database e che questa versione lo sappia aprire (i backup delle versioni precedenti vanno bene), poi mostra cosa contiene.
       Al ripristino lo stato attuale viene salvato, così puoi tornare indietro con <strong>Annulla l'ultimo ripristino</strong>; il servizio si riavvia (circa un minuto) e la pagina si ricarica da sola.
-      Con i dati tornano anche gli utenti e le password della pagina com'erano nel backup: dopo il riavvio si rientra con quelle. Le posizioni registrate dopo il backup si perdono (restano nella copia salvata).
+      Si possono ripristinare tutti i tipi di backup: <strong>configurazione</strong>, <strong>dati</strong> o <strong>completo</strong> (anche quelli delle versioni precedenti). Spunta solo quello che vuoi rimettere.
+      Con i dati o con le impostazioni della pagina tornano anche gli utenti e le password della pagina com'erano nel backup: dopo il riavvio si rientra con quelle. Ripristinando i dati, le posizioni registrate dopo il backup si perdono (restano nella copia salvata); ripristinando solo le impostazioni lo storico resta com'è.
       Sulla SD del kit la configurazione si ripristina dopo un'abilitazione una tantum via SSH (<span class="mono">sudo bash /opt/meshwatch/tools/configura-servizio.sh</span>); il config precedente resta sulla SD come <span class="mono">meshwatch-config.prima-del-ripristino.yaml</span>.</p></details>
   </section>
   </div>

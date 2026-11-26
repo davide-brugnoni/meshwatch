@@ -12,6 +12,10 @@ Configurazione:
   ripristinato va lasciato in .restore/config-sd.yaml: lo script lo copia sulla SD prima
   (tools/configura-servizio.sh; le SD preparate prima vanno riconfigurate una volta).
 
+Un backup può contenere meshwatch.db (dati), config.yaml (file di configurazione) e
+impostazioni.json (impostazioni della pagina, dal backup della configurazione): ognuno si sceglie a
+parte. impostazioni.json all'avvio si applica al database senza toccare lo storico.
+
 Tutto sta in .restore/ accanto al database:
     upload/<token>/   backup caricato e controllato, in attesa di conferma (1 ora)
     pending/          da applicare al prossimo avvio
@@ -46,6 +50,8 @@ SD_PRESTART = Path("/opt/meshwatch-prestart.sh")
 SD_MARK = "config-sd.yaml"        # lo script di avvio del kit sa copiare il config ripristinato
 SD_RESTORE = SD_DATA / ".restore" / SD_MARK   # dove lo script di avvio lo cerca
 NEED_TABLES = {"trackers", "users", "settings", "positions"}
+MEMBERS = ("meshwatch.db", "config.yaml", "impostazioni.json")
+MAX_SETTINGS = 20 * 2**20
 
 
 class RestoreError(Exception):
@@ -105,10 +111,10 @@ def _open_zip(path, password):
     except _bad_zip_errors() + (OSError, ValueError):
         raise RestoreError("il file non è uno zip valido") from None
     names = {i.filename: i for i in z.infolist()}
-    if "meshwatch.db" not in names and "config.yaml" not in names:
+    if not any(n in names for n in MEMBERS):
         z.close()
-        raise RestoreError("non è un backup di MeshWatch: dentro non ci sono meshwatch.db né config.yaml")
-    encrypted = any(names[n].flag_bits & 1 for n in ("meshwatch.db", "config.yaml") if n in names)
+        raise RestoreError("non è un backup di MeshWatch: dentro non ci sono meshwatch.db, config.yaml né impostazioni.json")
+    encrypted = any(names[n].flag_bits & 1 for n in MEMBERS if n in names)
     if encrypted:
         if pyzipper is None:
             z.close()
@@ -197,6 +203,21 @@ def _inspect_db(path):
     return info
 
 
+def _inspect_settings(path):
+    from . import maintenance
+    if path.stat().st_size > MAX_SETTINGS:
+        raise RestoreError("impostazioni.json è troppo grande")
+    try:
+        data = maintenance.parse_settings(path.read_bytes())
+    except maintenance.BackupError as e:
+        raise RestoreError(str(e)) from None
+    return {"trackers": [t["label"] for t in data.get("trackers", [])],
+            "repeaters": [r["name"] for r in data.get("repeaters", [])],
+            "users": [{"username": u["username"], "role": u["role"]} for u in data.get("users", [])],
+            "sensor_rules": len(data.get("sensor_rules", [])),
+            "settings": len(data.get("settings", {}))}
+
+
 def _inspect_cfg(path, cfg):
     try:
         new = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
@@ -244,12 +265,15 @@ def check(zip_path, password, db, cfg):
             readme = ""
             if "LEGGIMI.txt" in names and names["LEGGIMI.txt"].file_size < 100_000 and not names["LEGGIMI.txt"].flag_bits & 1:
                 readme = z.read("LEGGIMI.txt").decode("utf-8", "replace")
-            for n in ("meshwatch.db", "config.yaml"):
+            for n in MEMBERS:
                 if n in names:
                     _extract(z, names[n], dest / n)
         out = {"token": token, "encrypted": encrypted, "backup_ts": _when(readme),
                "has_data": (dest / "meshwatch.db").exists(), "has_config": (dest / "config.yaml").exists(),
-               "warnings": []}
+               "has_settings": (dest / "impostazioni.json").exists(), "warnings": []}
+        out["kind"] = ("configurazione" if out["has_settings"] and not out["has_data"]
+                       else "completo" if out["has_data"] and out["has_config"]
+                       else "dati" if out["has_data"] else "configurazione")
         if out["has_data"]:
             out["data"] = info = _inspect_db(dest / "meshwatch.db")
             cur = db._one("SELECT COUNT(*) AS n, MAX(ts) AS t FROM positions")
@@ -259,6 +283,14 @@ def check(zip_path, password, db, cfg):
                                        "(lo stato attuale resta salvato: puoi annullare il ripristino)")
             out["current"] = {"positions": cur["n"], "last_ts": cur["t"],
                               "trackers": [t["label"] for t in db.trackers()]}
+        if out["has_settings"]:
+            out["settings"] = st = _inspect_settings(dest / "impostazioni.json")
+            now = [t["label"] for t in db.trackers()]
+            gone = [t for t in now if t not in st["trackers"]]
+            if gone:
+                out["warnings"].append("dispositivi che non sono nel backup e spariranno dalla mappa (il loro storico "
+                                       "resta nel database): " + ", ".join(gone))
+            out.setdefault("current", {})["trackers"] = now
         if out["has_config"]:
             out["config"], w = _inspect_cfg(dest / "config.yaml", cfg)
             out["config_warnings"] = w
@@ -283,8 +315,9 @@ def _read_json(path):
         return None
 
 
-def apply(token, data, config, db, cfg, user=""):
-    """Salva lo stato attuale in prev/ e prepara i file in pending/: si applicano al riavvio."""
+def apply(token, data, config, db, cfg, user="", settings=False):
+    """Salva lo stato attuale in prev/ e prepara i file in pending/: si applicano al riavvio.
+    data = meshwatch.db, config = config.yaml, settings = impostazioni.json."""
     root = base_dir(cfg)
     if not re.fullmatch(r"[0-9a-f]{24}", token or ""):
         raise RestoreError("backup da ripristinare non trovato: caricalo di nuovo")
@@ -293,10 +326,14 @@ def apply(token, data, config, db, cfg, user=""):
     if not meta or time.time() - meta["ts"] > UPLOAD_TTL:
         shutil.rmtree(up, ignore_errors=True)
         raise RestoreError("backup scaduto o non trovato: caricalo di nuovo")
-    if not (data or config):
-        raise RestoreError("scegli cosa ripristinare: dati, configurazione o entrambi")
+    if not (data or config or settings):
+        raise RestoreError("scegli cosa ripristinare: dati, impostazioni della pagina o file di configurazione")
     if data and not (up / "meshwatch.db").exists():
         raise RestoreError("il backup non contiene i dati")
+    if settings and not (up / "impostazioni.json").exists():
+        raise RestoreError("il backup non contiene le impostazioni della pagina")
+    if data and settings:   # il database del backup ha già le sue impostazioni
+        settings = False
     mode = None
     if config:
         if not (up / "config.yaml").exists():
@@ -305,7 +342,7 @@ def apply(token, data, config, db, cfg, user=""):
         if not mode:
             raise RestoreError("la configurazione non si può ripristinare: " + reason)
     return _stage(root, up, data, config, mode, db, cfg,
-                  {"user": user, "source": "backup", "backup_ts": meta.get("backup_ts")})
+                  {"user": user, "source": "backup", "backup_ts": meta.get("backup_ts")}, settings=settings)
 
 
 def undo(db, cfg, user=""):
@@ -316,6 +353,7 @@ def undo(db, cfg, user=""):
     if not pm:
         raise RestoreError("non c'è un ripristino da annullare")
     data, config = (prev / "meshwatch.db").exists(), (prev / "config.yaml").exists()
+    settings = (prev / "impostazioni.json").exists()
     mode = None
     if config:
         mode, reason = config_target(cfg)
@@ -326,12 +364,13 @@ def undo(db, cfg, user=""):
     prev.rename(src)   # prev diventa la sorgente: dopo l'annullamento non c'è un altro "annulla"
     try:
         return _stage(root, src, data, config, mode, db, cfg, {"user": user, "source": "annullamento",
-                                                               "backup_ts": pm.get("ts")}, save_prev=False)
+                                                               "backup_ts": pm.get("ts")},
+                      save_prev=False, settings=settings)
     finally:
         shutil.rmtree(src, ignore_errors=True)
 
 
-def _stage(root, src, data, config, mode, db, cfg, meta, save_prev=True):
+def _stage(root, src, data, config, mode, db, cfg, meta, save_prev=True, settings=False):
     need = (src / "meshwatch.db").stat().st_size if data else 0
     if shutil.disk_usage(root).free < 2 * need + MIN_FREE:
         raise RestoreError("spazio insufficiente sulla SD per il ripristino")
@@ -345,10 +384,15 @@ def _stage(root, src, data, config, mode, db, cfg, meta, save_prev=True):
             db.backup_to(str(prev / "meshwatch.db"))   # copia coerente del database attuale
         if config:
             shutil.copyfile(cfg["_config_path"], prev / "config.yaml")
-        _write_meta(prev / "meta.json", {"ts": int(time.time()), "data": data, "config": config})
+        if settings:   # le impostazioni attuali, per poterle rimettere
+            from . import maintenance
+            (prev / "impostazioni.json").write_text(json.dumps(maintenance.export_settings(db), ensure_ascii=False))
+        _write_meta(prev / "meta.json", {"ts": int(time.time()), "data": data, "config": config, "settings": settings})
     pending.mkdir(parents=True)
     if data:
         shutil.move(str(src / "meshwatch.db"), pending / "meshwatch.db")
+    if settings:
+        shutil.copyfile(src / "impostazioni.json", pending / "impostazioni.json")
     if config:
         if mode == "sd":   # lo copia sulla SD lo script di avvio (root), prima di ricopiarlo qui
             SD_RESTORE.parent.mkdir(parents=True, exist_ok=True)
@@ -358,9 +402,13 @@ def _stage(root, src, data, config, mode, db, cfg, meta, save_prev=True):
             os.replace(tmp, SD_RESTORE)
         else:
             shutil.copyfile(src / "config.yaml", pending / "config.yaml")
-    _write_meta(pending / "meta.json", {**meta, "ts": int(time.time()), "data": data, "config": config, "mode": mode})
+    _write_meta(pending / "meta.json", {**meta, "ts": int(time.time()), "data": data, "config": config,
+                                        "settings": settings, "mode": mode})
     shutil.rmtree(root / "upload", ignore_errors=True)
-    return {"ok": True, "data": data, "config": config}
+    out = {"ok": True, "data": data, "config": config}
+    if settings:
+        out["settings"] = True
+    return out
 
 
 def apply_pending(cfg):
@@ -380,6 +428,14 @@ def apply_pending(cfg):
                 Path(str(dbp) + suf).unlink(missing_ok=True)
             os.chmod(pending / "meshwatch.db", mode)
             os.replace(pending / "meshwatch.db", dbp)
+        if meta.get("settings") and (pending / "impostazioni.json").exists():
+            from . import maintenance
+            from .db import DB
+            d = DB(str(db_path(cfg)))
+            try:
+                maintenance.import_settings(d, maintenance.parse_settings((pending / "impostazioni.json").read_bytes()))
+            finally:
+                d.conn.close()
         if meta.get("config"):
             if meta.get("mode") == "sd":
                 if SD_RESTORE.exists():   # lo script di avvio non l'ha copiato sulla SD

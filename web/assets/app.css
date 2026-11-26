@@ -394,3 +394,10 @@ table.st-table td.worst::before { content:'▲ '; font-size:10px; }
   .st-link svg { width:96px; }
   .st-hbars div { grid-template-columns:minmax(80px, 120px) 1fr 52px; }
 }
+/* backup: configurazione e dati affiancati */
+.bk-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:12px; margin:4px 0 10px; }
+.bk { background:var(--field); border:1px solid var(--line); border-radius:9px; padding:12px; display:flex; flex-direction:column; gap:6px; }
+.bk h3 { margin:0; font-size:15px; }
+.bk p { margin:0; font-size:13.5px; line-height:1.45; }
+.bk .row { margin-top:auto; padding-top:4px; }
+#bk-card .note a { color:var(--acc); }
