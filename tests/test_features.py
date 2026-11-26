@@ -705,7 +705,7 @@ def test_bot_images():
     check("Disco libero" in txt and "Radio gateway Casa" in txt and "posizioni" in txt and "Cache mappe: 12 tessere" in txt,
           "/sistema")
     db.set_repeater("Rip-Monte", "x")
-    db._exec("INSERT INTO repeater_status VALUES (?,?,?,?,?,?,?,?,?,?)",
+    db._exec("INSERT INTO repeater_status (ts, name, ok, bat_mv, uptime, noise, rssi, snr, nb_recv, nb_sent) VALUES (?,?,?,?,?,?,?,?,?,?)",
              (now - 600, "Rip-Monte", 1, 4100, 1000, -110, -80, 7.5, 1, 1))
     other = FakeChat(2)
     bot.allowed.add(2)
@@ -1070,7 +1070,53 @@ def test_bot_permissions():
     mesh.request_telemetry = orig
 
 
+def test_packet_stats():
+    """Statistiche complete di ripetitori e gateway: salvate, nello storico, nel bot."""
+    from meshwatch.bot import traffic_text
+    db, mesh, core, c, v, anon, tid = setup()
+    full = {"bat": 4100, "uptime": 5000, "noise_floor": -112, "last_rssi": -88, "last_snr": 6.5,
+            "nb_recv": 1000, "nb_sent": 400, "tx_queue_len": 2, "airtime": 120, "rx_airtime": 900,
+            "sent_flood": 350, "sent_direct": 50, "recv_flood": 900, "recv_direct": 100,
+            "flood_dups": 300, "direct_dups": 7, "full_evts": 1, "recv_errors": 12}
+    db.set_repeater("Rip-Monte", "pw")
+    db.add_repeater_status("Rip-Monte", True, full)
+    _, good = db.repeater_latest("Rip-Monte")
+    check(good["sent_flood"] == 350 and good["flood_dups"] == 300 and good["tx_queue"] == 2
+          and good["airtime"] == 120 and good["recv_errors"] == 12 and good["full_evts"] == 1,
+          "ripetitore: salvati traffico flood/diretto, duplicati, airtime, coda ed errori")
+    db.add_repeater_status("Rip-Monte", True, {"bat": 4000})   # firmware che non manda tutto
+    db._exec("UPDATE repeater_status SET ts=ts-3600 WHERE rowid=(SELECT MIN(rowid) FROM repeater_status)")
+    db._exec("UPDATE repeater_status SET nb_recv=1360, nb_sent=580, airtime=156, uptime=8600 "
+             "WHERE rowid=(SELECT MAX(rowid) FROM repeater_status)")
+    h = db.repeater_history("Rip-Monte", 0)
+    check(len(h) == 2 and h[0]["flood_dups"] == 300 and h[1]["flood_dups"] is None, "storico con tutti i contatori")
+    txt = traffic_text(h)
+    check("360 Rx/h" in txt and "180 Tx/h" in txt and "airtime TX 1.0%" in txt, f"bot: pacchetti all'ora e airtime ({txt})")
+    h[1]["uptime"] = 10
+    check("Rx/h" not in traffic_text(h), "bot: dopo un riavvio non calcola il traffico")
+    reps = c.get("/api/state").json()["repeaters"]
+    check(reps[0]["history"][0]["sent_flood"] == 350, "pagina: storico completo nello stato")
+
+    # gateway: statistiche nello storico a ogni giro dei ripetitori
+    async def gw_info():
+        return {"battery_mv": 4200, "uptime": 100, "queue_len": 0, "errors": 0, "noise_floor": -115,
+                "last_rssi": -70, "last_snr": 9.0, "tx_air_secs": 30, "rx_air_secs": 400, "recv": 50,
+                "sent": 20, "flood_tx": 15, "direct_tx": 5, "flood_rx": 45, "direct_rx": 5, "recv_errors": None}
+    mesh.gateway_info = gw_info
+    asyncio.run(core.record_gateway())
+    g = db.gateway_history(0)
+    check(len(g) == 1 and g[0]["sent_flood"] == 15 and g[0]["rx_air"] == 400 and g[0]["nb_recv"] == 50,
+          "gateway: statistiche salvate nello storico")
+    r = c.get("/api/gateway").json()
+    check(r["recv"] == 50 and len(r["history"]) == 1, "/api/gateway con lo storico")
+    check(v.get("/api/gateway").status_code == 403, "/api/gateway solo admin")
+    db._exec("UPDATE gateway_stats SET ts=ts-400*86400")
+    maintenance.purge(db, 30)
+    check(not db.gateway_history(0), "pulizia: storico del gateway vecchio eliminato")
+
+
 def main():
+    test_packet_stats()
     test_sensors()
     test_battery_alerts()
     test_route()

@@ -172,7 +172,7 @@ let gw = null;
 async function loadGateway() {
   const box = $('gw-info'), f = $('form-gw');
   try { gw = await api('/api/gateway'); }
-  catch (e) { if (e.message !== 'login') box.replaceChildren(el('p', { className: 'muted', textContent: 'Gateway non disponibile: ' + e.message })); f.hidden = true; return; }
+  catch (e) { if (e.message !== 'login') box.replaceChildren(el('p', { className: 'muted', textContent: 'Gateway non disponibile: ' + e.message })); f.hidden = true; $('gw-chart').replaceChildren(); return; }
   f.hidden = false;
   const v = (x, suf = '') => x == null || x === '' ? '—' : x + suf;
   box.replaceChildren(
@@ -181,12 +181,23 @@ async function loadGateway() {
     cell('Alimentazione', gw.battery_mv ? (gw.battery_mv / 1000).toFixed(2) + ' V' : '—'),
     cell('Uptime', fmtUp(gw.uptime)), cell('Coda TX', v(gw.queue_len)),
     cell('Rumore', v(gw.noise_floor, ' dBm')), cell('Ultimo RSSI', v(gw.last_rssi, ' dBm')), cell('Ultimo SNR', v(gw.last_snr)),
-    cell('Pacchetti Rx/Tx', `${v(gw.recv)}/${v(gw.sent)}`), cell('Tempo TX', gw.tx_air_secs != null ? Math.round(gw.tx_air_secs / 60) + ' min' : '—'),
+    ...packetCells({ nb_recv: gw.recv, nb_sent: gw.sent, recv_flood: gw.flood_rx, recv_direct: gw.direct_rx,
+      sent_flood: gw.flood_tx, sent_direct: gw.direct_tx, tx_air: gw.tx_air_secs, rx_air: gw.rx_air_secs,
+      recv_errors: gw.recv_errors }),
+    ...(gw.errors ? [cell('Errori', v(gw.errors))] : []),
     cell('Contatti', v(gw.contacts)));
+  drawGatewayChart();
   f.gw_name.value = gw.name || ''; f.tx_power.value = gw.tx_power ?? ''; f.tx_power.max = gw.max_tx_power || 30;
   f.lat.value = gw.lat ?? ''; f.lon.value = gw.lon ?? ''; f.share_location.checked = !!gw.share_location;
   f.radio_freq.value = gw.radio_freq ?? ''; f.radio_bw.value = String(gw.radio_bw ?? '');
   f.radio_sf.value = String(gw.radio_sf ?? ''); f.radio_cr.value = String(gw.radio_cr ?? '');
+}
+// storico del gateway (salvato a ogni giro dei ripetitori): stessi grafici dei ripetitori
+function drawGatewayChart() {
+  const box = $('gw-chart'), h = (gw && gw.history) || [];
+  const tabs = metricTabs(h, 'gw', drawGatewayChart);
+  box.replaceChildren(...(tabs ? [tabs, metricChart(h, 'gw')]
+    : [el('p', { className: 'muted', style: 'margin:6px 0 0;font-size:12.5px', textContent: 'Grafici: lo storico si riempie a ogni giro dei ripetitori' })]));
 }
 $('form-gw').onsubmit = async e => {
   e.preventDefault();

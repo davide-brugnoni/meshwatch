@@ -54,7 +54,8 @@ Gira su un Raspberry Pi con una radio MeshCore in modalità *Companion USB* (Hel
 - **Sensori**: tutti i valori della telemetria (temperatura, umidità, pressione, luce, tensione, …) salvati a ogni risposta, anche senza fix GPS, con grafico per sensore e **soglie di avviso** su Telegram.
 - **Percorso dei pacchetti**: per ogni risposta i ripetitori attraversati (*via Rip-Monte → Rip-Valle*), disegnati sulla mappa dal gateway al dispositivo; percorso anche per ogni contatto della rubrica.
 - **Mappa della copertura**: celle colorate dove il dispositivo risponde e dove no, con salti medi: mostra dove manca un ripetitore.
-- **Ripetitori**: login e statistiche periodiche (batteria, uptime, rumore, SNR, RSSI, pacchetti) con grafici di batteria, rumore, SNR e RSSI.
+- **Ripetitori**: login e statistiche periodiche con tutti i dati della risposta di stato: batteria, uptime, rumore, SNR, RSSI, pacchetti ricevuti e inviati (flood e diretti), duplicati scartati, airtime TX/RX, coda di trasmissione, coda piena ed errori di ricezione (firmware 1.12+). Grafici di batteria, rumore, SNR, RSSI e del traffico: pacchetti ricevuti, inviati, inviati in flood, duplicati ed errori all'ora, airtime TX/RX in % del tempo. Dopo un riavvio del ripetitore i contatori ripartono da zero e quel tratto viene saltato.
+- **Statistiche del gateway**: le stesse statistiche della radio collegata al Raspberry (senza i duplicati, che il companion non conta) salvate a ogni giro dei ripetitori, con i grafici in Gestione → Rete.
 - **Chat**: messaggi privati e canali (Public e canali privati) direttamente dalla Heltec collegata al Raspberry, dalla pagina, senza accendere un altro dispositivo. Conferma di consegna, nuovi tentativi automatici, messaggi salvati anche a pagina chiusa.
 - **Mappa della rete**: livello "Rete MeshCore" con i nodi che annunciano la posizione e i collegamenti tra ripetitori vicini colorati per SNR.
 - **Rubrica del gateway**: contatti della Heltec con salti, posizione e ultimo advert; preferiti, azzera percorso, rimuovi, aggiunta manuale dei nuovi nodi.
@@ -657,7 +658,7 @@ La pagina usa un'API JSON sotto `/api/` (FastAPI). L'autenticazione è con il co
 | POST · DELETE | `/api/repeaters`, `/api/repeaters/{name}` | admin | aggiungi/modifica · rimuovi un ripetitore |
 | GET | `/api/admin` | admin | dati della scheda Gestione |
 | POST · PUT · DELETE | `/api/users`, `/api/users/{username}` | admin | utenti della pagina |
-| GET · POST | `/api/gateway` | admin | stato · configurazione della radio |
+| GET · POST | `/api/gateway?hours=24` | admin | stato e storico delle statistiche · configurazione della radio |
 | POST | `/api/gateway/reboot` · `/api/radio/reconnect` · `/api/advert` | admin | riavvia la radio · ricollega · advert |
 | GET | `/api/contacts` | admin | rubrica del gateway |
 | POST | `/api/contacts/refresh` | admin | rilegge la rubrica |
@@ -703,7 +704,8 @@ SQLite in `meshwatch.db`; lo schema viene creato e aggiornato da solo all'avvio 
 | `positions` | posizioni ricevute, con batteria, salti e percorso |
 | `tracker_polls` | ogni richiesta di posizione, riuscita o no (mappa della copertura) |
 | `sensor_readings` · `sensor_rules` | letture dei sensori · soglie di avviso |
-| `repeaters` · `repeater_status` | ripetitori configurati · statistiche nel tempo |
+| `repeaters` · `repeater_status` | ripetitori configurati · statistiche nel tempo (con traffico, duplicati, airtime, coda ed errori) |
+| `gateway_stats` | statistiche del gateway nel tempo, per i grafici |
 | `neighbours` | vicini dei ripetitori (mappa della rete) |
 | `messages` | chat |
 | `cli_log` | comandi del terminale e risposte |

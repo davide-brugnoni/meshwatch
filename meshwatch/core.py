@@ -388,6 +388,20 @@ class Core:
             self.db.set_neighbours(name, items)
         return items
 
+    async def record_gateway(self):
+        """Statistiche del gateway nello storico, per i grafici in Gestione."""
+        info = getattr(self.mesh, "gateway_info", None)
+        if not info or not self.mesh.connected:
+            return None
+        try:
+            g = await info()
+        except Exception as e:
+            log.info("Statistiche del gateway non lette: %s", e)
+            return None
+        if g and any(g.get(k) is not None for k in ("recv", "uptime", "noise_floor")):
+            self.db.add_gateway_stats(g)
+        return g
+
     async def poll_repeaters(self):
         results = {}
         for r in self.db.repeaters():
@@ -631,6 +645,7 @@ class Core:
         while True:
             try:
                 await self.poll_repeaters()
+                await self.record_gateway()
             except Exception as e:
                 log.exception("Errore poll ripetitori: %s", e)
             await asyncio.sleep(int(self.cfg.get("repeater_interval_min", 60)) * 60)

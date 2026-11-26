@@ -510,10 +510,12 @@ def create_app(core, auth, web_cfg, updater=None, tiles=None):
 
     # ---------- gateway
     @app.get("/api/gateway")
-    async def gateway(u=Depends(admin)):
+    async def gateway(hours: int = 24, u=Depends(admin)):
         if not core.mesh.connected:
             raise HTTPException(503, "radio gateway non collegata")
-        return await core.mesh.gateway_info()
+        g = await core.mesh.gateway_info()
+        since = int(time.time()) - max(1, min(hours, 24 * 30)) * 3600
+        return {**g, "history": await asyncio.to_thread(db.gateway_history, since)}
 
     @app.post("/api/gateway")
     async def gateway_set(body: GatewayIn, u=Depends(admin)):

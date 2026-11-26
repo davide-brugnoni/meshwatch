@@ -106,6 +106,7 @@ def purge(db, days):
         "DELETE FROM repeater_status WHERE ts < ? AND rowid NOT IN "
         "(SELECT MAX(rowid) FROM repeater_status GROUP BY name) AND rowid NOT IN "
         "(SELECT MAX(rowid) FROM repeater_status WHERE ok=1 GROUP BY name)", (cutoff,)).rowcount
+    n += db._exec("DELETE FROM gateway_stats WHERE ts < ?", (cutoff,)).rowcount
     n += db._exec("DELETE FROM cli_log WHERE ts < ?", (cutoff,)).rowcount
     n += db._exec("DELETE FROM audit WHERE ts < ?", (cutoff,)).rowcount
     n += db._exec("DELETE FROM messages WHERE ts < ?", (cutoff,)).rowcount

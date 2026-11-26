@@ -108,6 +108,46 @@ def fmt_uptime(s):
     return f"{d}g {r // 3600}h"
 
 
+def traffic_text(history):
+    """Traffico del ripetitore tra le ultime due letture: pacchetti all'ora e airtime.
+    I contatori ripartono da zero al riavvio: in quel caso non si calcola nulla."""
+    s = history[-1] if history else None
+    if not s:
+        return ""
+    def tot(*keys):
+        v = [s.get(k) for k in keys]
+        return None if any(x is None for x in v) else sum(v)
+    parts = []
+    if s.get("nb_recv") is not None:
+        parts.append(f"Rx {s['nb_recv']} · Tx {s['nb_sent']}")
+    if s.get("sent_flood") is not None:
+        parts.append(f"flood/diretti Tx {s['sent_flood']}/{s['sent_direct']}")
+    dups = tot("flood_dups", "direct_dups")
+    if dups is not None:
+        parts.append(f"duplicati {dups}")
+    if s.get("recv_errors"):
+        parts.append(f"errori {s['recv_errors']}")
+    if s.get("full_evts"):
+        parts.append(f"coda piena {s['full_evts']}")
+    if len(history) >= 2:
+        a, b = history[-2], history[-1]
+        dt = b["ts"] - a["ts"]
+        rebooted = (a.get("uptime") or 0) > (b.get("uptime") or 0)
+        def rate(key, scale):
+            if dt <= 0 or rebooted or a.get(key) is None or b.get(key) is None or b[key] < a[key]:
+                return None
+            return (b[key] - a[key]) / dt * scale
+        rx, tx, air = rate("nb_recv", 3600), rate("nb_sent", 3600), rate("airtime", 100)
+        r = []
+        if rx is not None and tx is not None:
+            r.append(f"{rx:.0f} Rx/h, {tx:.0f} Tx/h")
+        if air is not None:
+            r.append(f"airtime TX {air:.1f}%")
+        if r:
+            parts.append("ultimo periodo: " + ", ".join(r))
+    return " · ".join(parts)
+
+
 class Bot:
     def __init__(self, cfg, core, tiles=None, updater=None):
         self.core = core
@@ -854,6 +894,9 @@ class Bot:
                 lines.append(
                     f"{head} {r['name']}: {(s['bat_mv'] or 0) / 1000:.2f} V · up {fmt_uptime(s['uptime'])}"
                     f" · rumore {s['noise']} dBm · SNR {s['snr']} · {fmt_ts(s['ts'])}")
+                traffic = traffic_text(r["history"])
+                if traffic:
+                    lines.append(f"   📶 {traffic}")
             else:
                 lines.append(f"{head} {r['name']}: nessun dato")
         await update.effective_message.reply_text("\n".join(lines))

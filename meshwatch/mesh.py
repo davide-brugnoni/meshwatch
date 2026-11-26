@@ -635,10 +635,14 @@ class Mesh:
             "fw_build": dev.get("fw_build"),
             "battery_mv": core.get("battery_mv") or bat.get("level"),
             "uptime": core.get("uptime_secs"), "queue_len": core.get("queue_len"),
+            "errors": core.get("errors"),
             "noise_floor": radio.get("noise_floor"), "last_rssi": radio.get("last_rssi"),
             "last_snr": radio.get("last_snr"),
             "tx_air_secs": radio.get("tx_air_secs"), "rx_air_secs": radio.get("rx_air_secs"),
             "recv": pk.get("recv"), "sent": pk.get("sent"),
+            "flood_tx": pk.get("flood_tx"), "direct_tx": pk.get("direct_tx"),
+            "flood_rx": pk.get("flood_rx"), "direct_rx": pk.get("direct_rx"),
+            "recv_errors": pk.get("recv_errors"),
             "contacts": len(self.mc.contacts or {}),
         }
 
