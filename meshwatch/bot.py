@@ -715,6 +715,19 @@ class Bot:
                 lines.append(f"🔴 {r['name']}: non risponde, ultima risposta {fmt_ts(good['ts'] if good else None)}")
             else:
                 lines.append(f"⚪ {r['name']}: nessun dato")
+        try:
+            net = self.core.netstats.summary(now)
+            if net["nodes"]:
+                bits = [f"{net['active_24h']} nodi attivi", f"{net['adverts_24h']} advert"]
+                if net["packets_24h"]:
+                    bits.append(f"{net['packets_24h']} pacchetti")
+                if net["new_7d"]:
+                    bits.append(f"{net['new_7d']} nuovi in 7 giorni")
+                if net["gone"]:
+                    bits.append(f"{net['gone']} spariti")
+                lines.append("\n📶 Rete (24 ore): " + ", ".join(bits))
+        except Exception as e:
+            log.warning("Statistiche della rete nel riepilogo: %s", e)
         i = system.info()
         sysl = []
         if i.get("temp_c") is not None:

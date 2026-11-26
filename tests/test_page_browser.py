@@ -50,6 +50,10 @@ def sample_data():
     db.add_sensor_rule(tid, "temperature", 2, ">", 30)
     mesh.raw[ALICE].update(out_path_len=2, out_path="b2c3", out_path_hash_mode=0)
     db.set_repeater("Rip-Monte", "pw")
+    for i in range(30):   # storico dei nodi per la scheda Statistiche
+        core.netstats.record_advert("e%d" % (i % 3) * 32, name=f"Nodo-{i % 3}", type="companion", adv_ts=i + 1,
+                                    hops=i % 3, snr=4.0 + i % 3, now=now - i * 7200)
+    core.netstats.record_rx({"payload_type": 5, "path_len": 1})
     for i in range(10):
         k = 10 - i   # contatori che crescono: i grafici mostrano pacchetti all'ora e airtime
         db._exec("INSERT INTO repeater_status (ts, name, ok, bat_mv, uptime, noise, rssi, snr, nb_recv, nb_sent, "
@@ -131,7 +135,8 @@ def main():
 
         # ospite: mappa e dispositivi, niente chat, niente percorsi
         g = page({"width": 1280, "height": 800})
-        check("Escursionista" in g.inner_text("#trackers") and g.is_hidden("#tab-chat"), "ospite: mappa e dispositivi, chat nascosta")
+        check("Escursionista" in g.inner_text("#trackers") and g.is_hidden("#tab-chat") and g.is_hidden("#tab-stats"),
+              "ospite: mappa e dispositivi, chat e statistiche nascoste")
         check("via " not in g.inner_text("#trackers") and "Temperatura" in g.inner_text("#trackers"),
               "ospite: sensori sì, percorso no")
         check(not g.errors, "ospite: nessun errore JavaScript" + "".join("\n     " + e for e in g.errors))
@@ -156,6 +161,17 @@ def main():
         a.click(".conv")
         a.wait_for_selector(".msg.in")
         check("Ciao casa" in a.inner_text("#chat-msgs"), "chat: conversazione aperta")
+        a.click("#tab-stats")
+        a.wait_for_selector("#st-kpi b")
+        a.wait_for_selector("#st-trend svg.st-svg")
+        check("Nodo-1" in a.inner_text("#st-nodes") and "Rip-Monte" in a.inner_text("#st-avail")
+              and a.locator("#st-compare tbody tr").count() >= 2, "statistiche: nodi, disponibilità e confronto (ripetitore e gateway)")
+        a.hover("#st-trend svg.st-svg .hit >> nth=-1")
+        check(a.is_visible("#st-tip"), "statistiche: tooltip sui grafici")
+        a.click("#st-nfilter [data-f=new]")
+        a.click("#st-compare th:has-text('Rumore')")
+        check("rumore" in a.locator("#st-compare th.sorted").inner_text().lower() and a.locator("#st-nfilter .on").get_attribute("data-f") == "new",
+              "statistiche: filtri e ordinamento")
         a.click("#tab-admin")
         check(a.is_visible("#adm-nav") and a.locator("#adm-nav button").count() == 5, "gestione: 5 sezioni")
         a.click("#adm-nav [data-sec=dispositivi]")
@@ -177,6 +193,8 @@ def main():
         check(a.is_checked("#form-tc [name=enabled]"), "gestione: cache delle mappe attiva")
         a.click("#adm-nav [data-sec=telegram]")
         a.wait_for_selector("#rep-off", state="visible")
+        a.wait_for_function("document.querySelector('#form-nodes-alert [name=gone]').value === 'off'")
+        check(a.is_visible("#form-nodes-alert"), "gestione: avvisi nodi nuovi e spariti")
         check(a.is_disabled("#form-report [name=enabled]") and a.is_disabled("#rep-send"),
               "gestione: senza Telegram riepilogo e backup non si attivano")
         a.reload()
@@ -196,7 +214,7 @@ def main():
 
         # telefono: barra in basso e schede
         ph = page({"width": 390, "height": 844}, login=True)
-        for tab in ("list", "chat", "admin", "map"):
+        for tab in ("list", "chat", "stats", "admin", "map"):
             ph.click(f"#mnav [data-t={tab}]")
             ph.wait_for_timeout(300)
             if tab == "admin":
@@ -205,6 +223,10 @@ def main():
                     ph.wait_for_timeout(150)
                 over = ph.evaluate("document.getElementById('admin-scroll').scrollWidth > window.innerWidth + 1")
                 check(not over, "telefono: la gestione non scorre di lato")
+            if tab == "stats":
+                ph.wait_for_selector("#st-kpi b")
+                over = ph.evaluate("document.getElementById('stats-scroll').scrollWidth > window.innerWidth + 1")
+                check(not over, "telefono: le statistiche non scorrono di lato")
         check(ph.is_visible("#map-summary") and not ph.errors, "telefono: schede senza errori" + "".join("\n     " + e for e in ph.errors))
         browser.close()
     core.events.close()

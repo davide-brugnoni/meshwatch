@@ -172,6 +172,7 @@ class Mesh:
         self.tried = {}              # nome → (salti, percorso) provato nell'ultima richiesta di telemetria
         self.connecting = False
         self.on_message = None       # funzione async(dict) chiamata per ogni messaggio ricevuto
+        self.on_rx = None            # funzione(dict) per ogni pacchetto sentito dalla radio (statistiche)
         self.channels = []           # [{idx, name}] canali configurati nella radio
         self.cli_pending = set()     # prefissi dei ripetitori con un comando CLI in corso
         self.active_port = None      # porta USB in uso (serve per aggiornare il firmware)
@@ -274,6 +275,7 @@ class Mesh:
         # i listener vanno registrati prima di leggere i messaggi in coda nella radio
         self.mc.subscribe(EventType.CONTACT_MSG_RECV, self._on_contact_msg)
         self.mc.subscribe(EventType.CHANNEL_MSG_RECV, self._on_channel_msg)
+        self.mc.subscribe(EventType.RX_LOG_DATA, self._on_rx_log)
         await self.load_channels()
         await self.mc.start_auto_message_fetching()   # chat e risposte CLI
         log.info("Radio connessa, %d contatti, %d canali", len(self.mc.contacts), len(self.channels))
@@ -458,6 +460,23 @@ class Mesh:
             if c is None or c.get("type") == 2:
                 return False
         return True
+
+    RX_KEYS = ("payload_type", "route_type", "path_len", "snr", "rssi", "adv_key", "adv_name",
+               "adv_type", "adv_lat", "adv_lon", "adv_timestamp")
+
+    async def _on_rx_log(self, ev):
+        """Ogni pacchetto sentito dalla radio (anche quelli non per noi): tipo, salti, SNR, RSSI
+        e, per gli advert, chi l'ha mandato. Serve alle statistiche della rete."""
+        if not self.on_rx:
+            return
+        p = ev.payload or {}
+        d = {k: p.get(k) for k in self.RX_KEYS}
+        if d["adv_type"] is not None:
+            d["adv_type"] = self.TYPES.get(d["adv_type"], "altro")
+        try:
+            self.on_rx(d)
+        except Exception as e:
+            log.warning("Statistiche del pacchetto ricevuto: %s", e)
 
     async def _on_contact_msg(self, ev):
         p = ev.payload or {}

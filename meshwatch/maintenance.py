@@ -108,6 +108,9 @@ def purge(db, days):
         "(SELECT MAX(rowid) FROM repeater_status WHERE ok=1 GROUP BY name)", (cutoff,)).rowcount
     n += db._exec("DELETE FROM gateway_stats WHERE ts < ?", (cutoff,)).rowcount
     n += db._exec("DELETE FROM cli_log WHERE ts < ?", (cutoff,)).rowcount
+    n += db._exec("DELETE FROM node_adverts WHERE ts < ?", (cutoff,)).rowcount
+    n += db._exec("DELETE FROM rx_hourly WHERE hour < ?", (cutoff,)).rowcount
+    n += db._exec("DELETE FROM link_history WHERE ts < ?", (cutoff,)).rowcount
     n += db._exec("DELETE FROM audit WHERE ts < ?", (cutoff,)).rowcount
     n += db._exec("DELETE FROM messages WHERE ts < ?", (cutoff,)).rowcount
     db.clear_login_failures()

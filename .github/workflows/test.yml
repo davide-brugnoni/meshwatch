@@ -43,6 +43,9 @@ jobs:
       - name: Test chat, rubrica e mappa della rete
         run: python tests/test_chat.py
 
+      - name: Statistiche della rete (nodi, disponibilità, batteria, collegamenti)
+        run: python tests/test_netstats.py
+
       - name: Test aggiornamento dalla pagina
         run: python tests/test_update.py
 

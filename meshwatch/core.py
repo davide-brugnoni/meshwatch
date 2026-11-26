@@ -110,6 +110,9 @@ class Core:
         self.firmware = FirmwareManager(self)   # aggiornamento del firmware del gateway, versioni dei ripetitori
         db.seed_from_config(cfg)
         mesh.on_message = self.on_message
+        from .netstats import NetStats
+        self.netstats = NetStats(self)          # storico dei nodi e statistiche della rete
+        mesh.on_rx = self.netstats.record_rx
         # invii rimasti a metà quando il programma si è fermato
         db._exec("UPDATE messages SET status='failed' WHERE dir='out' AND status IN ('queued','sending','sent')")
 
