@@ -33,7 +33,8 @@ async def run(cfg):
     core = Core(cfg, db, mesh)
     restored = restore.take_announcement(cfg)
     if restored:   # backup ripristinato dalla pagina al riavvio precedente
-        what = " e ".join(x for x, on in (("dati", restored.get("data")), ("configurazione", restored.get("config"))) if on)
+        what = ", ".join(x for x, on in (("dati", restored.get("data")), ("impostazioni della pagina", restored.get("settings")),
+                                          ("file di configurazione", restored.get("config"))) if on)
         core.audit(restored.get("user") or "sistema", "ripristino applicato" if restored["ok"] else "ripristino non riuscito",
                    (what + (": " + "; ".join(restored["errors"]) if restored["errors"] else ""))[:300])
 

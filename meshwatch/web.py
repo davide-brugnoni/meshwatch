@@ -99,12 +99,14 @@ class MaintenanceIn(BaseModel):
     retention_days: int | None = Field(None, ge=0, le=3650)
     backup_telegram: bool | None = None
     backup_password: str | None = Field(None, max_length=128)   # "" = togli la password
+    backup_kind: str | None = Field(None, pattern="^(completo|configurazione|dati)$")   # inviato su Telegram
 
 
 class RestoreIn(BaseModel):
     token: str = Field(..., max_length=64)
     data: bool = False
     config: bool = False
+    settings: bool = False   # impostazioni della pagina (impostazioni.json del backup della configurazione)
 
 
 class ReportIn(BaseModel):
@@ -796,17 +798,19 @@ def create_app(core, auth, web_cfg, updater=None, tiles=None):
             if body.backup_telegram and not core.file_senders:
                 raise HTTPException(400, "Telegram non è configurato")
             db.set("backup_telegram", "1" if body.backup_telegram else "0")
+        if body.backup_kind is not None:
+            db.set("backup_kind", body.backup_kind)
         if body.backup_password is not None:
             try:
                 maintenance.set_backup_password(db, body.backup_password)
             except maintenance.BackupError as e:
                 raise HTTPException(400, str(e))
             audit(u, "password del backup " + ("impostata" if body.backup_password else "rimossa"))
-            if body.retention_days is None and body.backup_telegram is None:
+            if body.retention_days is None and body.backup_telegram is None and body.backup_kind is None:
                 return {"ok": True}
         st = maintenance.settings(db)
         audit(u, "impostazioni manutenzione", f"conserva {st['retention_days'] or 'per sempre'} giorni, "
-              f"backup Telegram {'sì' if st['backup_telegram'] else 'no'}")
+              f"backup Telegram {('sì, ' + st['backup_kind']) if st['backup_telegram'] else 'no'}")
         return {"ok": True}
 
     # ---------- ripristino di un backup
@@ -855,11 +859,13 @@ def create_app(core, auth, web_cfg, updater=None, tiles=None):
     @app.post("/api/restore/apply")
     async def restore_apply(body: RestoreIn, u=Depends(admin)):
         try:
-            r = await asyncio.to_thread(restore.apply, body.token, body.data, body.config, db, core.cfg, u["username"])
+            r = await asyncio.to_thread(restore.apply, body.token, body.data, body.config, db, core.cfg, u["username"],
+                                        body.settings)
         except restore.RestoreError as e:
             raise HTTPException(400, str(e))
-        audit(u, "ripristino del backup avviato",
-              " e ".join(x for x, on in (("dati", body.data), ("configurazione", body.config)) if on) + ": riavvio")
+        what = [x for x, on in (("dati", body.data), ("impostazioni della pagina", r.get("settings")),
+                                ("file di configurazione", body.config)) if on]
+        audit(u, "ripristino del backup avviato", ", ".join(what) + ": riavvio")
         restart_soon()
         return r
 
@@ -909,9 +915,11 @@ def create_app(core, auth, web_cfg, updater=None, tiles=None):
         return {"ok": True, "deleted": await core.run_purge(u["username"])}
 
     @app.get("/api/backup")
-    async def backup_download(u=Depends(admin)):
+    async def backup_download(kind: str = "completo", u=Depends(admin)):
+        if kind not in maintenance.KINDS:
+            raise HTTPException(400, "tipo di backup sconosciuto")
         try:
-            data, name = await asyncio.to_thread(maintenance.make_backup, db, core.cfg.get("_config_path"))
+            data, name = await asyncio.to_thread(maintenance.make_backup, db, core.cfg.get("_config_path"), kind)
         except maintenance.BackupError as e:
             raise HTTPException(503, str(e))
         audit(u, "backup scaricato", name + (" (protetto da password)" if maintenance.settings(db)["backup_protected"] else ""))
@@ -919,9 +927,11 @@ def create_app(core, auth, web_cfg, updater=None, tiles=None):
                         headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
     @app.post("/api/backup/telegram")
-    async def backup_telegram(u=Depends(admin)):
+    async def backup_telegram(kind: str | None = None, u=Depends(admin)):
+        if kind is not None and kind not in maintenance.KINDS:
+            raise HTTPException(400, "tipo di backup sconosciuto")
         try:
-            if not await core.send_backup(u["username"]):
+            if not await core.send_backup(u["username"], kind):
                 raise HTTPException(400, "Telegram non è configurato")
         except maintenance.BackupError as e:
             raise HTTPException(503, str(e))

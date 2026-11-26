@@ -70,7 +70,7 @@ Gira su un Raspberry Pi con una radio MeshCore in modalità *Companion USB* (Hel
 - **Gateway**: stato e configurazione della radio collegata (nome, potenza, posizione, parametri radio), advert, riavvio.
 - **Sistema**: temperatura, memoria, disco, **avviso di tensione bassa**, riavvio e spegnimento del Raspberry. Se la pagina si blocca il programma si riavvia da solo; il WiFi resta sempre sveglio e si spegne da solo quando è collegato il cavo di rete.
 - **Radio**: se la radio si scollega arriva un avviso su Telegram e dopo 3 minuti il programma la ricollega da solo, ritrovando la porta USB anche se è cambiata.
-- **Manutenzione e backup**: pulizia automatica dei dati più vecchi di N giorni (default 180); backup di database e config scaricabile dalla pagina o inviato ogni settimana su Telegram, facoltativamente protetto da password; **ripristino dalla pagina** con verifica preventiva e annullamento.
+- **Manutenzione e backup**: pulizia automatica dei dati più vecchi di N giorni (default 180); backup divisi in **configurazione** (dispositivi, ripetitori, utenti, avvisi e `config.yaml`, pochi kB) e **dati** (tutto lo storico), oppure completo, scaricabili dalla pagina o inviati ogni settimana su Telegram, facoltativamente protetti da password; **ripristino dalla pagina** con verifica preventiva e annullamento.
 - **Registro attività**: login, tentativi falliti e ogni azione di gestione, dalla pagina e da Telegram.
 - **Telegram**: posizione con pin e link Google Maps, ultima posizione, traccia, **posizione in diretta**, **mappa come immagine** con la traccia, statistiche, **statistiche della rete** (`/rete`), stato del Raspberry, **riepilogo giornaliero** automatico, aggiornamento del programma e del firmware, avvisi (dispositivo che non risponde, batteria bassa, soglie dei sensori, ripetitore muto, radio scollegata, nodi nuovi e spariti, nuova versione del programma o del firmware). Funziona anche nei gruppi, con gli stessi permessi della pagina.
 - **Avvisi batteria bassa** (Gestione → Dispositivi → Avvisi batteria bassa): ogni quanto ripeterli finché la batteria resta bassa (o una volta sola) e una fascia oraria di silenzio (es. 22:00-07:00). Vale per i dispositivi seguiti e per i ripetitori.
@@ -95,6 +95,7 @@ Le ultime funzionalità aggiunte (si installano con l'[aggiornamento dalla pagin
 - **Bot Telegram più affidabile**: avvisi in parallelo a tutte le chat con nuovi tentativi, permessi come sulla pagina (*viewer* e *admin*), supporto dei gruppi con `admin_user_ids`, posizione in diretta che riprende dopo un riavvio.
 - **Posizione più affidabile in movimento**: flood subito quando il dispositivo cambia ripetitore e risposte in ritardo accettate.
 - **Aggiornamento del programma anche da Telegram** (`/aggiornamento`), con conferma ed esito in chat.
+- **Backup divisi in configurazione e dati**: la configurazione (dispositivi, ripetitori, utenti, avvisi e `config.yaml`) sta in pochi kB e si ripristina senza toccare lo storico, anche su un Raspberry nuovo; i dati sono il database completo. Su Telegram si sceglie quale inviare. Vedi [Manutenzione e backup](#manutenzione-e-backup).
 
 ## Come funziona
 
@@ -283,7 +284,7 @@ Su telefono la barra in basso ha Mappa · Nodi · Chat · Statistiche · Gestion
 | **Dispositivi** | dispositivi tracciati (nome contatto, etichetta, colore, intervallo, intervallo in movimento, fascia oraria, avvisi, soglie dei sensori), avvisi batteria bassa |
 | **Rete** | ripetitori, gateway (radio collegata al Raspberry, con statistiche e grafici del traffico), firmware MeshCore (con controllo automatico), rubrica del gateway |
 | **Telegram** | riepilogo giornaliero (acceso/spento, ora di invio, *Invia ora*), avvisi nodi (nuovi e spariti), backup settimanale, comandi del bot |
-| **Sistema** | Raspberry, aggiornamento programma, manutenzione e backup, ripristino, cache delle mappe |
+| **Sistema** | Raspberry, aggiornamento programma, manutenzione, backup (configurazione e dati), ripristino, cache delle mappe |
 | **Accessi** | utenti della pagina, registro attività |
 
 Le spiegazioni più lunghe sono chiuse sotto *Come funziona*. Su computer largo le schede stanno su due colonne.
@@ -490,32 +491,54 @@ La pagina resta collegata al Raspberry (*Server-Sent Events*, `/api/events`): qu
 
 ## Manutenzione e backup
 
-In **Gestione → Sistema → Manutenzione e backup** (il backup su Telegram è in **Gestione → Telegram**):
+### Manutenzione
 
-- **Conserva i dati per N giorni** (default 180, `0` = per sempre). Una volta al giorno vengono cancellati posizioni, letture dei sensori, statistiche dei ripetitori, messaggi, comandi del terminale e registro più vecchi. Restano sempre l'ultima posizione di ogni dispositivo e l'ultimo stato di ogni ripetitore. C'è anche il pulsante per pulire subito.
-- **Scarica backup**: uno zip con `meshwatch.db`, `config.yaml` e le istruzioni di ripristino (`LEGGIMI.txt`).
-- **Backup settimanale su Telegram**: va attivato. Arriva solo alle chat in `admin_chat_ids` (o, se vuoto, a quelle in `allowed_chat_ids`). Si può anche mandare subito.
-- **Password del backup** (facoltativa): database e config nello zip vengono cifrati con AES-256, sia nel backup scaricato sia in quello su Telegram. `LEGGIMI.txt` resta leggibile e spiega come aprirlo. Su Windows serve **7-Zip** (Esplora risorse non apre questi zip), su Linux `7z x` (pacchetto `p7zip-full`; `unzip` non li apre). La pagina non mostra mai la password e il registro segna solo che è stata impostata o tolta.
+In **Gestione → Sistema → Manutenzione**: **conserva i dati per N giorni** (default 180, `0` = per sempre). Una volta al giorno vengono cancellati posizioni, letture dei sensori, statistiche dei ripetitori e della rete, messaggi, comandi del terminale e registro più vecchi. Restano sempre l'ultima posizione di ogni dispositivo e l'ultimo stato di ogni ripetitore; le impostazioni non vengono mai toccate. C'è anche il pulsante per pulire subito.
 
-Il backup contiene password (token Telegram, ripetitori) e posizioni: conservalo con cura, meglio se con la password. La cache delle mappe (`tiles.db`) non è inclusa.
+### Backup: configurazione e dati
+
+In **Gestione → Sistema → Backup** ci sono due backup separati:
+
+| | ⚙️ Backup configurazione | 🗄️ Backup dati |
+|---|---|---|
+| cosa contiene | `config.yaml` (token Telegram, radio, pagina web) e `impostazioni.json`: dispositivi (intervalli, fasce orarie, colori, avvisi), regole dei sensori, ripetitori con le password, utenti della pagina, avvisi batteria e nodi, riepilogo, backup, cache delle mappe, scheda e controllo automatico del firmware | `meshwatch.db`: il database completo, cioè posizioni e tracce, sensori, copertura, statistiche dei ripetitori e della rete, messaggi, registro attività (e le impostazioni della pagina com'erano in quel momento) |
+| dimensione | pochi kB | da pochi MB in su, secondo i giorni conservati |
+| quando farlo | dopo ogni modifica importante e prima di cambiare SD o Raspberry | quando non vuoi perdere lo storico, per esempio prima di cambiare SD |
+| ripristinandolo | tornano le impostazioni; **lo storico resta** quello del Raspberry | il database torna esattamente com'era |
+| nome del file | `meshwatch-configurazione-AAAAMMGG-HHMM.zip` | `meshwatch-dati-AAAAMMGG-HHMM.zip` |
+
+C'è anche il **backup completo** (`meshwatch-backup-….zip`, database e `config.yaml` in un solo file, come nelle versioni precedenti). Ogni zip contiene `LEGGIMI.txt` con il tipo di backup e le istruzioni di ripristino.
+
+Cosa non c'è in nessun backup: lo stato interno del programma (ultima pulizia, sessioni aperte, avvisi già mandati), la cache delle mappe (`tiles.db`) e le impostazioni salvate nella radio (nome, potenza, canali, rubrica: restano nella radio).
+
+- **Backup settimanale su Telegram** (**Gestione → Telegram → Backup su Telegram**): va attivato e si sceglie cosa inviare (completo, solo configurazione o solo dati). Arriva solo alle chat in `admin_chat_ids` (o, se vuoto, a quelle in `allowed_chat_ids`). Si può anche mandare subito. Telegram accetta file fino a 50 MB: con tanti dati conviene mandare la configurazione e scaricare i dati dalla pagina.
+- **Password del backup** (facoltativa): i file nello zip vengono cifrati con AES-256, in tutti i backup scaricati e in quello su Telegram. `LEGGIMI.txt` resta leggibile e spiega come aprirlo. Su Windows serve **7-Zip** (Esplora risorse non apre questi zip), su Linux `7z x` (pacchetto `p7zip-full`; `unzip` non li apre). La pagina non mostra mai la password e il registro segna solo che è stata impostata o tolta.
+
+Tutti i backup contengono password (token Telegram, ripetitori, utenti) e quello dei dati anche le posizioni: conservali con cura, meglio se con la password.
+
+**Esempi pratici**
+
+- *SD rotta o Raspberry nuovo*: prepara la SD col kit, al primo avvio entra in Gestione e ripristina il **backup della configurazione** (spunta *Impostazioni della pagina* e *File di configurazione*): dispositivi, ripetitori, utenti, bot e avvisi tornano come prima. Se hai anche il backup dei dati, ripristina prima quello e poi la configurazione.
+- *Prova di una modifica*: scarica la configurazione, cambia quello che vuoi e, se non ti piace, ripristinala: posizioni e statistiche non si toccano.
 
 ### Ripristino dalla pagina
 
-**Gestione → Sistema → Ripristina un backup**:
+**Gestione → Sistema → Ripristina un backup** (va bene ogni tipo di backup, anche quelli delle versioni precedenti):
 
-1. scegli lo zip (e la password, se è protetto) e premi **Controlla il backup**: il Raspberry verifica password, integrità del database e che questa versione lo sappia aprire, poi mostra cosa contiene (dispositivi, ripetitori, utenti, posizioni, bot Telegram, radio) e gli avvisi (posizioni recenti che si perderebbero, bot o porta della pagina diversi). Fin qui non cambia niente;
-2. scegli **Dati**, **Configurazione** o entrambi e premi **Ripristina e riavvia**: lo stato attuale viene salvato, il servizio si riavvia (circa un minuto) e la pagina si ricarica da sola. L'esito finisce nel registro attività e arriva su Telegram;
+1. scegli lo zip (e la password, se è protetto) e premi **Controlla il backup**: il Raspberry verifica password, integrità e che questa versione lo sappia aprire, poi mostra che tipo di backup è e cosa contiene (dispositivi, ripetitori, utenti, posizioni, bot Telegram, radio) e gli avvisi (posizioni recenti che si perderebbero, dispositivi che sparirebbero dalla mappa, bot o porta della pagina diversi). Fin qui non cambia niente;
+2. spunta cosa rimettere tra quello che c'è nel backup: **Dati** (il database), **Impostazioni della pagina** (`impostazioni.json`) e **File di configurazione** (`config.yaml`), poi premi **Ripristina e riavvia**: lo stato attuale viene salvato, il servizio si riavvia (circa un minuto) e la pagina si ricarica da sola. L'esito finisce nel registro attività e arriva su Telegram;
 3. se qualcosa non va: **Annulla l'ultimo ripristino** rimette lo stato di prima.
 
 Da sapere:
 
-- con i dati tornano anche utenti e password della pagina com'erano nel backup; un backup senza utenti admin viene rifiutato;
-- **kit SD**: la configurazione si ripristina dopo un'abilitazione una tantum via SSH, `sudo bash /opt/meshwatch/tools/configura-servizio.sh` (le SD preparate da questa versione in poi sono già pronte); il config precedente resta sulla SD come `meshwatch-config.prima-del-ripristino.yaml`. I dati si ripristinano anche senza;
+- con i dati o con le impostazioni della pagina tornano anche utenti e password della pagina com'erano nel backup; un backup senza utenti admin viene rifiutato;
+- ripristinando le impostazioni i dispositivi si riconoscono dal nome del contatto: quelli che ci sono già tengono le loro posizioni; quelli che non sono nel backup spariscono dalla mappa ma il loro storico resta nel database (e torna con **Annulla l'ultimo ripristino**);
+- **kit SD**: il file di configurazione si ripristina dopo un'abilitazione una tantum via SSH, `sudo bash /opt/meshwatch/tools/configura-servizio.sh` (le SD preparate da questa versione in poi sono già pronte); il config precedente resta sulla SD come `meshwatch-config.prima-del-ripristino.yaml`. Dati e impostazioni della pagina si ripristinano anche senza;
 - i file del ripristino stanno in `.restore/` accanto al database.
 
 ### Ripristino a mano
 
-Via SSH: ferma il servizio, rimetti i due file al loro posto e riavvia.
+Via SSH: ferma il servizio, rimetti i file al loro posto e riavvia. `impostazioni.json` non si copia a mano: si ripristina solo dalla pagina.
 
 - Con il kit SD: `meshwatch.db` in `/var/lib/meshwatch/` (poi `sudo chown meshwatch-svc: /var/lib/meshwatch/meshwatch.db`) e `config.yaml` come `/boot/firmware/meshwatch-config.yaml`, perché viene ricopiato da lì a ogni avvio.
 - Con `install.sh`: entrambi nella cartella del programma.
@@ -741,12 +764,12 @@ La pagina usa un'API JSON sotto `/api/` (FastAPI). L'autenticazione è con il co
 | POST | `/api/system/reboot` · `/api/system/poweroff` | admin | riavvio · spegnimento |
 | GET | `/api/update` | admin | stato dell'aggiornamento |
 | POST | `/api/update/check` · `/api/update/apply` | admin | controlla · installa |
-| GET · PUT | `/api/maintenance` | admin | conservazione dati, backup settimanale, password del backup |
+| GET · PUT | `/api/maintenance` | admin | conservazione dati, backup settimanale e cosa inviare (`backup_kind`), password del backup |
 | POST | `/api/maintenance/purge` | admin | pulizia immediata |
-| GET | `/api/backup` | admin | scarica il backup (zip) |
-| POST | `/api/backup/telegram` | admin | manda subito il backup su Telegram |
+| GET | `/api/backup?kind=…` | admin | scarica il backup (zip): `configurazione`, `dati` o `completo` (predefinito) |
+| POST | `/api/backup/telegram?kind=…` | admin | manda subito il backup su Telegram (senza `kind`: quello scelto in Gestione) |
 | GET | `/api/restore` | admin | stato del ripristino |
-| POST | `/api/restore/check` · `/apply` · `/undo` | admin | verifica · applica · annulla un ripristino |
+| POST | `/api/restore/check` · `/apply` · `/undo` | admin | verifica · applica (`data`, `settings`, `config`) · annulla un ripristino |
 | GET · PUT | `/api/telegram/report` | admin | riepilogo giornaliero |
 | POST | `/api/telegram/report/send` | admin | manda subito il riepilogo |
 | GET · PUT | `/api/alerts/battery` | admin | avvisi batteria bassa |

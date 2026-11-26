@@ -668,15 +668,19 @@ class Core:
             self.audit(user, "pulizia dati", f"{n} righe più vecchie di {days} giorni")
         return n
 
-    async def send_backup(self, user="automatico"):
-        """Invia il backup con Telegram. Ritorna False se Telegram non è configurato."""
+    async def send_backup(self, user="automatico", kind=None):
+        """Invia il backup con Telegram (kind: completo, configurazione, dati; di base quello scelto
+        in Gestione). Ritorna False se Telegram non è configurato."""
         if not self.file_senders:
             return False
         from . import maintenance
-        data, name = await asyncio.to_thread(maintenance.make_backup, self.db, self.cfg.get("_config_path"))
-        caption = ("💾 Backup di MeshWatch (dati e config) 🔒 protetto da password: si apre con 7-Zip."
-                   if maintenance.settings(self.db)["backup_protected"]
-                   else "💾 Backup di MeshWatch (dati e config). Contiene password: conservalo con cura.")
+        st = maintenance.settings(self.db)
+        kind = kind or st["backup_kind"]
+        data, name = await asyncio.to_thread(maintenance.make_backup, self.db, self.cfg.get("_config_path"), kind)
+        what = maintenance.KIND_LABEL[kind]
+        caption = (f"💾 Backup di MeshWatch: {what} 🔒 protetto da password: si apre con 7-Zip."
+                   if st["backup_protected"]
+                   else f"💾 Backup di MeshWatch: {what}. Contiene password: conservalo con cura.")
         for send in self.file_senders:
             await send(data, name, caption)
         self.db.set("last_backup", int(time.time()))

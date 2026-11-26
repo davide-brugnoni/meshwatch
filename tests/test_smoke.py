@@ -190,6 +190,12 @@ def main():
         sent.append(name)
     core.file_senders.append(fake_send)
     check(c.post("/api/backup/telegram").json()["ok"] and sent and db.get("last_backup"), "backup su Telegram")
+    check(c.post("/api/backup/telegram?kind=configurazione").json()["ok"] and sent[-1].startswith("meshwatch-configurazione-"),
+          "backup della configurazione su Telegram")
+    c.put("/api/maintenance", json={"backup_kind": "dati"})
+    check(c.post("/api/backup/telegram").json()["ok"] and sent[-1].startswith("meshwatch-dati-"),
+          "su Telegram il tipo scelto in Gestione")
+    c.put("/api/maintenance", json={"backup_kind": "completo"})
     # backup protetto da password (AES-256): database e config cifrati, LEGGIMI in chiaro
     import pyzipper
     check(c.get("/api/maintenance").json()["backup_protected"] is False, "backup senza password di default")
