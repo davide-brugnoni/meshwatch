@@ -355,17 +355,26 @@ def test_web_and_bot():
     db, mesh, core, notes = setup()
     db.set_repeater("Rip-Monte", "pw")
     run = asyncio.run
-    c = TestClient(create_app(core, Auth(db), {"mode": "lan"}))
-    c.post("/api/setup", json={"username": "admin1", "password": "segreto1"})
-    st = c.get("/api/firmware").json()
-    check(st["board"] == "Heltec_v3" and st["available"] and st["repeaters"][0]["name"] == "Rip-Monte", "/api/firmware")
-    check(c.put("/api/firmware/board", json={"board": "../x"}).status_code == 422, "nome della scheda non valido rifiutato")
-    check(c.put("/api/firmware/board", json={"board": "Heltec_WSL3"}).json()["board"] == "Heltec_WSL3", "scheda scelta dalla pagina")
-    check(c.post("/api/firmware/update", json={"board": "Heltec_v3"}).status_code == 400, "senza conferma non parte")
-    r = c.post("/api/firmware/update", json={"board": "Heltec_v3", "confirm": True}).json()
-    check(r["ok"] and r["version"] == "v1.18.0", "aggiornamento avviato dalla pagina")
-    check(c.post("/api/firmware/repeaters").json()["repeaters"][0]["version"].startswith("v1.17.0"),
-          "versioni dei ripetitori rilette dalla pagina")
+    # "with": il ciclo di eventi resta acceso tra una richiesta e l'altra, così l'aggiornamento
+    # avviato dalla pagina continua in sottofondo come sul Raspberry
+    with TestClient(create_app(core, Auth(db), {"mode": "lan"})) as c:
+        c.post("/api/setup", json={"username": "admin1", "password": "segreto1"})
+        st = c.get("/api/firmware").json()
+        check(st["board"] == "Heltec_v3" and st["available"] and st["repeaters"][0]["name"] == "Rip-Monte", "/api/firmware")
+        check(c.put("/api/firmware/board", json={"board": "../x"}).status_code == 422, "nome della scheda non valido rifiutato")
+        check(c.put("/api/firmware/board", json={"board": "Heltec_WSL3"}).json()["board"] == "Heltec_WSL3", "scheda scelta dalla pagina")
+        check(c.post("/api/firmware/update", json={"board": "Heltec_v3"}).status_code == 400, "senza conferma non parte")
+        r = c.post("/api/firmware/update", json={"board": "Heltec_v3", "confirm": True}).json()
+        check(r["ok"] and r["version"] == "v1.18.0", "aggiornamento avviato dalla pagina")
+        check(c.post("/api/firmware/repeaters").status_code in (200, 409), "durante l'aggiornamento: niente richieste alla radio")
+        import time
+        for _ in range(250):   # l'aggiornamento continua in sottofondo (sul CI può essere lento)
+            if not core.firmware.busy:
+                break
+            time.sleep(0.02)
+        check(core.firmware.job["state"] == "done", "aggiornamento dalla pagina concluso")
+        check(c.post("/api/firmware/repeaters").json()["repeaters"][0]["version"].startswith("v1.17.0"),
+              "versioni dei ripetitori rilette dalla pagina")
 
     db2, mesh2, core2, _ = setup()
     db2.set_repeater("Rip-Monte", "pw")

@@ -677,6 +677,8 @@ def create_app(core, auth, web_cfg, updater=None, tiles=None):
 
     @app.post("/api/firmware/repeaters")
     async def firmware_repeaters(u=Depends(admin)):
+        if core.firmware.busy:
+            raise HTTPException(409, "aggiornamento del firmware in corso")
         if not core.mesh.connected:
             raise HTTPException(503, "radio gateway non collegata")
         for r in db.repeaters():
