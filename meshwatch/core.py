@@ -1,8 +1,9 @@
 import asyncio
+import json
 import logging
 import math
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from .events import Events
 
@@ -723,17 +724,74 @@ class Core:
                 asyncio.create_task(self.mesh.reconnect())
 
     # ---------- firmware MeshCore: avviso una volta per ogni versione nuova
-    FW_GW_WEEKDAY = 6        # gateway: controllo ogni domenica (lunedì = 0)...
-    FW_GW_TIME = (9, 0)      # ...alle 9:00, ora del Raspberry
+    # controllo automatico delle release: gateway e ripetitori, ognuno col suo giorno e la sua ora
+    FW_KINDS = ("gateway", "repeaters")
+    FW_DAYS = ("lunedì", "martedì", "mercoledì", "giovedì", "venerdì", "sabato", "domenica", "ogni giorno")
+    FW_EVERY_DAY = 7
+    FW_DEFAULT = {"enabled": True, "day": 6, "time": "09:00"}   # domenica alle 9
+
+    def firmware_schedule(self):
+        """{"gateway": {...}, "repeaters": {...}}, ognuno con enabled, day (0 = lunedì … 6 = domenica,
+        7 = ogni giorno) e time "HH:MM". Impostato da Gestione → Rete, altrimenti domenica alle 9."""
+        try:
+            saved = json.loads(self.db.get("fw_schedule") or "{}")
+        except ValueError:
+            saved = {}
+        out = {}
+        for k in self.FW_KINDS:
+            v = dict(self.FW_DEFAULT, **(saved.get(k) or {}))
+            if not isinstance(v["day"], int) or not 0 <= v["day"] <= self.FW_EVERY_DAY:
+                v["day"] = self.FW_DEFAULT["day"]
+            v["time"] = parse_hhmm(str(v["time"])) or self.FW_DEFAULT["time"]
+            v["enabled"] = bool(v["enabled"])
+            out[k] = v
+        return out
+
+    def set_firmware_schedule(self, kind, enabled, day, when):
+        sch = self.firmware_schedule()
+        sch[kind] = {"enabled": bool(enabled), "day": int(day), "time": when}
+        self.db.set("fw_schedule", json.dumps(sch))
+        return sch
+
+    def firmware_schedule_text(self, s):
+        if not s["enabled"]:
+            return "spento"
+        day = "ogni giorno" if s["day"] == self.FW_EVERY_DAY else "ogni " + self.FW_DAYS[s["day"]]
+        return f"{day} alle {s['time']}"
 
     @classmethod
-    def firmware_gw_slot(cls, now=None):
-        """Domenica del controllo del gateway da fare adesso ("2026-11-29"), o None. Dalle 9:00 a
-        mezzanotte: se a quell'ora la radio era scollegata o il servizio fermo, si fa appena torna."""
+    def firmware_slot(cls, s, now=None):
+        """Giorno del controllo da fare adesso ("2026-11-29"), o None. Dall'ora scelta a mezzanotte:
+        se a quell'ora la radio era scollegata o il servizio fermo, si fa appena torna."""
+        if not s["enabled"]:
+            return None
         now = now or datetime.now()
-        h, m = cls.FW_GW_TIME
+        h, m = map(int, s["time"].split(":"))
         sched = now.replace(hour=h, minute=m, second=0, microsecond=0)
-        return sched.strftime("%Y-%m-%d") if now.weekday() == cls.FW_GW_WEEKDAY and now >= sched else None
+        ok_day = s["day"] == cls.FW_EVERY_DAY or now.weekday() == s["day"]
+        return sched.strftime("%Y-%m-%d") if ok_day and now >= sched else None
+
+    @classmethod
+    def firmware_next(cls, s, now=None):
+        """Prossimo controllo (datetime), o None se spento."""
+        if not s["enabled"]:
+            return None
+        now = now or datetime.now()
+        h, m = map(int, s["time"].split(":"))
+        for d in range(8):
+            t = (now + timedelta(days=d)).replace(hour=h, minute=m, second=0, microsecond=0)
+            if t > now and (s["day"] == cls.FW_EVERY_DAY or t.weekday() == s["day"]):
+                return t
+        return None
+
+    def firmware_schedule_settings(self, now=None):
+        sch = self.firmware_schedule()
+        for k, s in sch.items():
+            nxt = self.firmware_next(s, now)
+            s["next"] = nxt.strftime("%Y-%m-%d %H:%M") if nxt else None
+            s["text"] = self.firmware_schedule_text(s)
+            s["last"] = self.db.get(f"fw_checked:{k}")
+        return {"days": list(self.FW_DAYS), **sch}
 
     async def firmware_check(self, gateway=True, repeaters=True):
         fw = self.firmware
@@ -757,31 +815,29 @@ class Core:
             await self.notify(n)
         return notes
 
-    async def firmware_gw_tick(self, now=None):
-        """Controllo settimanale del firmware del gateway (domenica alle 9), una volta per domenica."""
-        day = self.firmware_gw_slot(now)
-        if not day or self.db.get("fw_gw_checked") == day or not self.mesh.connected:
-            return False
-        await self.firmware_check(gateway=True, repeaters=False)
-        self.db.set("fw_gw_checked", day)   # solo se riuscito: altrimenti si riprova al giro dopo
-        return True
+    async def firmware_tick(self, now=None):
+        """Controlli automatici del firmware all'orario scelto, una volta per giorno previsto.
+        Restituisce i tipi controllati ("gateway", "repeaters")."""
+        if not self.mesh.connected:
+            return []
+        done = []
+        for kind, s in self.firmware_schedule().items():
+            day = self.firmware_slot(s, now)
+            if not day or self.db.get(f"fw_checked:{kind}") == day:
+                continue
+            await self.firmware_check(gateway=kind == "gateway", repeaters=kind == "repeaters")
+            self.db.set(f"fw_checked:{kind}", day)   # solo se riuscito: altrimenti si riprova al giro dopo
+            done.append(kind)
+        return done
 
-    async def firmware_watch(self, every=12 * 3600, first_delay=900, tick=60):
-        """Gateway ogni domenica alle 9; ripetitori rimasti indietro ogni 12 ore."""
+    async def firmware_watch(self, first_delay=900, tick=60):
+        """Gateway e ripetitori all'orario scelto in Gestione → Rete (di base domenica alle 9)."""
         await asyncio.sleep(first_delay)
-        last_rep = 0
         while True:
             try:
-                await self.firmware_gw_tick()
+                await self.firmware_tick()
             except Exception as e:
-                log.info("Controllo del firmware del gateway non riuscito: %s", e)
-            if time.time() - last_rep >= every:
-                try:
-                    if self.mesh.connected:
-                        await self.firmware_check(gateway=False, repeaters=True)
-                        last_rep = time.time()
-                except Exception as e:
-                    log.info("Controllo del firmware dei ripetitori non riuscito: %s", e)
+                log.info("Controllo del firmware non riuscito: %s", e)
             await asyncio.sleep(tick)
 
     # ---------- nuove versioni del programma

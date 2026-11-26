@@ -61,6 +61,8 @@ POLICY = {
     ("GET", "/api/gateway"): "admin",
     ("GET", "/api/firmware"): "admin",
     ("POST", "/api/firmware/check"): "admin",
+    ("GET", "/api/firmware/schedule"): "admin",
+    ("PUT", "/api/firmware/schedule"): "admin",
     ("PUT", "/api/firmware/board"): "admin",
     ("POST", "/api/firmware/update"): "admin",
     ("POST", "/api/firmware/repeaters"): "admin",

@@ -348,13 +348,19 @@ def test_repeaters():
           and "Rip-Monte" in notes[1] and "start ota" in notes[1], "avvisi: gateway e ripetitore da aggiornare")
     run(core.firmware_check())
     check(len(notes) == 2, "lo stesso avviso non si ripete")
-    # gateway: controllo settimanale, domenica alle 9
+    # controllo automatico: di base domenica alle 9, giorno e ora scelti per gateway e ripetitori
     from datetime import datetime
-    slot = core.firmware_gw_slot
-    check(slot(datetime(2026, 11, 29, 8, 59)) is None and slot(datetime(2026, 11, 28, 9, 30)) is None
-          and slot(datetime(2026, 11, 30, 9, 0)) is None, "gateway: niente controllo prima delle 9 o fuori dalla domenica")
-    check(slot(datetime(2026, 11, 29, 9, 0)) == "2026-11-29" and slot(datetime(2026, 11, 29, 23, 0)) == "2026-11-29",
-          "gateway: controllo la domenica dalle 9 (anche in ritardo, entro la giornata)")
+    sch = core.firmware_schedule()
+    check(sch["gateway"] == sch["repeaters"] == {"enabled": True, "day": 6, "time": "09:00"},
+          "controllo automatico: di base domenica alle 9")
+    slot = core.firmware_slot
+    gw = sch["gateway"]
+    check(slot(gw, datetime(2026, 11, 29, 8, 59)) is None and slot(gw, datetime(2026, 11, 28, 9, 30)) is None
+          and slot(gw, datetime(2026, 11, 30, 9, 0)) is None, "niente controllo prima dell'ora o fuori dal giorno")
+    check(slot(gw, datetime(2026, 11, 29, 9, 0)) == "2026-11-29" and slot(gw, datetime(2026, 11, 29, 23, 0)) == "2026-11-29",
+          "controllo la domenica dalle 9 (anche in ritardo, entro la giornata)")
+    check(core.firmware_next(gw, datetime(2026, 11, 26, 18, 0)) == datetime(2026, 11, 29, 9, 0)
+          and core.firmware_next(gw, datetime(2026, 11, 29, 9, 0)) == datetime(2026, 12, 6, 9, 0), "prossimo controllo")
     calls = []
     orig = core.firmware_check
 
@@ -362,11 +368,16 @@ def test_repeaters():
         calls.append((gateway, repeaters))
         return await orig(gateway=gateway, repeaters=repeaters)
     core.firmware_check = spy
-    check(not run(core.firmware_gw_tick(datetime(2026, 11, 28, 9, 0))) and not calls, "sabato: nessun controllo")
-    check(run(core.firmware_gw_tick(datetime(2026, 11, 29, 9, 1))) and calls == [(True, False)],
-          "domenica alle 9: controllo del solo gateway")
-    check(not run(core.firmware_gw_tick(datetime(2026, 11, 29, 15, 0))) and len(calls) == 1,
-          "una volta sola per domenica")
+    check(run(core.firmware_tick(datetime(2026, 11, 28, 9, 0))) == [] and not calls, "sabato: nessun controllo")
+    check(run(core.firmware_tick(datetime(2026, 11, 29, 9, 1))) == ["gateway", "repeaters"]
+          and calls == [(True, False), (False, True)], "domenica alle 9: gateway e ripetitori")
+    check(run(core.firmware_tick(datetime(2026, 11, 29, 15, 0))) == [] and len(calls) == 2, "una volta sola per domenica")
+    core.set_firmware_schedule("repeaters", True, 7, "18:30")
+    core.set_firmware_schedule("gateway", False, 6, "09:00")
+    check(run(core.firmware_tick(datetime(2026, 11, 30, 18, 0))) == [], "ripetitori ogni giorno alle 18:30: non prima")
+    check(run(core.firmware_tick(datetime(2026, 11, 30, 18, 31))) == ["repeaters"], "ripetitori ogni giorno alle 18:30")
+    check(run(core.firmware_tick(datetime(2026, 12, 6, 19, 0))) == ["repeaters"], "gateway spento: solo i ripetitori")
+    core.db.set("fw_schedule", "{}")
     core.firmware_check = orig
 
 
@@ -382,6 +393,18 @@ def test_web_and_bot():
         st = c.get("/api/firmware").json()
         check(st["board"] == "Heltec_v3" and st["available"] and st["repeaters"][0]["name"] == "Rip-Monte", "/api/firmware")
         check(c.put("/api/firmware/board", json={"board": "../x"}).status_code == 422, "nome della scheda non valido rifiutato")
+        r = c.get("/api/firmware/schedule").json()
+        check(r["gateway"]["text"] == "ogni domenica alle 09:00" and r["days"][7] == "ogni giorno" and r["repeaters"]["next"],
+              "/api/firmware/schedule")
+        r = c.put("/api/firmware/schedule", json={"kind": "repeaters", "enabled": True, "day": 0, "time": "7.15"}).json()
+        check(r["repeaters"]["text"] == "ogni lunedì alle 07:15" and r["gateway"]["day"] == 6, "orario dei ripetitori dalla pagina")
+        check(c.put("/api/firmware/schedule", json={"kind": "x", "enabled": True}).status_code == 422
+              and c.put("/api/firmware/schedule", json={"kind": "gateway", "enabled": True, "day": 9}).status_code == 422
+              and c.put("/api/firmware/schedule", json={"kind": "gateway", "enabled": True, "time": "25:00"}).status_code == 400,
+              "impostazioni non valide rifiutate")
+        r = c.put("/api/firmware/schedule", json={"kind": "gateway", "enabled": False, "day": 6, "time": "09:00"}).json()
+        check(not r["gateway"]["enabled"] and r["gateway"]["next"] is None and r["gateway"]["text"] == "spento",
+              "controllo del gateway spento dalla pagina")
         check(c.put("/api/firmware/board", json={"board": "Heltec_WSL3"}).json()["board"] == "Heltec_WSL3", "scheda scelta dalla pagina")
         check(c.post("/api/firmware/update", json={"board": "Heltec_v3"}).status_code == 400, "senza conferma non parte")
         r = c.post("/api/firmware/update", json={"board": "Heltec_v3", "confirm": True}).json()

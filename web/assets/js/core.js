@@ -86,7 +86,7 @@ function setTab(t) {
   $('tab-map').classList.toggle('on', t === 'map' || t === 'list'); $('tab-admin').classList.toggle('on', t === 'admin');
   $('tab-chat').classList.toggle('on', t === 'chat');
   document.querySelectorAll('#mnav button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
-  if (t === 'admin') { loadAdmin(); loadGateway(); loadFirmware(); loadSystem(); loadUpdate(); loadMaintenance(); loadBatteryAlerts(); loadTileCache(); loadContacts(); loadReport(); loadRestore(); loadNodeAlerts(); }
+  if (t === 'admin') { loadAdmin(); loadGateway(); loadFirmware(); loadFirmwareSchedule(); loadSystem(); loadUpdate(); loadMaintenance(); loadBatteryAlerts(); loadTileCache(); loadContacts(); loadReport(); loadRestore(); loadNodeAlerts(); }
   else if (t === 'chat') loadChat();
   else if (t === 'stats') loadStats();
   else setTimeout(() => map.invalidateSize(), 50);

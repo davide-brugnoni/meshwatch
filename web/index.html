@@ -266,8 +266,24 @@
     </form>
     <div class="list" id="fw-reps"></div>
     <div class="formacts"><button type="button" id="fw-reps-read">Rileggi versioni dei ripetitori</button></div>
+    <h3>Controllo automatico</h3>
+    <form class="edit fw-sched" data-kind="gateway">
+      <label class="switch"><input type="checkbox" name="enabled"> Gateway</label>
+      <label>Giorno <select name="day"></select></label>
+      <label>Ora <input type="time" name="time" value="09:00" required></label>
+      <div class="formacts"><button class="primary">Salva</button></div>
+      <p class="note"></p>
+    </form>
+    <form class="edit fw-sched" data-kind="repeaters">
+      <label class="switch"><input type="checkbox" name="enabled"> Ripetitori</label>
+      <label>Giorno <select name="day"></select></label>
+      <label>Ora <input type="time" name="time" value="09:00" required></label>
+      <div class="formacts"><button class="primary">Salva</button></div>
+      <p class="note"></p>
+    </form>
     <details class="help"><summary>Come funziona</summary><p>Il gateway (la radio collegata via USB) si aggiorna da qui o dal bot con /firmware: MeshWatch scarica il firmware della scheda scelta dalle release di MeshCore, lo controlla e lo scrive nella radio. Nome, chiavi, rubrica e canali restano. Funziona con le schede ESP32 (Heltec, LilyGo, Station G2, Xiao S3/C3, …) e nRF52 (RAK 4631, T-Echo, Xiao nRF52, T114, …); RP2040 e STM32 vanno aggiornate dal PC. Per qualche minuto la radio è staccata: niente posizioni, ripetitori e chat.</p>
-    <p>I ripetitori non si possono aggiornare attraverso la rete LoRa, troppo lenta. MeshWatch legge la loro versione una volta al giorno e avvisa quando è vecchia: sul posto, dal terminale, invia <code>start ota</code> e poi collegati al WiFi del ripetitore (ESP32) o usa l'app via Bluetooth (nRF52).</p></details>
+    <p>Controllo automatico: al giorno e all'ora scelti (di base la domenica alle 9, ora del Raspberry) MeshWatch guarda le release di MeshCore e avvisa su Telegram una volta per ogni versione nuova. Se a quell'ora la radio è scollegata o il Raspberry spento, il controllo si fa appena torna, entro la stessa giornata. <em>Controlla ora</em> funziona sempre.</p>
+    <p>I ripetitori non si possono aggiornare attraverso la rete LoRa, troppo lenta. MeshWatch legge la loro versione una volta al giorno durante il giro e, al giorno e all'ora scelti in <em>Controllo automatico</em>, avvisa su Telegram quando è vecchia: sul posto, dal terminale, invia <code>start ota</code> e poi collegati al WiFi del ripetitore (ESP32) o usa l'app via Bluetooth (nRF52).</p></details>
   </section>
 <section class="card wide">
     <h2>Rubrica del gateway</h2>

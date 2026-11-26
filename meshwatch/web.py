@@ -75,6 +75,13 @@ class FirmwareIn(BaseModel):
     confirm: bool = False
 
 
+class FirmwareScheduleIn(BaseModel):
+    kind: str = Field(..., pattern=r"^(gateway|repeaters)$")
+    enabled: bool
+    day: int = Field(6, ge=0, le=7)
+    time: str = Field("09:00", pattern=r"^\d{1,2}[:.]\d{2}$")
+
+
 class GatewayIn(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=31)
     lat: float | None = Field(None, ge=-90, le=90)
@@ -679,6 +686,20 @@ def create_app(core, auth, web_cfg, updater=None, tiles=None):
     @app.post("/api/firmware/check")
     async def firmware_check(u=Depends(admin)):
         return await core.firmware.status(force=True)
+
+    @app.get("/api/firmware/schedule")
+    async def firmware_schedule_get(u=Depends(admin)):
+        return core.firmware_schedule_settings()
+
+    @app.put("/api/firmware/schedule")
+    async def firmware_schedule_set(body: FirmwareScheduleIn, u=Depends(admin)):
+        when = parse_hhmm(body.time)
+        if not when:
+            raise HTTPException(400, "orario non valido")
+        sch = core.set_firmware_schedule(body.kind, body.enabled, body.day, when)
+        audit(u, "controllo firmware " + ("gateway" if body.kind == "gateway" else "ripetitori"),
+              core.firmware_schedule_text(sch[body.kind]))
+        return core.firmware_schedule_settings()
 
     @app.put("/api/firmware/board")
     async def firmware_board(body: FirmwareIn, u=Depends(admin)):

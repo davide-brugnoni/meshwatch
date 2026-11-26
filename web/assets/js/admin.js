@@ -246,6 +246,30 @@ $('form-fw').onsubmit = async e => {
   loadFirmware();
 };
 
+// controllo automatico del firmware: giorno e ora per gateway e ripetitori
+async function loadFirmwareSchedule(r) {
+  if (!r) { try { r = await api('/api/firmware/schedule'); } catch (e) { return; } }
+  document.querySelectorAll('form.fw-sched').forEach(f => {
+    const s = r[f.dataset.kind];
+    if (f.day.options.length !== r.days.length)
+      f.day.replaceChildren(...r.days.map((d, i) => el('option', { value: i, textContent: d })));
+    f.enabled.checked = s.enabled; f.day.value = s.day; f.time.value = s.time;
+    f.day.disabled = f.time.disabled = !s.enabled;
+    const nxt = s.next ? new Date(s.next.replace(' ', 'T')) : null;
+    f.querySelector('.note').textContent = !s.enabled ? 'Spento: nessun avviso automatico (resta "Controlla ora").'
+      : `Attivo: ${s.text}. Prossimo: ${nxt.toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' })} alle ${s.time}.`;
+  });
+}
+document.querySelectorAll('form.fw-sched').forEach(f => {
+  f.enabled.onchange = () => { f.day.disabled = f.time.disabled = !f.enabled.checked; };
+  f.onsubmit = e => {
+    e.preventDefault();
+    action(f.querySelector('.primary'), () => put('/api/firmware/schedule',
+      { kind: f.dataset.kind, enabled: f.enabled.checked, day: +f.day.value, time: f.time.value }),
+      r => (f.dataset.kind === 'gateway' ? 'Gateway: ' : 'Ripetitori: ') + r[f.dataset.kind].text).then(r => loadFirmwareSchedule(r || undefined));
+  };
+});
+
 // storico del gateway (salvato a ogni giro dei ripetitori): stessi grafici dei ripetitori
 function drawGatewayChart() {
   const box = $('gw-chart'), h = (gw && gw.history) || [];
