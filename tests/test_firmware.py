@@ -348,6 +348,26 @@ def test_repeaters():
           and "Rip-Monte" in notes[1] and "start ota" in notes[1], "avvisi: gateway e ripetitore da aggiornare")
     run(core.firmware_check())
     check(len(notes) == 2, "lo stesso avviso non si ripete")
+    # gateway: controllo settimanale, domenica alle 9
+    from datetime import datetime
+    slot = core.firmware_gw_slot
+    check(slot(datetime(2026, 11, 29, 8, 59)) is None and slot(datetime(2026, 11, 28, 9, 30)) is None
+          and slot(datetime(2026, 11, 30, 9, 0)) is None, "gateway: niente controllo prima delle 9 o fuori dalla domenica")
+    check(slot(datetime(2026, 11, 29, 9, 0)) == "2026-11-29" and slot(datetime(2026, 11, 29, 23, 0)) == "2026-11-29",
+          "gateway: controllo la domenica dalle 9 (anche in ritardo, entro la giornata)")
+    calls = []
+    orig = core.firmware_check
+
+    async def spy(gateway=True, repeaters=True):
+        calls.append((gateway, repeaters))
+        return await orig(gateway=gateway, repeaters=repeaters)
+    core.firmware_check = spy
+    check(not run(core.firmware_gw_tick(datetime(2026, 11, 28, 9, 0))) and not calls, "sabato: nessun controllo")
+    check(run(core.firmware_gw_tick(datetime(2026, 11, 29, 9, 1))) and calls == [(True, False)],
+          "domenica alle 9: controllo del solo gateway")
+    check(not run(core.firmware_gw_tick(datetime(2026, 11, 29, 15, 0))) and len(calls) == 1,
+          "una volta sola per domenica")
+    core.firmware_check = orig
 
 
 def test_web_and_bot():

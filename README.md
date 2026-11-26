@@ -567,7 +567,7 @@ Prima che un aggiornamento arrivi al Raspberry, GitHub Actions esegue tutti i [t
 
 **Ripetitori**: il firmware non passa dalla rete LoRa, che è troppo lenta. MeshWatch legge la versione di ogni ripetitore con `ver` (al massimo una volta al giorno, durante il giro), la mostra in Gestione e in `/firmware` e avvisa su Telegram quando ne esce una più recente. Per aggiornarlo, sul posto: da `/terminale` invia `start ota`, poi collegati al WiFi che il ripetitore accende (ESP32) oppure usa l'app di aggiornamento via Bluetooth (nRF52).
 
-Ogni 12 ore MeshWatch controlla le release: avvisa una volta per ogni versione nuova del gateway e per ogni ripetitore rimasto indietro.
+Ogni domenica alle 9 (ora del Raspberry) MeshWatch controlla se c'è un firmware nuovo per il gateway e avvisa una volta per ogni versione; se a quell'ora la radio è scollegata o il servizio è fermo, il controllo si fa appena torna, entro la domenica. Ogni 12 ore controlla invece i ripetitori rimasti indietro.
 
 ## Affidabilità: watchdog, radio, WiFi
 
