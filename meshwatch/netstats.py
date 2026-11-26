@@ -548,13 +548,13 @@ class NetStats:
         avail = {a["name"]: a for a in self.availability(now)}
         batt = {b["name"]: b for b in self.battery(now)}
         if avail:
-            lines.append("\n📡 Ripetitori (disponibilità 7 giorni)")
+            lines.append("\n📡 Ripetitori (risposte negli ultimi 7 giorni · batteria)")
         for name, a in avail.items():
             b = batt.get(name) or {}
             head = "🟢" if a["online"] else "🔴" if a["polls_30d"] else "⚪"
-            parts = [f"{a['pct_7d']:.1f}%" if a["pct_7d"] is not None else "nessun dato"]
+            parts = [f"risponde {a['pct_7d']:.0f}%" if a["pct_7d"] is not None else "nessun dato"]
             if b.get("volts"):
-                v = f"{b['volts']:.2f} V"
+                v = f"🔋 {b['volts']:.2f} V"
                 if b.get("trend") == "giù":
                     v += f", scende {-b['slope_mv_day']:.0f} mV/giorno"
                     if b.get("days_left") == 0:

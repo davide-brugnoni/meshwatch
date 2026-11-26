@@ -209,7 +209,7 @@ def test_telegram():
     check("🆕 Nuovi (7 giorni): Nuovo-Nodo" in t and "🔕 Spariti (zitti da più di 72 ore): Alice (5 giorni)" in t,
           "/rete: nuovi e spariti")
     check("🏆 Più attivi (7 giorni): Nuovo-Nodo 2, Alice 1" in t, "/rete: più attivi")
-    check("🟢 Rip-Monte · 100.0% · 3.66 V, scende 20 mV/giorno → soglia tra ~8 giorni" in t, "/rete: ripetitore con previsione della batteria")
+    check("🟢 Rip-Monte · risponde 100% · 🔋 3.66 V, scende 20 mV/giorno → soglia tra ~8 giorni" in t, "/rete: ripetitore con previsione della batteria")
     check("Rip-Monte → Rip-Valle -3.0 dB (ora 5.0 dB)" in t, "/rete: collegamento peggiorato")
     check(("rete" in dict(COMMANDS)) and any(BTN_NET in [b.text for b in row] for row in KEYBOARD.keyboard), "/rete nel menu e pulsante 📶 Rete")
     bot = Bot({"token": "123456:TEST", "allowed_chat_ids": [1]}, core)
