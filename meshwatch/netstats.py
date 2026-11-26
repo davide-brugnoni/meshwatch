@@ -508,14 +508,22 @@ class NetStats:
         out.sort(key=lambda x: (x["delta"] is None, x["delta"] if x["delta"] is not None else 0, -x["last_ts"]))
         return out
 
+    def _seed_if_empty(self, contacts):
+        """Storico vuoto (appena installato o subito dopo un riavvio, prima che il ciclo legga la
+        rubrica): i contatti già in mano entrano subito, così /rete e la pagina non dicono «nessun nodo»."""
+        if contacts and not self.db._one("SELECT 1 AS n FROM nodes LIMIT 1"):
+            self.sync_contacts(contacts)
+
     # ---------- testo per Telegram (/rete e pulsante 📶 Rete)
     def telegram_text(self, contacts=(), now=None):
+        self._seed_if_empty(contacts)
         now = int(now or time.time())
         s = self.summary(now)
         nodes = self.nodes(now)
         lines = ["📶 Rete – ultime 24 ore"]
         if not s["nodes"]:
-            lines.append("Ancora nessun nodo nello storico: si riempie man mano che il gateway sente gli advert.")
+            lines.append("Nessun nodo ancora nello storico (rubrica del gateway vuota): si riempie man mano "
+                         "che il gateway sente gli advert. I ripetitori qui sotto si interrogano a parte.")
         else:
             lines.append(f"Nodi attivi {s['active_24h']} ({s['active_7d']} in 7 giorni) · conosciuti {s['nodes']}")
             lines.append(f"Advert {s['adverts_24h']}" + (f" · pacchetti {s['packets_24h']}" if s["packets_24h"] is not None else ""))
@@ -575,6 +583,7 @@ class NetStats:
 
     def all(self, days=30, contacts=()):
         """Tutto per la pagina. Gira in un thread: la rubrica (che vive nella radio) va letta prima."""
+        self._seed_if_empty(contacts)
         now = int(time.time())
         days = max(7, min(int(days), 90))
         return {"generated": now, "days": days, "summary": self.summary(now), "nodes": self.nodes(now),
