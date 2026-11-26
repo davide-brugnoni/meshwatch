@@ -55,6 +55,8 @@ COME SI FA DOPO, SENZA TERMINALE
   (dal kit nuovo), rimetti la SD e riaccendi.
 - Firmware della radio gateway: dalla pagina, Gestione -> Rete -> Firmware MeshCore,
   oppure dal bot con /firmware. Nome, chiavi, rubrica e canali della radio restano.
+  Il controllo automatico delle nuove versioni (di base la domenica alle 9)
+  si cambia nella stessa sezione, alla voce Controllo automatico.
 - Statistiche della rete (nodi nuovi e spariti, ripetitori, batteria, collegamenti):
   scheda Statistiche della pagina, oppure /rete sul bot. Gli avvisi dei nodi si
   accendono in Gestione -> Telegram -> Avvisi nodi.

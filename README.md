@@ -65,7 +65,7 @@ Gira su un Raspberry Pi con una radio MeshCore in modalità *Companion USB* (Hel
 - **Rubrica del gateway**: contatti della Heltec con salti, posizione e ultimo advert; preferiti, azzera percorso, rimuovi, aggiunta manuale dei nuovi nodi.
 - **Mappe a scelta**: OpenStreetMap, CyclOSM, OpenTopoMap, satellite Esri (con o senza nomi). La scelta resta salvata nel browser.
 - **Cache delle mappe**: il Raspberry conserva le tessere già viste, così le zone abituali si aprono subito e restano visibili anche senza Internet. Spazio massimo e pulizia dalla Gestione.
-- **Firmware MeshCore**: aggiornamento del firmware della radio gateway (ESP32 e nRF52) dalla pagina o da Telegram, con controllo del file e senza perdere nome, chiavi, rubrica e canali; versione di ogni ripetitore e avviso quando ne esce una più recente.
+- **Firmware MeshCore**: aggiornamento del firmware della radio gateway (ESP32 e nRF52) dalla pagina o da Telegram, con controllo del file e senza perdere nome, chiavi, rubrica e canali; versione di ogni ripetitore e avviso quando ne esce una più recente, con **controllo automatico** nel giorno e all'ora che scegli (di base la domenica alle 9).
 - **Terminale**: comandi CLI ai ripetitori dalla pagina o da Telegram, con conferma per i comandi che modificano o riavviano e registro di tutti i comandi inviati.
 - **Gateway**: stato e configurazione della radio collegata (nome, potenza, posizione, parametri radio), advert, riavvio.
 - **Sistema**: temperatura, memoria, disco, **avviso di tensione bassa**, riavvio e spegnimento del Raspberry. Se la pagina si blocca il programma si riavvia da solo; il WiFi resta sempre sveglio e si spegne da solo quando è collegato il cavo di rete.
@@ -89,8 +89,8 @@ Gira su un Raspberry Pi con una radio MeshCore in modalità *Companion USB* (Hel
 Le ultime funzionalità aggiunte (si installano con l'[aggiornamento dalla pagina](#aggiornamenti) o da Telegram con `/aggiornamento`):
 
 - **Scheda Statistiche**: storico di tutti i nodi sentiti con nodi nuovi e spariti, andamento della rete, mappa di calore del traffico, disponibilità dei ripetitori, previsione della batteria, confronto e qualità dei collegamenti. Vedi [Statistiche della rete](#statistiche-della-rete).
-- **`/rete` e pulsante 📶 Rete** su Telegram: il riassunto delle statistiche della rete anche fuori casa; avvisi facoltativi per i nodi nuovi e per quelli che non si sentono più (**Gestione → Telegram → Avvisi nodi**).
-- **Firmware MeshCore**: aggiornamento del gateway da **Gestione → Rete → Firmware MeshCore** o con `/firmware`, versioni dei ripetitori e avvisi. Vedi [Firmware MeshCore](#firmware-meshcore).
+- **`/rete` e pulsante 📶 Rete** su Telegram: il riassunto delle statistiche della rete anche fuori casa, con disponibilità e batteria dei ripetitori ben distinte (es. *risponde 100% · 🔋 4.12 V*) e dati subito disponibili anche appena dopo un riavvio; avvisi facoltativi per i nodi nuovi e per quelli che non si sentono più (**Gestione → Telegram → Avvisi nodi**).
+- **Firmware MeshCore**: aggiornamento del gateway da **Gestione → Rete → Firmware MeshCore** o con `/firmware`, versioni dei ripetitori e avvisi. Il **controllo automatico** delle nuove versioni si imposta dalla pagina, separato per gateway e ripetitori (interruttore, giorno e ora; di base la domenica alle 9). Vedi [Firmware MeshCore](#firmware-meshcore).
 - **Statistiche complete di ripetitori e gateway**: traffico, duplicati, airtime, coda ed errori, con grafici; quelle del gateway in **Gestione → Rete**.
 - **Bot Telegram più affidabile**: avvisi in parallelo a tutte le chat con nuovi tentativi, permessi come sulla pagina (*viewer* e *admin*), supporto dei gruppi con `admin_user_ids`, posizione in diretta che riprende dopo un riavvio.
 - **Posizione più affidabile in movimento**: flood subito quando il dispositivo cambia ripetitore e risposte in ritardo accettate.
@@ -113,7 +113,7 @@ Il programma è un unico processo Python (asyncio) che fa girare insieme:
 | ciclo dei dispositivi (`core.py`) | richiesta di telemetria a ogni dispositivo secondo intervallo e fascia oraria, avvisi |
 | ciclo dei ripetitori (`core.py`) | login e statistiche ogni `repeater_interval_min` minuti, vicini ogni 6 ore, versione del firmware una volta al giorno |
 | statistiche della rete (`netstats.py`) | storico dei nodi dagli advert, pacchetti sentiti dalla radio, disponibilità, batteria, collegamenti, avvisi nodi |
-| firmware (`firmware.py`) | release di MeshCore ogni 12 ore, aggiornamento del gateway |
+| firmware (`firmware.py`) | controllo delle release di MeshCore nel giorno e all'ora scelti (di base la domenica alle 9), aggiornamento del gateway |
 | pagina e API (`web.py`) | FastAPI + uvicorn, porta 8080, eventi in tempo reale (SSE) |
 | bot (`bot.py`) | python-telegram-bot in polling: non serve aprire porte |
 | manutenzione (`maintenance.py`) | pulizia giornaliera, backup settimanale |
@@ -224,7 +224,7 @@ Copia `config.example.yaml` in `config.yaml` (con il kit SD il file è `meshwatc
 | `update.branch` | `main` | ramo da cui aggiornare |
 | `update.notify` | `true` | avviso su Telegram e pallino su Gestione quando esce una nuova versione |
 
-Le altre impostazioni (pulizia dei dati, backup, password del backup, cache delle mappe, avvisi batteria, avvisi nodi, riepilogo, aggiunta manuale dei contatti, scheda del gateway per il firmware) si cambiano dalla pagina e stanno nel database.
+Le altre impostazioni (pulizia dei dati, backup, password del backup, cache delle mappe, avvisi batteria, avvisi nodi, riepilogo, aggiunta manuale dei contatti, scheda del gateway e controllo automatico del firmware) si cambiano dalla pagina e stanno nel database.
 
 ### Riga di comando
 
@@ -281,7 +281,7 @@ Su telefono la barra in basso ha Mappa · Nodi · Chat · Statistiche · Gestion
 | Sezione | Cosa contiene |
 |---|---|
 | **Dispositivi** | dispositivi tracciati (nome contatto, etichetta, colore, intervallo, intervallo in movimento, fascia oraria, avvisi, soglie dei sensori), avvisi batteria bassa |
-| **Rete** | ripetitori, gateway (radio collegata al Raspberry, con statistiche e grafici del traffico), firmware MeshCore, rubrica del gateway |
+| **Rete** | ripetitori, gateway (radio collegata al Raspberry, con statistiche e grafici del traffico), firmware MeshCore (con controllo automatico), rubrica del gateway |
 | **Telegram** | riepilogo giornaliero (acceso/spento, ora di invio, *Invia ora*), avvisi nodi (nuovi e spariti), backup settimanale, comandi del bot |
 | **Sistema** | Raspberry, aggiornamento programma, manutenzione e backup, ripristino, cache delle mappe |
 | **Accessi** | utenti della pagina, registro attività |
@@ -324,7 +324,7 @@ Il bot funziona in *polling*: non serve aprire porte né esporre il Raspberry. S
 | `/sensori` · `/percorso` | ultimi valori dei sensori · ripetitori attraversati dall'ultima risposta |
 | `/mappa` · `/mappa 7` | **immagine della mappa** con la traccia delle ultime 24 ore · degli ultimi 7 giorni, l'ultima posizione, gateway e ripetitori della zona |
 | `/nodi` · `/aggiorna` | stato di dispositivi e ripetitori · interroga subito i ripetitori (solo chat admin) |
-| `/rete` | statistiche della rete: nodi attivi, nuovi e spariti, più attivi, disponibilità e batteria dei ripetitori (con previsione), collegamenti peggiorati |
+| `/rete` | statistiche della rete: nodi attivi, nuovi e spariti, più attivi, disponibilità e batteria dei ripetitori (es. *risponde 100% · 🔋 4.12 V*, con previsione), collegamenti peggiorati |
 | `/sistema` | Raspberry (temperatura, memoria, disco, tensione bassa), radio, database, ultimo backup |
 | `/riepilogo` | riepilogo della giornata con la mappa; `/riepilogo 21:00` ogni giorno a quell'ora, `/riepilogo no` lo spegne |
 | `/intervallo 30` · `/pausa` · `/riprendi` | gestione del tracciamento (solo chat admin) |
@@ -413,7 +413,7 @@ La scheda **Statistiche** (admin e viewer) raccoglie in una pagina quello che il
 - **Batteria dei ripetitori**: quanto scende al giorno negli ultimi 7 giorni e tra quanti giorni arriva alla soglia `repeater_low_battery_v` (3,4 V se non c'è); riconosce i ripetitori con pannello solare e dice se il bilancio giornaliero è in pari.
 - **Qualità dei collegamenti**: SNR tra ripetitori vicini (letto ogni 6 ore) e dei nodi sentiti direttamente dal gateway, con il confronto con la settimana prima: in alto quelli peggiorati di più.
 
-Da dove vengono i dati: la radio del gateway passa a MeshWatch ogni pacchetto che sente, anche quelli non destinati a lei, con SNR e RSSI (firmware companion 1.7 o più recente). Se il firmware non lo fa, lo storico dei nodi si ricava comunque dalla rubrica (senza SNR e senza pacchetti all'ora). Al primo avvio i contatti già in rubrica entrano nello storico senza contare come nuovi. I contatori dei pacchetti restano in memoria e vengono scritti ogni 2 minuti, per non consumare la SD.
+Da dove vengono i dati: la radio del gateway passa a MeshWatch ogni pacchetto che sente, anche quelli non destinati a lei, con SNR e RSSI (firmware companion 1.7 o più recente). Se il firmware non lo fa, lo storico dei nodi si ricava comunque dalla rubrica (senza SNR e senza pacchetti all'ora). Al primo avvio, e subito dopo ogni riavvio se lo storico è vuoto, i contatti già in rubrica entrano nello storico senza contare come nuovi: `/rete` e la pagina non restano vuote nell'attesa. I ripetitori si interrogano a parte, quindi i loro dati compaiono anche con lo storico dei nodi ancora vuoto. I contatori dei pacchetti restano in memoria e vengono scritti ogni 2 minuti, per non consumare la SD.
 
 Gli **avvisi su Telegram** sono spenti all'inizio: in **Gestione → Telegram → Avvisi nodi** si accende quello per i nodi nuovi e si sceglie se avvisare quando un nodo (solo i ripetitori o tutti) non si sente da più di N ore, e di nuovo quando torna. Nel riepilogo giornaliero c'è una riga con nodi attivi, advert, pacchetti, nuovi e spariti; il comando **/rete** (o il pulsante 📶 Rete) manda un riassunto completo quando serve.
 
@@ -726,6 +726,7 @@ La pagina usa un'API JSON sotto `/api/` (FastAPI). L'autenticazione è con il co
 | GET | `/api/admin` | admin | dati della scheda Gestione |
 | POST · PUT · DELETE | `/api/users`, `/api/users/{username}` | admin | utenti della pagina |
 | GET · POST | `/api/firmware` · `/api/firmware/check` | admin | versioni di gateway e ripetitori, ultima release · controlla subito |
+| GET · PUT | `/api/firmware/schedule` | admin | controllo automatico di gateway e ripetitori: interruttore, giorno, ora e prossimo controllo (le modifiche finiscono nel registro attività) |
 | PUT · POST | `/api/firmware/board` · `/api/firmware/update` | admin | scheda del gateway · aggiorna il gateway (`{"board": …, "confirm": true}`) |
 | POST | `/api/firmware/repeaters` | admin | rilegge la versione dei ripetitori |
 | GET · POST | `/api/gateway?hours=24` | admin | stato e storico delle statistiche · configurazione della radio |
