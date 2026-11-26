@@ -76,22 +76,26 @@ $('logout').onclick = async () => { await fetch('/api/logout', { method: 'POST' 
 // 'map' e 'list' su computer sono la stessa vista (mappa + colonna); sul telefono sono separate
 function setTab(t) {
   if (t === 'admin' && (!me || me.role !== 'admin')) { showLogin(); return; }
-  if (t === 'chat' && (!me || !['admin', 'viewer'].includes(me.role))) { showLogin(); return; }
-  history.replaceState(null, '', t === 'admin' ? '#gestione' : t === 'list' ? '#nodi' : t === 'chat' ? '#chat' : '#');
+  if ((t === 'chat' || t === 'stats') && (!me || !['admin', 'viewer'].includes(me.role))) { showLogin(); return; }
+  history.replaceState(null, '', t === 'admin' ? '#gestione' : t === 'list' ? '#nodi' : t === 'chat' ? '#chat' : t === 'stats' ? '#statistiche' : '#');
   document.body.classList.toggle('tab-admin', t === 'admin');
   document.body.classList.toggle('tab-list', t === 'list');
   document.body.classList.toggle('tab-chat', t === 'chat');
+  document.body.classList.toggle('tab-stats', t === 'stats');
+  $('tab-stats').classList.toggle('on', t === 'stats');
   $('tab-map').classList.toggle('on', t === 'map' || t === 'list'); $('tab-admin').classList.toggle('on', t === 'admin');
   $('tab-chat').classList.toggle('on', t === 'chat');
   document.querySelectorAll('#mnav button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
-  if (t === 'admin') { loadAdmin(); loadGateway(); loadFirmware(); loadSystem(); loadUpdate(); loadMaintenance(); loadBatteryAlerts(); loadTileCache(); loadContacts(); loadReport(); loadRestore(); }
+  if (t === 'admin') { loadAdmin(); loadGateway(); loadFirmware(); loadSystem(); loadUpdate(); loadMaintenance(); loadBatteryAlerts(); loadTileCache(); loadContacts(); loadReport(); loadRestore(); loadNodeAlerts(); }
   else if (t === 'chat') loadChat();
+  else if (t === 'stats') loadStats();
   else setTimeout(() => map.invalidateSize(), 50);
   chatPollSoon();
 }
 $('tab-map').onclick = () => setTab('map');
 $('tab-chat').onclick = () => setTab('chat');
 $('tab-admin').onclick = () => setTab('admin');
+$('tab-stats').onclick = () => setTab('stats');
 document.querySelectorAll('#mnav button').forEach(b => b.onclick = () => setTab(b.dataset.t));
 function focusTracker(t) {
   const p = t.last_position; if (!p) return;

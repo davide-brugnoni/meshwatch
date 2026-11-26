@@ -38,6 +38,7 @@ async function init() {
   await refresh();
   if (me.role === 'admin' && location.hash === '#gestione') setTab('admin');
   else if (location.hash === '#chat' && !guest) setTab('chat');
+  else if (location.hash === '#statistiche' && !guest) setTab('stats');
   else if (location.hash === '#nodi' && isPhone()) setTab('list');
   chatPollSoon();
   connectEvents();
@@ -67,6 +68,7 @@ function connectEvents() {
   // più notizie ravvicinate (es. il giro dei ripetitori) = un solo aggiornamento
   events.addEventListener('state', () => { clearTimeout(stateTimer); stateTimer = setTimeout(refresh, 800); });
   events.addEventListener('chat', () => chatPollSoon());
+  events.addEventListener('state', () => statsSoon());
   events.addEventListener('firmware', () => { if (document.body.classList.contains('tab-admin')) { loadFirmware(); loadGateway(); } });
   events.onerror = () => setLive(false);   // il browser riprova da solo (es. dopo un riavvio)
 }

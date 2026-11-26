@@ -25,6 +25,7 @@ Gira su un Raspberry Pi con una radio MeshCore in modalità *Companion USB* (Hel
 - [Chat](#chat)
 - [Sensori](#sensori)
 - [Mappa della rete e rubrica](#mappa-della-rete-e-rubrica)
+- [Statistiche della rete](#statistiche-della-rete)
 - [Percorso dei pacchetti](#percorso-dei-pacchetti)
 - [Mappa della copertura](#mappa-della-copertura)
 - [Mappe e cache delle tessere](#mappe)
@@ -59,6 +60,7 @@ Gira su un Raspberry Pi con una radio MeshCore in modalità *Companion USB* (Hel
 - **Statistiche del gateway**: le stesse statistiche della radio collegata al Raspberry (senza i duplicati, che il companion non conta) salvate a ogni giro dei ripetitori, con i grafici in Gestione → Rete.
 - **Chat**: messaggi privati e canali (Public e canali privati) direttamente dalla Heltec collegata al Raspberry, dalla pagina, senza accendere un altro dispositivo. Conferma di consegna, nuovi tentativi automatici, messaggi salvati anche a pagina chiusa.
 - **Mappa della rete**: livello "Rete MeshCore" con i nodi che annunciano la posizione e i collegamenti tra ripetitori vicini colorati per SNR.
+- **Statistiche della rete** (scheda *Statistiche*): storico di tutti i nodi sentiti (prima e ultima volta, advert, salti, SNR, RSSI) con **nodi nuovi e spariti** e classifiche; andamento della rete (nodi attivi al giorno, pacchetti all'ora, mappa di calore giorno × ora, tipi di pacchetto); **disponibilità dei ripetitori** su 24 ore, 7 e 30 giorni con calendario; **previsione della batteria** (anche con pannello solare); **confronto tra ripetitori**; **qualità dei collegamenti** nel tempo. Avvisi Telegram facoltativi per i nodi nuovi e per quelli che non si sentono più.
 - **Rubrica del gateway**: contatti della Heltec con salti, posizione e ultimo advert; preferiti, azzera percorso, rimuovi, aggiunta manuale dei nuovi nodi.
 - **Mappe a scelta**: OpenStreetMap, CyclOSM, OpenTopoMap, satellite Esri (con o senza nomi). La scelta resta salvata nel browser.
 - **Cache delle mappe**: il Raspberry conserva le tessere già viste, così le zone abituali si aprono subito e restano visibili anche senza Internet. Spazio massimo e pulizia dalla Gestione.
@@ -251,9 +253,10 @@ web:
 |---|---|
 | **Mappa** | mappa con le tracce dei dispositivi, livelli (Rete MeshCore, Percorsi, Copertura), scelta della mappa, cestino delle tracce; accanto la colonna dei **nodi**: schede dei dispositivi (posizione, batteria, sensori, percorso, grafici), ripetitori con statistiche e, per gli admin, il terminale |
 | **Chat** | conversazioni private e canali dalla radio del gateway (con login) |
+| **Statistiche** | dashboard della rete: nodi, andamento, disponibilità, batteria, confronto e collegamenti dei ripetitori (con login) |
 | **Gestione** | tutta la configurazione (solo admin) |
 
-Su telefono la barra in basso ha Mappa · Nodi · Chat · Gestione.
+Su telefono la barra in basso ha Mappa · Nodi · Chat · Statistiche · Gestione.
 
 ### La scheda Gestione
 
@@ -336,6 +339,7 @@ Arrivano a tutte le chat in `allowed_chat_ids` (e in `admin_chat_ids`), in paral
 - valore di un sensore fuori soglia e rientro nella norma;
 - ripetitore che non risponde;
 - radio scollegata e ricollegata;
+- nodo nuovo sentito e nodo che non si sente più (facoltativi, in **Gestione → Telegram → Avvisi nodi**);
 - nuova versione disponibile (una volta per versione), esito di aggiornamenti e ripristini.
 
 ### Mappa e riepilogo su Telegram
@@ -376,6 +380,24 @@ Ogni risposta alla telemetria porta, oltre alla posizione, i valori dei sensori 
 - Sulla mappa, dal selettore dei livelli, attiva **Rete MeshCore** (serve il login): rombi gialli i ripetitori, cerchi blu i companion, quadrato verde il gateway. Le linee uniscono i ripetitori che si sentono tra loro: verde SNR ≥ 5 dB, giallo 0–5, arancione sotto 0. La linea tratteggiata indica un ripetitore che il gateway sente direttamente. Compaiono solo i nodi che annunciano la posizione.
 - I vicini vengono chiesti ai ripetitori configurati al massimo ogni 6 ore (servono la password del ripetitore e un firmware recente). Per aggiornarli subito: **Gestione → Rete → Rubrica del gateway → Aggiorna mappa della rete**.
 - **Rubrica del gateway** (solo admin): cerca, segna i preferiti, azzera il percorso di un nodo che non risponde più, rimuovi i contatti inutili (la Heltec ne tiene un numero limitato). Con l'**aggiunta manuale** attiva i nodi nuovi restano in attesa finché non li aggiungi. Se rimuovi un contatto usato da un dispositivo o da un ripetitore, la pagina ti avvisa.
+
+## Statistiche della rete
+
+La scheda **Statistiche** (admin e viewer) raccoglie in una pagina quello che il gateway sa della rete. Si aggiorna da sola mentre è aperta.
+
+![Statistiche](docs/screenshots/statistiche.png)
+
+- **Riquadri in alto**: nodi attivi nelle ultime 24 ore, nodi conosciuti, nuovi negli ultimi 7 giorni, spariti, advert e pacchetti nelle ultime 24 ore, disponibilità media dei ripetitori.
+- **Andamento della rete**: nodi attivi al giorno (7, 30 o 90 giorni), pacchetti all'ora nelle ultime 48 ore, **mappa di calore** con i giorni e le ore più trafficati, tipi di pacchetto (messaggi nei canali, advert, ACK, …).
+- **Nodi sentiti**: ogni nodo che ha mandato un advert, con prima e ultima volta, advert in 7 giorni e in totale, salti, SNR e RSSI. Filtri *Nuovi* e *Spariti*, ricerca, ordinamento per colonna, classifiche (più attivi, segnale migliore, più lontani).
+- **Disponibilità dei ripetitori**: percentuale di risposte su 24 ore, 7 e 30 giorni, un quadretto per giorno (30 giorni) e una tacca per ora (48 ore).
+- **Confronto tra ripetitori**: tabella delle ultime 24 ore (gateway compreso) con rumore, SNR, RSSI, pacchetti all'ora, duplicati, errori, airtime, coda; il valore peggiore di ogni colonna è segnato.
+- **Batteria dei ripetitori**: quanto scende al giorno negli ultimi 7 giorni e tra quanti giorni arriva alla soglia `repeater_low_battery_v` (3,4 V se non c'è); riconosce i ripetitori con pannello solare e dice se il bilancio giornaliero è in pari.
+- **Qualità dei collegamenti**: SNR tra ripetitori vicini (letto ogni 6 ore) e dei nodi sentiti direttamente dal gateway, con il confronto con la settimana prima: in alto quelli peggiorati di più.
+
+Da dove vengono i dati: la radio del gateway passa a MeshWatch ogni pacchetto che sente, anche quelli non destinati a lei, con SNR e RSSI (firmware companion 1.7 o più recente). Se il firmware non lo fa, lo storico dei nodi si ricava comunque dalla rubrica (senza SNR e senza pacchetti all'ora). Al primo avvio i contatti già in rubrica entrano nello storico senza contare come nuovi. I contatori dei pacchetti restano in memoria e vengono scritti ogni 2 minuti, per non consumare la SD.
+
+Gli **avvisi su Telegram** sono spenti all'inizio: in **Gestione → Telegram → Avvisi nodi** si accende quello per i nodi nuovi e si sceglie se avvisare quando un nodo (solo i ripetitori o tutti) non si sente da più di N ore, e di nuovo quando torna. Nel riepilogo giornaliero c'è una riga con nodi attivi, advert, pacchetti, nuovi e spariti.
 
 ## Percorso dei pacchetti
 
@@ -671,6 +693,8 @@ La pagina usa un'API JSON sotto `/api/` (FastAPI). L'autenticazione è con il co
 | GET | `/api/network` | viewer | nodi e collegamenti della rete |
 | GET | `/api/coverage?days=30&tracker=&cell=250` | viewer | celle della mappa di copertura |
 | POST | `/api/network/neighbours` | admin | chiede subito i vicini ai ripetitori |
+| GET | `/api/stats?days=30` | viewer | statistiche della rete (scheda Statistiche) |
+| GET · PUT | `/api/alerts/nodes` | admin | avvisi per i nodi nuovi e spariti |
 | POST | `/api/trackers/{tid}/poll` | viewer | chiede subito la posizione |
 | POST · PUT · DELETE | `/api/trackers`, `/api/trackers/{tid}` | admin | aggiungi · modifica · rimuovi un dispositivo |
 | DELETE | `/api/trackers/{tid}/track` · `/api/track` | admin | cancella la traccia di uno · di tutti |
@@ -730,7 +754,9 @@ SQLite in `meshwatch.db`; lo schema viene creato e aggiornato da solo all'avvio 
 | `sensor_readings` · `sensor_rules` | letture dei sensori · soglie di avviso |
 | `repeaters` · `repeater_status` | ripetitori configurati · statistiche nel tempo (con traffico, duplicati, airtime, coda ed errori) |
 | `gateway_stats` | statistiche del gateway nel tempo, per i grafici |
-| `neighbours` | vicini dei ripetitori (mappa della rete) |
+| `neighbours` · `link_history` | vicini dei ripetitori (mappa della rete) · loro SNR nel tempo |
+| `nodes` · `node_adverts` | ogni nodo sentito dal gateway · ogni advert ricevuto (salti, SNR, RSSI) |
+| `rx_hourly` | pacchetti sentiti dalla radio, contati per ora e per tipo |
 | `messages` | chat |
 | `cli_log` | comandi del terminale e risposte |
 | `users` · `login_failures` | utenti della pagina · tentativi falliti (blocco IP) |
@@ -746,6 +772,7 @@ meshwatch/            pacchetto Python
   __main__.py         avvio (python -m meshwatch -c config.yaml), comando hashpw
   mesh.py             comunicazione con la radio (libreria meshcore)
   core.py             interrogazioni periodiche, avvisi, stato
+  netstats.py         statistiche della rete: storico dei nodi, pacchetti, disponibilità, batteria, collegamenti
   db.py               SQLite: dispositivi, posizioni, ripetitori, utenti, impostazioni
   web.py              API FastAPI e pagina
   bot.py              bot Telegram
@@ -768,6 +795,7 @@ web/assets/js/        script della pagina, caricati in ordine da index.html:
   nodes.js            colonna dei nodi: dispositivi, ripetitori, terminale
   chat.js             chat
   admin.js            scheda Gestione
+  stats.js            scheda Statistiche (grafici SVG, tabelle, avvisi nodi)
   main.js             avvio (sempre l'ultimo)
 web/vendor/           Leaflet
 tools/
@@ -815,6 +843,7 @@ A ogni push e pull request GitHub Actions ([`.github/workflows/test.yml`](.githu
 | `test_features.py` | sensori e soglie, percorsi, copertura, tempo reale, comandi del bot |
 | `test_tiles.py` | cache delle mappe con un server delle mappe finto: scadenza, 304, senza Internet, spazio massimo |
 | `test_restore.py` | ripristino dalla pagina: password, file non validi, avvisi, applicazione al riavvio, annullamento, kit SD |
+| `test_netstats.py` | statistiche della rete: storico dei nodi, doppioni, avvisi nodi nuovi e spariti, disponibilità, previsione della batteria, confronto, collegamenti, API |
 | `test_permissions.py` | **ogni** endpoint dell'API per ospite, viewer e admin; fallisce se se ne aggiunge uno senza dichiarare chi può usarlo |
 | `test_watchdog.py` | watchdog di systemd: segnale finché la pagina risponde, riavvio se si blocca |
 | `check_page.py` | file della pagina, id usati dagli script, sintassi JavaScript (serve node) |

@@ -52,6 +52,12 @@ class TrackerIn(BaseModel):
     moving_interval_min: int | None = Field(None, ge=0, le=720)
 
 
+class NodeAlertsIn(BaseModel):
+    new: bool | None = None
+    gone: str | None = Field(None, pattern=r"^(off|repeaters|all)$")
+    gone_h: int | None = Field(None, ge=1, le=24 * 30)
+
+
 class SensorRuleIn(BaseModel):
     type: str = Field(..., min_length=1, max_length=40)
     channel: int = Field(..., ge=0, le=255)
@@ -349,6 +355,23 @@ def create_app(core, auth, web_cfg, updater=None, tiles=None):
             res[r["name"]] = await core.poll_neighbours(r["name"], force=True) is not None
         audit(u, "vicini dei ripetitori aggiornati")
         return {"ok": True, "result": res}
+
+    # ---------- statistiche della rete
+    @app.get("/api/stats")
+    async def stats(days: int = 30, u=Depends(viewer)):
+        contacts = core.mesh.contacts() if core.mesh.connected else []
+        return await asyncio.to_thread(core.netstats.all, days, contacts)
+
+    @app.get("/api/alerts/nodes")
+    async def node_alerts_info(u=Depends(admin)):
+        return core.netstats.alert_settings()
+
+    @app.put("/api/alerts/nodes")
+    async def node_alerts_set(body: NodeAlertsIn, u=Depends(admin)):
+        st = core.netstats.set_alert_settings(body.new, body.gone, body.gone_h)
+        gone = {"off": "spenti", "repeaters": "solo ripetitori", "all": "tutti i nodi"}[st["gone"]]
+        audit(u, "avvisi nodi", f"nuovi {'sì' if st['new'] else 'no'}, spariti: {gone} dopo {st['gone_h']} ore")
+        return st
 
     # ---------- tracker
     @app.post("/api/trackers/{tid}/poll")

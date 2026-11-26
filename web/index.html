@@ -14,6 +14,7 @@
   <nav class="tabs">
     <button id="tab-map" class="on">Mappa</button>
     <button id="tab-chat" class="guest-hide">Chat</button>
+    <button id="tab-stats" class="guest-hide">Statistiche</button>
     <button id="tab-admin">Gestione</button>
   </nav>
   <span class="spacer"></span>
@@ -90,6 +91,68 @@
     </form>
   </div>
 </div>
+
+<div id="stats-scroll"><div id="view-stats">
+  <div class="st-bar">
+    <h2>Statistiche della rete</h2>
+    <span class="spacer"></span>
+    <label class="muted"><span class="st-lbl">Andamento</span> <select id="st-days" title="Periodo dell'andamento">
+      <option value="7">7 giorni</option><option value="30" selected>30 giorni</option><option value="90">90 giorni</option>
+    </select></label>
+    <button id="st-reload" class="small">Aggiorna</button>
+  </div>
+  <p class="note" id="st-since"></p>
+  <div class="st-kpi" id="st-kpi"><p class="muted">Caricamento…</p></div>
+
+  <div class="st-grid">
+  <section class="card wide">
+    <h2>Andamento della rete</h2>
+    <div id="st-trend"></div>
+    <details class="help"><summary>Come si legge</summary><p>Nodi attivi: quanti nodi diversi hanno mandato almeno un advert quel giorno. Pacchetti: tutto quello che la radio del gateway ha sentito, anche i messaggi non per noi (serve un firmware companion che li inoltra: 1.7 o più recente).
+      La mappa di calore mostra in quali giorni e ore la rete è più trafficata (media dei pacchetti all'ora nel periodo scelto).</p></details>
+  </section>
+
+  <section class="card wide">
+    <h2>Nodi sentiti</h2>
+    <div class="st-rank" id="st-rank"></div>
+    <div class="ctc-tools st-tools">
+      <div class="metric-tabs" id="st-nfilter">
+        <button data-f="all" class="on">Tutti</button><button data-f="new">Nuovi</button><button data-f="gone">Spariti</button>
+      </div>
+      <input type="search" id="st-nsearch" placeholder="Cerca per nome o chiave">
+      <select id="st-ntype"><option value="">tutti i tipi</option><option>companion</option><option>ripetitore</option><option>room server</option><option>sensore</option></select>
+    </div>
+    <div class="st-table-wrap" id="st-nodes"></div>
+    <details class="help"><summary>Come funziona</summary><p>Ogni advert sentito dal gateway aggiorna lo storico: prima e ultima volta, quanti advert, salti e segnale (SNR e RSSI sono quelli dell'ultimo tratto, verso il gateway). Nuovi: comparsi negli ultimi 7 giorni. Spariti: non si sentono da più delle ore impostate in Gestione → Telegram → Avvisi nodi.
+      I contatti già in rubrica al primo avvio entrano nello storico senza contare come nuovi.</p></details>
+  </section>
+
+  <section class="card wide">
+    <h2>Disponibilità dei ripetitori</h2>
+    <div id="st-avail"></div>
+    <details class="help"><summary>Come si legge</summary><p>Percentuale di giri dei ripetitori in cui il ripetitore ha risposto alla richiesta di stato. I quadretti sono gli ultimi 30 giorni (uno al giorno) e la striscia sotto le ultime 48 ore (una tacca all'ora): verde sempre raggiungibile, giallo qualche risposta persa, arancione metà o più perse, rosso mai, grigio nessuna richiesta.</p></details>
+  </section>
+
+  <section class="card wide">
+    <h2>Confronto tra ripetitori (24 ore)</h2>
+    <div class="st-table-wrap" id="st-compare"></div>
+    <details class="help"><summary>Come si legge</summary><p>Valori medi delle ultime 24 ore. Il valore peggiore di ogni colonna è segnato con ▲: rumore alto, SNR o RSSI bassi, molti duplicati o errori, airtime alto (il ripetitore è carico) o coda di trasmissione piena. Clic sull'intestazione per ordinare.</p></details>
+  </section>
+
+  <section class="card">
+    <h2>Batteria dei ripetitori</h2>
+    <div id="st-batt"></div>
+    <details class="help"><summary>Come funziona</summary><p>Dalla tensione degli ultimi 7 giorni si calcola quanto scende (o sale) al giorno e quando arriverà alla soglia (<span class="mono">repeater_low_battery_v</span> del config, 3,4 V se non c'è). È una stima: le batterie al litio scendono più in fretta verso la fine.
+      Se la tensione sale e scende di almeno 0,1 V ogni giorno il ripetitore ha probabilmente un pannello solare: il bilancio giornaliero dice se di giorno ricarica più di quanto consuma di notte.</p></details>
+  </section>
+
+  <section class="card">
+    <h2>Qualità dei collegamenti</h2>
+    <div id="st-links"></div>
+    <details class="help"><summary>Come funziona</summary><p>SNR con cui ogni ripetitore sente i suoi vicini (letto ogni 6 ore) e con cui il gateway sente direttamente i nodi (a ogni advert). In alto i collegamenti peggiorati di più rispetto alla settimana prima: un calo costante può voler dire antenna, cavo o connettore da controllare; un calo improvviso, un ostacolo nuovo o il meteo.</p></details>
+  </section>
+  </div>
+</div></div>
 
 <div id="admin-scroll"><div id="view-admin">
   <nav id="adm-nav" aria-label="Sezioni della gestione">
@@ -240,6 +303,19 @@
     <p class="note" id="rep-state"></p>
     <details class="help"><summary>Cosa contiene</summary><p>Arriva a tutte le chat autorizzate: km percorsi, risposte e batteria di ogni dispositivo nelle ultime 24 ore con l'ultima posizione, stato dei ripetitori e del Raspberry, e la mappa della giornata.
       Se all'ora scelta il Raspberry era spento, arriva appena riparte (entro mezz'ora). Si può cambiare anche dal bot: <span class="mono">/riepilogo 21:00</span> oppure <span class="mono">/riepilogo no</span>.</p></details>
+  </section>
+  <section class="card">
+    <h2>Avvisi nodi</h2>
+    <form class="edit" id="form-nodes-alert">
+      <label class="switch"><input type="checkbox" name="new"> Nuovo nodo sentito</label>
+      <label>Nodi che non si sentono più <select name="gone">
+        <option value="off">nessun avviso</option><option value="repeaters">solo ripetitori</option><option value="all">tutti i nodi</option>
+      </select></label>
+      <label>Dopo (ore) <input type="number" name="gone_h" min="1" max="720" value="72"></label>
+      <div class="formacts"><button class="primary">Salva</button></div>
+    </form>
+    <details class="help"><summary>Come funziona</summary><p>Il gateway ascolta gli advert di tutti i nodi della zona. Con "Nuovo nodo" arriva un messaggio quando si sente un nodo mai visto prima; con "Nodi che non si sentono più" quando un nodo tace da più delle ore scelte, e di nuovo quando torna.
+      I ripetitori configurati in Gestione → Rete hanno già il loro avviso ("non risponde da più di 3 ore"). Le statistiche sono nella scheda Statistiche.</p></details>
   </section>
   <section class="card">
     <h2>Backup su Telegram</h2>
@@ -394,6 +470,7 @@
   <button data-t="map" class="on"><svg viewBox="0 0 24 24"><path d="M9 4 3 6.5v13.5l6-2.5 6 2.5 6-2.5V4l-6 2.5z"/><path d="M9 4v13.5M15 6.5V20"/></svg>Mappa</button>
   <button data-t="list"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"/><path d="M8.5 15.5a5 5 0 0 1 0-7M15.5 8.5a5 5 0 0 1 0 7M5.6 18.4a9 9 0 0 1 0-12.8M18.4 5.6a9 9 0 0 1 0 12.8"/></svg>Nodi</button>
   <button data-t="chat" class="guest-hide"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg>Chat</button>
+  <button data-t="stats" class="guest-hide"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M21 20H3"/></svg>Statistiche</button>
   <button data-t="admin"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.9 4.9 7 7M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1 7 17M17 7l2.1-2.1"/></svg>Gestione</button>
 </nav>
 
@@ -419,6 +496,7 @@
   </form>
 </div>
 <div id="toast"></div>
+<div id="st-tip" role="tooltip" hidden></div>
 <div id="msg-note" role="status" aria-live="polite" hidden></div>
 
 <script src="/vendor/leaflet/leaflet.js"></script>
@@ -427,6 +505,7 @@
 <script src="/assets/js/nodes.js"></script>
 <script src="/assets/js/chat.js"></script>
 <script src="/assets/js/admin.js"></script>
+<script src="/assets/js/stats.js"></script>
 <script src="/assets/js/main.js"></script>
 </body>
 </html>
