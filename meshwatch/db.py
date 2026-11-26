@@ -105,6 +105,31 @@ class DB:
                     op TEXT,                -- '<' sotto la soglia, '>' sopra la soglia
                     value REAL
                 );
+                -- statistiche della rete: ogni nodo sentito dal gateway (advert ricevuti)
+                CREATE TABLE IF NOT EXISTS nodes (
+                    key TEXT PRIMARY KEY,   -- chiave pubblica (64 hex)
+                    name TEXT, type TEXT,
+                    first_seen INTEGER, last_seen INTEGER,
+                    adverts INTEGER DEFAULT 0,
+                    last_adv_ts INTEGER,    -- orologio del nodo nell'ultimo advert (evita i doppioni)
+                    lat REAL, lon REAL, hops INTEGER, snr REAL, rssi REAL,
+                    seeded INTEGER DEFAULT 0,   -- già in rubrica al primo avvio: non è "nuovo"
+                    gone_notified INTEGER DEFAULT 0
+                );
+                CREATE TABLE IF NOT EXISTS node_adverts (
+                    ts INTEGER, key TEXT, hops INTEGER, snr REAL, rssi REAL
+                );
+                CREATE INDEX IF NOT EXISTS i_nadv_ts ON node_adverts(ts);
+                CREATE INDEX IF NOT EXISTS i_nadv_key ON node_adverts(key, ts);
+                -- pacchetti sentiti dalla radio, contati per ora e per tipo
+                CREATE TABLE IF NOT EXISTS rx_hourly (
+                    hour INTEGER, ptype INTEGER, n INTEGER, PRIMARY KEY (hour, ptype)
+                );
+                -- storico dei vicini dei ripetitori (la tabella neighbours tiene solo l'ultima lettura)
+                CREATE TABLE IF NOT EXISTS link_history (
+                    ts INTEGER, repeater TEXT, prefix TEXT, snr REAL
+                );
+                CREATE INDEX IF NOT EXISTS i_link ON link_history(repeater, prefix, ts);
                 """
             )
             # migrazione dalla prima versione: posizioni e richieste legate a un tracker
@@ -334,6 +359,7 @@ class DB:
     def delete_repeater(self, name):
         self._exec("DELETE FROM repeaters WHERE name=?", (name,))
         self._exec("DELETE FROM neighbours WHERE repeater=?", (name,))
+        self._exec("DELETE FROM link_history WHERE repeater=?", (name,))
 
     def add_repeater_status(self, name, ok, s=None):
         s = s or {}
@@ -479,6 +505,8 @@ class DB:
             self.conn.execute("DELETE FROM neighbours WHERE repeater=?", (repeater,))
             self.conn.executemany("INSERT INTO neighbours VALUES (?,?,?,?,?)",
                                   [(now, repeater, n["prefix"], n.get("snr"), n.get("secs_ago")) for n in items])
+            self.conn.executemany("INSERT INTO link_history VALUES (?,?,?,?)",
+                                  [(now, repeater, n["prefix"], n.get("snr")) for n in items if n.get("snr") is not None])
             self.conn.commit()
 
     def neighbours(self):
