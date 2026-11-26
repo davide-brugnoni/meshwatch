@@ -174,6 +174,8 @@ class Mesh:
         self.on_message = None       # funzione async(dict) chiamata per ogni messaggio ricevuto
         self.channels = []           # [{idx, name}] canali configurati nella radio
         self.cli_pending = set()     # prefissi dei ripetitori con un comando CLI in corso
+        self.active_port = None      # porta USB in uso (serve per aggiornare il firmware)
+        self.suspended = False       # radio lasciata libera (aggiornamento del firmware in corso)
 
     async def connect(self):
         """Si collega alla radio; riprova finché non ci riesce."""
@@ -201,6 +203,29 @@ class Mesh:
         finally:
             self.connecting = False
 
+    async def suspend(self):
+        """Chiude la connessione e lascia libera la porta USB (per esptool / nrfutil).
+        Finché non si chiama resume() il watchdog non prova a ricollegarla."""
+        self.suspended = True
+        async with self.lock:
+            old, self.mc = self.mc, None
+        if old:
+            try:
+                await asyncio.wait_for(old.disconnect(), 10)
+            except Exception as e:
+                log.warning("Chiusura della connessione per l'aggiornamento: %s", e)
+
+    async def resume(self):
+        """Ricollega la radio dopo suspend(): cerca di nuovo la porta, che può essere cambiata."""
+        self.suspended = False
+        if self.connecting:
+            return
+        self.connecting = True
+        try:
+            await self._connect()
+        finally:
+            self.connecting = False
+
     @classmethod
     def from_config(cls, cfg):
         """connection: usb (default, qualsiasi scheda) oppure wifi (firmware Companion WiFi)."""
@@ -220,6 +245,8 @@ class Mesh:
 
     async def _connect(self):
         while True:
+            if self.suspended:   # aggiornamento del firmware in corso: la porta serve a esptool
+                return
             if self.tcp:
                 targets = [None]
             elif self.port and self.port != "auto":
@@ -232,6 +259,7 @@ class Mesh:
                 try:
                     self.mc = await self._open(port)
                     if self.mc:
+                        self.active_port = port
                         await self._ready()
                         return
                     log.warning("Nessuna risposta MeshCore su %s", port or "%s:%d" % self.tcp)

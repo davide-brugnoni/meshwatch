@@ -67,6 +67,7 @@ function connectEvents() {
   // più notizie ravvicinate (es. il giro dei ripetitori) = un solo aggiornamento
   events.addEventListener('state', () => { clearTimeout(stateTimer); stateTimer = setTimeout(refresh, 800); });
   events.addEventListener('chat', () => chatPollSoon());
+  events.addEventListener('firmware', () => { if (document.body.classList.contains('tab-admin')) { loadFirmware(); loadGateway(); } });
   events.onerror = () => setLive(false);   // il browser riprova da solo (es. dopo un riavvio)
 }
 init();

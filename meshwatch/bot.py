@@ -14,6 +14,7 @@ from telegram.ext import (Application, CallbackQueryHandler, CommandHandler, Con
 
 from . import __version__, charts, maintenance, system
 from .core import is_dangerous, maps_link, parse_hhmm
+from .firmware import parse_version
 
 log = logging.getLogger("meshwatch.bot")
 
@@ -54,6 +55,7 @@ COMMANDS = [
     ("riprendi", "riattiva il tracciamento"),
     ("advert", "il gateway si annuncia sulla mesh"),
     ("aggiornamento", "nuova versione di MeshWatch: controlla e installa"),
+    ("firmware", "firmware MeshCore: aggiorna il gateway, versioni dei ripetitori"),
     ("terminale", "comandi CLI ai ripetitori"),
     ("aiuto", "elenco dei comandi"),
 ]
@@ -190,6 +192,7 @@ class Bot:
         a.add_handler(CommandHandler("aggiorna", self.refresh_nodes))
         a.add_handler(CommandHandler("advert", self.advert))
         a.add_handler(CommandHandler(["aggiornamento", "versione"], self.update_cmd))
+        a.add_handler(CommandHandler("firmware", self.firmware_cmd))
         a.add_handler(CommandHandler("terminale", self.term_start))
         a.add_handler(CommandHandler("fine", self.term_end))
         a.add_handler(MessageHandler(filters.Text([BTN_POS]), lambda u, c: self.pick(u, "pos")))
@@ -1012,6 +1015,90 @@ class Bot:
             elif job["state"] == "restarting":
                 return
 
+    # ---------- firmware MeshCore
+    def firmware_text(self, st):
+        lines = ["📦 Firmware MeshCore", f"Gateway: {st['model'] or 'modello sconosciuto'}"
+                 f" · installato {st['installed'] or '?'}"]
+        if st["board"]:
+            lines.append(f"Scheda: {st['board']}" + ("" if self.core.firmware.saved_board() else " (riconosciuta in automatico)"))
+        if st["latest"]:
+            lines.append(f"Ultimo rilascio: {st['latest']['version']}"
+                         + (" ✅ già installato" if not st["available"] and st["installed"] else ""))
+        job = st["job"]
+        if self.core.firmware.busy:
+            lines.append(f"\n⏳ Aggiornamento in corso: {job['message']}")
+        elif job["state"] in ("done", "error") and time.time() - job["ts"] < 3600:
+            lines.append(("\n✅ " if job["state"] == "done" else "\n❌ ") + job["message"])
+        if st["problems"]:
+            lines.append("\nDa qui non si aggiorna: " + "; ".join(st["problems"]))
+        elif st["tool_missing"]:
+            lines.append("\nAl primo aggiornamento installo lo strumento per programmare la scheda (serve Internet).")
+        if st["repeaters"]:
+            lines.append("\nRipetitori" + (f" (ultimo {st['latest_repeater']})" if st.get("latest_repeater") else "") + ":")
+            new = parse_version(st.get("latest_repeater"))
+            for r in st["repeaters"]:
+                v = parse_version(r["version"])
+                mark = "⚪" if not v else ("🟢" if not new or v >= new else "🟠")
+                lines.append(f"{mark} {r['name']}: {r['version'] or 'versione non ancora letta'}")
+            if any(parse_version(r["version"]) and new and parse_version(r["version"]) < new for r in st["repeaters"]):
+                lines.append("I ripetitori si aggiornano sul posto: /terminale → start ota, poi il WiFi del "
+                             "ripetitore (ESP32) o l'app via Bluetooth (nRF52).")
+        return "\n".join(lines)
+
+    async def firmware_cmd(self, update: Update, ctx):
+        if not self.ok(update):
+            return
+        if not self.is_admin(update):
+            await update.effective_message.reply_text(NOT_ADMIN)
+            return
+        await update.effective_message.reply_text("Controllo le versioni del firmware…")
+        await self.firmware_reply(update.effective_chat)
+
+    async def firmware_reply(self, chat, force=True):
+        from .firmware import FirmwareError
+        try:
+            st = await self.core.firmware.status(force=force)
+        except FirmwareError as e:
+            await chat.send_message(f"❌ {e}")
+            return
+        kb = []
+        if not st["problems"] and not self.core.firmware.busy:
+            label = (f"⬆️ Aggiorna a {st['latest']['version']}" if st["available"]
+                     else f"🔁 Reinstalla {st['latest']['version']}")
+            kb.append([InlineKeyboardButton(label, callback_data="fw:go")])
+        if not self.core.firmware.busy:
+            choices = [b for b in st["suggested"] if b != st["board"]]
+            kb += [[InlineKeyboardButton(f"Scheda: {b}", callback_data="fw:b:" + b[:56])] for b in choices[:4]]
+        await chat.send_message(self.firmware_text(st), reply_markup=InlineKeyboardMarkup(kb) if kb else None)
+
+    async def firmware_button(self, chat, q, what):
+        from .firmware import FirmwareError
+        if what.startswith("b:"):
+            self.core.firmware.set_board(what[2:])
+            self.core.audit(f"telegram:{chat.id}", "scheda del gateway", what[2:])
+            await q.edit_message_reply_markup(None)
+            await self.firmware_reply(chat, force=False)
+            return
+        if what == "go":
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ Sì, aggiorna", callback_data="fw:yes"),
+                                        InlineKeyboardButton("✖ Annulla", callback_data="fw:no")]])
+            await q.edit_message_reply_markup(None)
+            await chat.send_message("Aggiorno il firmware del gateway? Per qualche minuto niente radio: posizioni, "
+                                    "ripetitori e chat si fermano. Non scollegare la radio durante la scrittura.",
+                                    reply_markup=kb)
+            return
+        if what == "no":
+            await q.edit_message_text("Aggiornamento del firmware annullato.")
+            return
+        if what == "yes":
+            try:
+                st = await self.core.firmware.start(f"telegram:{chat.id}", notify=chat.send_message)
+            except FirmwareError as e:
+                await q.edit_message_text(f"❌ Aggiornamento non avviato: {e}")
+                return
+            await q.edit_message_text(f"⬆️ Aggiornamento del gateway a {st['latest']['version']} ({st['board']}) "
+                                      "avviato. Ti scrivo qui a ogni passaggio.")
+
     # ---------- pulsanti
     async def on_button(self, update: Update, ctx):
         q = update.callback_query
@@ -1031,8 +1118,11 @@ class Bot:
             await self.do(chat, action, tid, arg)
             return
         if not admin:
-            if action in ("upd", "node", "ok", "no"):
+            if action in ("upd", "node", "ok", "no", "fw"):
                 await chat.send_message(NOT_ADMIN)
+            return
+        if action == "fw":
+            await self.firmware_button(chat, q, rest)
             return
         if action == "upd":
             await self.update_button(chat, q, rest)

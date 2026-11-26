@@ -31,6 +31,7 @@ Gira su un Raspberry Pi con una radio MeshCore in modalità *Companion USB* (Hel
 - [Tempo reale](#tempo-reale)
 - [Manutenzione e backup](#manutenzione-e-backup)
 - [Aggiornamenti](#aggiornamenti)
+- [Firmware MeshCore](#firmware-meshcore)
 - [Affidabilità: watchdog, radio, WiFi](#affidabilità-watchdog-radio-wifi)
 - [Accesso da Internet](#accesso-da-internet)
 - [Sicurezza](#sicurezza)
@@ -308,6 +309,7 @@ Il bot funziona in *polling*: non serve aprire porte né esporre il Raspberry. S
 | `/riepilogo` | riepilogo della giornata con la mappa; `/riepilogo 21:00` ogni giorno a quell'ora, `/riepilogo no` lo spegne |
 | `/intervallo 30` · `/pausa` · `/riprendi` | gestione del tracciamento (solo chat admin) |
 | `/advert` | il gateway si annuncia sulla mesh (solo chat admin) |
+| `/firmware` | versione del firmware del gateway e dei ripetitori; pulsante per aggiornare il gateway, con conferma (solo chat admin) |
 | `/aggiornamento` · `/versione` | versione installata e, se ne è uscita una nuova, pulsante **Aggiorna ora** con conferma (solo chat admin) |
 | `/terminale` · `/fine` | comandi CLI a un ripetitore (solo chat admin) · chiude il terminale |
 
@@ -525,6 +527,25 @@ Prima che un aggiornamento arrivi al Raspberry, GitHub Actions esegue tutti i [t
 
   (con `install.sh`: `sudo bash tools/configura-wifi.sh`, poi rilancia `bash install.sh`). Config e dati non vengono toccati.
 
+## Firmware MeshCore
+
+**Gateway** (la radio collegata via USB al Raspberry): si aggiorna da **Gestione → Rete → Firmware MeshCore** o da Telegram con **`/firmware`** (solo admin, con conferma).
+
+1. MeshWatch legge modello e versione della radio e cerca l'ultima release stabile di MeshCore su GitHub (tag `companion-vX.Y.Z`; le pre-release sono ignorate).
+2. Propone la build giusta per il modello (per la Heltec V3: `Heltec_v3`). Se il modello corrisponde a più build (es. `Heltec_v3` e `Heltec_WSL3`) o non viene riconosciuto, la scheda si sceglie dall'elenco: resta salvata.
+3. Scarica il firmware *Companion USB* e lo controlla (dimensione, sha256, chip, coerenza tra file di aggiornamento e file completo).
+4. Stacca la radio e la programma:
+   - **ESP32** (Heltec V2/V3/V4, LilyGo T3S3/T-Beam/T-Deck, Station G2, Xiao S3/C3, RAK 3112, …) con `esptool`. Prima legge la tabella delle partizioni dalla radio: se non è uguale a quella del firmware nuovo si ferma senza scrivere nulla (serve un'installazione completa dal PC). Altrimenti scrive **solo l'applicazione** e azzera `otadata`: bootloader e partizione dei dati (nome, chiavi, rubrica, canali) restano.
+   - **nRF52** (RAK 4631, T-Echo, Xiao nRF52, Heltec T114, T1000-E, …) con `adafruit-nrfutil` via seriale (pacchetto DFU `.zip`): le impostazioni restano.
+   - **RP2040 e STM32**: non si aggiornano da remoto (serve il tasto BOOT o un programmatore).
+5. Ricollega la radio e controlla che risponda con la versione nuova. Ogni passaggio arriva in chat e finisce nel registro attività.
+
+`esptool` e `adafruit-nrfutil` non servono al resto del programma: vengono installati nel venv al primo aggiornamento (serve Internet). Durante la scrittura (1-3 minuti) niente posizioni, ripetitori e chat, e il watchdog della radio non interviene. La radio collegata via WiFi (`connection: wifi`) non si aggiorna: serve il cavo USB. Se la scrittura si interrompe, sulle ESP32 il bootloader non si cancella: si riprova da `/firmware` o dalla pagina.
+
+**Ripetitori**: il firmware non passa dalla rete LoRa, che è troppo lenta. MeshWatch legge la versione di ogni ripetitore con `ver` (al massimo una volta al giorno, durante il giro), la mostra in Gestione e in `/firmware` e avvisa su Telegram quando ne esce una più recente. Per aggiornarlo, sul posto: da `/terminale` invia `start ota`, poi collegati al WiFi che il ripetitore accende (ESP32) oppure usa l'app di aggiornamento via Bluetooth (nRF52).
+
+Ogni 12 ore MeshWatch controlla le release: avvisa una volta per ogni versione nuova del gateway e per ogni ripetitore rimasto indietro.
+
 ## Affidabilità: watchdog, radio, WiFi
 
 - **Watchdog**: ogni 20 secondi il programma controlla che la propria pagina risponda (`/api/health`) e lo dice a systemd. Se per 5 minuti non risponde (programma acceso ma bloccato) systemd lo riavvia da solo (`WatchdogSec=300` nel servizio). Nel registro: `journalctl -u meshwatch | grep -i watchdog`.
@@ -658,6 +679,9 @@ La pagina usa un'API JSON sotto `/api/` (FastAPI). L'autenticazione è con il co
 | POST · DELETE | `/api/repeaters`, `/api/repeaters/{name}` | admin | aggiungi/modifica · rimuovi un ripetitore |
 | GET | `/api/admin` | admin | dati della scheda Gestione |
 | POST · PUT · DELETE | `/api/users`, `/api/users/{username}` | admin | utenti della pagina |
+| GET · POST | `/api/firmware` · `/api/firmware/check` | admin | versioni di gateway e ripetitori, ultima release · controlla subito |
+| PUT · POST | `/api/firmware/board` · `/api/firmware/update` | admin | scheda del gateway · aggiorna il gateway (`{"board": …, "confirm": true}`) |
+| POST | `/api/firmware/repeaters` | admin | rilegge la versione dei ripetitori |
 | GET · POST | `/api/gateway?hours=24` | admin | stato e storico delle statistiche · configurazione della radio |
 | POST | `/api/gateway/reboot` · `/api/radio/reconnect` · `/api/advert` | admin | riavvia la radio · ricollega · advert |
 | GET | `/api/contacts` | admin | rubrica del gateway |
@@ -729,6 +753,8 @@ meshwatch/            pacchetto Python
   auth.py             login e sessioni
   system.py           stato del Raspberry, riavvio/spegnimento
   updater.py          aggiornamento dalla pagina (GitHub), con ripristino
+  firmware.py         firmware MeshCore: aggiornamento del gateway (esptool / nrfutil), versioni dei ripetitori
+  firmware_boards.py  modello dichiarato dalla scheda → build MeshCore (generato da tools/genera-schede-firmware.py)
   maintenance.py      pulizia dei dati vecchi e backup
   restore.py          ripristino di un backup dalla pagina
   events.py           notifiche in tempo reale alla pagina (Server-Sent Events)
@@ -785,6 +811,7 @@ A ogni push e pull request GitHub Actions ([`.github/workflows/test.yml`](.githu
 | `test_smoke.py` | database, ruoli, scheduler, manutenzione, intervallo adattivo, radio |
 | `test_chat.py` | chat, rubrica del gateway, mappa della rete, coda della radio |
 | `test_update.py` | aggiornamento dalla pagina e ripristino della versione precedente |
+| `test_firmware.py` | firmware MeshCore: release, scelta della scheda, scrittura ESP32/nRF52 simulata, errori, ripetitori, pagina e bot |
 | `test_features.py` | sensori e soglie, percorsi, copertura, tempo reale, comandi del bot |
 | `test_tiles.py` | cache delle mappe con un server delle mappe finto: scadenza, 304, senza Internet, spazio massimo |
 | `test_restore.py` | ripristino dalla pagina: password, file non validi, avvisi, applicazione al riavvio, annullamento, kit SD |
