@@ -20,18 +20,18 @@ log = logging.getLogger("meshwatch.bot")
 
 BTN_POS, BTN_LAST, BTN_TRACK, BTN_NODES = "📍 Posizione ora", "🕓 Ultima posizione", "🧭 Traccia oggi", "📡 Nodi"
 BTN_MAP, BTN_FOLLOW, BTN_STATS = "🗺 Mappa", "👣 Segui 2 ore", "📊 Statistiche"
-BTN_REPORT, BTN_SYSTEM = "📝 Riepilogo", "🖥 Sistema"
+BTN_REPORT, BTN_SYSTEM, BTN_NET = "📝 Riepilogo", "🖥 Sistema", "📶 Rete"
 # "Traccia oggi" non è più sulla tastiera (la mappa la mostra meglio) ma il pulsante funziona
 # ancora per chi ha la tastiera vecchia; /traccia resta nel menu
 KEYBOARD = ReplyKeyboardMarkup(
     [[KeyboardButton(BTN_POS), KeyboardButton(BTN_LAST)],
      [KeyboardButton(BTN_MAP), KeyboardButton(BTN_FOLLOW)],
      [KeyboardButton(BTN_STATS), KeyboardButton(BTN_REPORT)],
-     [KeyboardButton(BTN_NODES), KeyboardButton(BTN_SYSTEM)]],
+     [KeyboardButton(BTN_NODES), KeyboardButton(BTN_NET), KeyboardButton(BTN_SYSTEM)]],
     resize_keyboard=True)
-KEYBOARD_VERSION = "2"
-KEYBOARD_NEWS = ("🆕 Nuovi pulsanti: 🗺 Mappa con la traccia, 👣 Segui (posizione in diretta per 2 ore), "
-                 "📊 Statistiche, 📝 Riepilogo della giornata, 🖥 Sistema. La traccia in link resta con /traccia.")
+KEYBOARD_VERSION = "3"
+KEYBOARD_NEWS = ("🆕 Nuovo pulsante 📶 Rete (anche /rete): nodi attivi, nuovi e spariti, disponibilità e batteria "
+                 "dei ripetitori, collegamenti peggiorati. Grafici completi nella pagina, scheda Statistiche.")
 NO_PIL = ("Per la mappa serve la libreria Pillow: aggiorna MeshWatch dalla pagina "
           "(Gestione → Sistema → Aggiornamento programma) oppure installala con  venv/bin/pip install Pillow")
 
@@ -47,6 +47,7 @@ COMMANDS = [
     ("sensori", "ultimi valori dei sensori"),
     ("percorso", "ripetitori attraversati dall'ultima risposta"),
     ("nodi", "stato di dispositivi e ripetitori"),
+    ("rete", "statistiche della rete: nodi nuovi e spariti, ripetitori, collegamenti"),
     ("aggiorna", "interroga subito i ripetitori"),
     ("sistema", "stato del Raspberry, della radio e del database"),
     ("riepilogo", "riepilogo della giornata; /riepilogo 21:00 ogni sera, /riepilogo no"),
@@ -189,6 +190,7 @@ class Bot:
         a.add_handler(CommandHandler("basta", self.unfollow))
         a.add_handler(CommandHandler("intervallo", self.interval))
         a.add_handler(CommandHandler("nodi", self.nodes))
+        a.add_handler(CommandHandler("rete", self.network_cmd))
         a.add_handler(CommandHandler("aggiorna", self.refresh_nodes))
         a.add_handler(CommandHandler("advert", self.advert))
         a.add_handler(CommandHandler(["aggiornamento", "versione"], self.update_cmd))
@@ -199,6 +201,7 @@ class Bot:
         a.add_handler(MessageHandler(filters.Text([BTN_LAST]), lambda u, c: self.pick(u, "last")))
         a.add_handler(MessageHandler(filters.Text([BTN_TRACK]), lambda u, c: self.pick(u, "track")))
         a.add_handler(MessageHandler(filters.Text([BTN_NODES]), self.nodes))
+        a.add_handler(MessageHandler(filters.Text([BTN_NET]), self.network_cmd))
         a.add_handler(MessageHandler(filters.Text([BTN_MAP]), lambda u, c: self.pick(u, "map", "1")))
         a.add_handler(MessageHandler(filters.Text([BTN_FOLLOW]), lambda u, c: self.pick(u, "follow", "2")))
         a.add_handler(MessageHandler(filters.Text([BTN_STATS]), lambda u, c: self.pick(u, "stats", "1")))
@@ -916,6 +919,14 @@ class Bot:
             else:
                 lines.append(f"{head} {r['name']}: nessun dato")
         await update.effective_message.reply_text("\n".join(lines))
+
+    async def network_cmd(self, update: Update, ctx):
+        if not self.ok(update):
+            return
+        # la rubrica vive nella radio: si legge qui, i calcoli (solo database) in un thread
+        contacts = self.core.mesh.contacts() if self.core.mesh.connected else []
+        text = await asyncio.to_thread(self.core.netstats.telegram_text, contacts)
+        await update.effective_message.reply_text(text, reply_markup=KEYBOARD)
 
     async def refresh_nodes(self, update: Update, ctx):
         if not self.ok(update):

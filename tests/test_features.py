@@ -623,8 +623,8 @@ def test_bot_images():
     texts = [b.text for row in KEYBOARD.keyboard for b in row]
     handled = [t for h in bot.app.handlers[0] if getattr(h, "filters", None) is not None
                and hasattr(h.filters, "strings") for t in h.filters.strings]
-    check(len(texts) == 8 and set(texts) <= set(handled) and botmod.BTN_TRACK in handled,
-          "tastiera con 8 pulsanti, tutti gestiti (anche Traccia oggi della tastiera vecchia)")
+    check(len(texts) == 9 and set(texts) <= set(handled) and botmod.BTN_TRACK in handled,
+          "tastiera con 9 pulsanti, tutti gestiti (anche Traccia oggi della tastiera vecchia)")
     kb_sent = []
 
     class FakeTgBot:
