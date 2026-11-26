@@ -168,6 +168,7 @@
 <section class="card">
     <h2>Gateway (radio collegata al Raspberry)</h2>
     <div id="gw-info" class="grid stats mono"><p class="muted">Caricamento…</p></div>
+    <div id="gw-chart"></div>
     <form class="edit" id="form-gw">
       <label>Nome <input name="gw_name" maxlength="31" required></label>
       <label>Potenza TX (dBm) <input type="number" name="tx_power" min="1" max="30"></label>
@@ -188,6 +189,22 @@
       </div>
     </form>
     <p class="note warn">Frequenza, bandwidth, SF e CR devono essere identici a quelli della tua rete: se li sbagli il gateway non sente più nessun nodo.</p>
+  </section>
+<section class="card">
+    <h2>Firmware MeshCore</h2>
+    <div id="fw-info" class="grid stats mono"><p class="muted">Caricamento…</p></div>
+    <p id="fw-msg" class="note" hidden></p>
+    <form class="edit" id="form-fw">
+      <label>Scheda del gateway <select name="board"></select></label>
+      <div class="formacts">
+        <button class="primary" id="fw-go">Aggiorna firmware</button>
+        <button type="button" id="fw-check">Controlla ora</button>
+      </div>
+    </form>
+    <div class="list" id="fw-reps"></div>
+    <div class="formacts"><button type="button" id="fw-reps-read">Rileggi versioni dei ripetitori</button></div>
+    <details class="help"><summary>Come funziona</summary><p>Il gateway (la radio collegata via USB) si aggiorna da qui o dal bot con /firmware: MeshWatch scarica il firmware della scheda scelta dalle release di MeshCore, lo controlla e lo scrive nella radio. Nome, chiavi, rubrica e canali restano. Funziona con le schede ESP32 (Heltec, LilyGo, Station G2, Xiao S3/C3, …) e nRF52 (RAK 4631, T-Echo, Xiao nRF52, T114, …); RP2040 e STM32 vanno aggiornate dal PC. Per qualche minuto la radio è staccata: niente posizioni, ripetitori e chat.</p>
+    <p>I ripetitori non si possono aggiornare attraverso la rete LoRa, troppo lenta. MeshWatch legge la loro versione una volta al giorno e avvisa quando è vecchia: sul posto, dal terminale, invia <code>start ota</code> e poi collegati al WiFi del ripetitore (ESP32) o usa l'app via Bluetooth (nRF52).</p></details>
   </section>
 <section class="card wide">
     <h2>Rubrica del gateway</h2>

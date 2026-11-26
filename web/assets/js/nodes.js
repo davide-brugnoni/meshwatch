@@ -1,29 +1,75 @@
 // MeshWatch — colonna dei nodi: dispositivi, ripetitori, terminale
 // ---------- vista mappa
-// grafici dei ripetitori: una metrica scelta per tutti (ricordata nel browser)
+// grafici di ripetitori e gateway: una metrica scelta (ricordata nel browser).
+// I contatori (pacchetti, airtime) crescono di continuo: si mostra la differenza tra due
+// letture, all'ora o in % del tempo. Dopo un riavvio del nodo ripartono da zero: quel tratto si salta.
+const sum = (...v) => v.some(x => x == null) ? null : v.reduce((a, b) => a + b, 0);
 const METRICS = {
   bat: { label: 'Batteria', unit: 'V', dec: 2, get: h => h.bat_mv ? h.bat_mv / 1000 : null, pad: 0.05, color: '#2fb38a' },
   noise: { label: 'Rumore', unit: 'dBm', dec: 0, get: h => h.noise, pad: 1, color: '#e8c547' },
   snr: { label: 'SNR', unit: 'dB', dec: 1, get: h => h.snr, pad: 0.5, color: '#5aa9ff' },
   rssi: { label: 'RSSI', unit: 'dBm', dec: 0, get: h => h.rssi, pad: 1, color: '#c77dff' },
+  rx: { label: 'Ricevuti', unit: '/h', dec: 0, rate: 'h', get: h => h.nb_recv, pad: 1, color: '#2f80ed' },
+  tx: { label: 'Inviati', unit: '/h', dec: 0, rate: 'h', get: h => h.nb_sent, pad: 1, color: '#ff7a45' },
+  flood: { label: 'Inviati flood', unit: '/h', dec: 0, rate: 'h', get: h => h.sent_flood, pad: 1, color: '#f2994a' },
+  dups: { label: 'Duplicati', unit: '/h', dec: 0, rate: 'h', get: h => sum(h.flood_dups, h.direct_dups), pad: 1, color: '#d6409f' },
+  air: { label: 'Airtime TX', unit: '%', dec: 2, rate: '%', get: h => h.airtime ?? h.tx_air, pad: 0.05, color: '#e5484d' },
+  rxair: { label: 'Airtime RX', unit: '%', dec: 2, rate: '%', get: h => h.rx_airtime ?? h.rx_air, pad: 0.05, color: '#00a3bf' },
+  errs: { label: 'Errori Rx', unit: '/h', dec: 1, rate: 'h', get: h => h.recv_errors, pad: 0.5, color: '#8d6e63' },
 };
-let repMetric = 'bat';
-try { if (METRICS[localStorage.getItem('repMetric')]) repMetric = localStorage.getItem('repMetric'); } catch (e) { }
-function metricTabs() {
-  return el('div', { className: 'metric-tabs' }, ...Object.entries(METRICS).map(([k, m]) => {
-    const b = el('button', { className: k === repMetric ? 'on' : '', textContent: m.label });
-    b.onclick = () => { repMetric = k; try { localStorage.setItem('repMetric', k); } catch (e) { } render(); };
+function metricPoints(history, m) {
+  if (!m.rate) return history.map(h => [h.ts, m.get(h)]).filter(p => p[1] != null);
+  const out = [];
+  for (let i = 1; i < history.length; i++) {
+    const a = history[i - 1], b = history[i], va = m.get(a), vb = m.get(b), dt = b.ts - a.ts;
+    if (va == null || vb == null || dt <= 0 || vb < va) continue;            // riavvio: il contatore riparte
+    if (a.uptime != null && b.uptime != null && b.uptime < a.uptime) continue;
+    out.push([b.ts, m.rate === '%' ? (vb - va) / dt * 100 : (vb - va) / dt * 3600]);
+  }
+  return out;
+}
+// metriche con almeno un valore nello storico (il gateway non ha i duplicati, i firmware vecchi gli errori)
+const metricsFor = history => Object.keys(METRICS).filter(k => history.some(h => METRICS[k].get(h) != null));
+const metricPick = { rep: 'bat', gw: 'bat' };
+try { Object.assign(metricPick, JSON.parse(localStorage.getItem('metricPick') || '{}')); } catch (e) { }
+try { if (METRICS[localStorage.getItem('repMetric')] && !localStorage.getItem('metricPick')) metricPick.rep = localStorage.getItem('repMetric'); } catch (e) { }
+function metricTabs(history, scope = 'rep', onChange = render) {
+  const keys = metricsFor(history);
+  if (!keys.length) return null;
+  if (!keys.includes(metricPick[scope])) metricPick[scope] = keys[0];
+  return el('div', { className: 'metric-tabs' }, ...keys.map(k => {
+    const b = el('button', { className: k === metricPick[scope] ? 'on' : '', textContent: METRICS[k].label });
+    b.onclick = () => { metricPick[scope] = k; try { localStorage.setItem('metricPick', JSON.stringify(metricPick)); } catch (e) { } onChange(); };
     return b;
   }));
 }
-function metricChart(history) {
-  const m = METRICS[repMetric];
-  const pts = history.map(h => [h.ts, m.get(h)]).filter(p => p[1] != null);
+function metricChart(history, scope = 'rep') {
+  const m = METRICS[metricPick[scope]] || METRICS.bat;
+  const pts = metricPoints(history, m);
   if (pts.length < 2) return el('p', { className: 'muted', style: 'margin:6px 0 0;font-size:12.5px', textContent: `${m.label}: pochi dati nel periodo` });
   const vals = pts.map(p => p[1]), lo = Math.min(...vals), hi = Math.max(...vals);
-  const f = v => v.toFixed(m.dec) + ' ' + m.unit;
+  const f = v => v.toFixed(m.dec) + (m.unit.startsWith('/') || m.unit === '%' ? '' : ' ') + m.unit;
+  const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
   return el('div', {}, spark(pts, m.color, m.pad, `${m.label} ${f(lo)} – ${f(hi)}`),
-    el('div', { className: 'spark-range' }, el('span', { textContent: `min ${f(lo)}` }), el('span', { textContent: `ultimo ${f(vals.at(-1))}` }), el('span', { textContent: `max ${f(hi)}` })));
+    el('div', { className: 'spark-range' }, el('span', { textContent: `min ${f(lo)}` }),
+      el('span', { textContent: m.rate ? `media ${f(avg)}` : `ultimo ${f(vals.at(-1))}` }), el('span', { textContent: `max ${f(hi)}` })));
+}
+const num = x => x == null ? '—' : (+x).toLocaleString('it-IT');
+const pair = (a, b) => `${num(a)}/${num(b)}`;
+const airMin = s => s == null ? '—' : s < 60 ? s + ' s' : Math.round(s / 60) + ' min';
+// tutti i contatori di un ripetitore (o del gateway, che ne ha una parte)
+function packetCells(st) {
+  const out = [
+    cell('Rx/Tx', pair(st.nb_recv, st.nb_sent)),
+    cell('Rx flood/dir.', pair(st.recv_flood, st.recv_direct)),
+    cell('Tx flood/dir.', pair(st.sent_flood, st.sent_direct)),
+  ];
+  if (st.flood_dups != null || st.direct_dups != null) out.push(cell('Duplicati fl./dir.', pair(st.flood_dups, st.direct_dups)));
+  out.push(cell('Airtime TX/RX', `${airMin(st.airtime ?? st.tx_air)} / ${airMin(st.rx_airtime ?? st.rx_air)}`));
+  if (st.tx_queue != null) out.push(cell('Coda TX', num(st.tx_queue)));
+  if (st.full_evts != null) out.push(cell('Coda piena', num(st.full_evts)));
+  if (st.recv_errors != null) out.push(cell('Errori Rx', num(st.recv_errors)));
+  return out;
 }
 function spark(pts, color, pad, label) {
   if (pts.length < 2) return null;
@@ -157,8 +203,9 @@ function render() {
       item.append(el('div', { className: 'grid mono' },
         cell('Batteria', st.bat_mv ? (st.bat_mv / 1000).toFixed(2) + ' V' : '—'), cell('Uptime', fmtUp(st.uptime)),
         cell('Rumore', (st.noise ?? '—') + ' dBm'), cell('SNR', st.snr != null ? (+st.snr).toFixed(1) + ' dB' : '—'),
-        cell('RSSI', (st.rssi ?? '—') + ' dBm'), cell('Rx/Tx', `${st.nb_recv ?? 0}/${st.nb_sent ?? 0}`)));
-      item.append(metricTabs(), metricChart(r.history));
+        cell('RSSI', (st.rssi ?? '—') + ' dBm'), ...packetCells(st)));
+      const tabs = metricTabs(r.history, 'rep');
+      if (tabs) item.append(tabs, metricChart(r.history, 'rep'));
     }
     box.append(item);
   });

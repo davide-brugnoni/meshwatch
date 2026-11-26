@@ -106,6 +106,8 @@ class Core:
         self.polls_inflight = {}     # tracker_id -> richiesta di posizione in corso (vedi poll_tracker)
         self.position_listeners = [] # funzioni async(tracker, posizione) per ogni nuova posizione (Telegram /segui)
         self.reporters = []          # funzioni async() che mandano il riepilogo a tutte le chat (Telegram)
+        from .firmware import FirmwareManager
+        self.firmware = FirmwareManager(self)   # aggiornamento del firmware del gateway, versioni dei ripetitori
         db.seed_from_config(cfg)
         mesh.on_message = self.on_message
         # invii rimasti a metà quando il programma si è fermato
@@ -369,6 +371,8 @@ class Core:
         await self._repeater_alerts(name, st)
         if st is not None:
             await self.poll_neighbours(name)
+            if getattr(self.mesh, "cli", None):
+                await self.firmware.poll_repeater_version(name)   # al massimo una volta al giorno
         return st
 
     async def poll_neighbours(self, name, force=False):
@@ -387,6 +391,20 @@ class Core:
         if items is not None:
             self.db.set_neighbours(name, items)
         return items
+
+    async def record_gateway(self):
+        """Statistiche del gateway nello storico, per i grafici in Gestione."""
+        info = getattr(self.mesh, "gateway_info", None)
+        if not info or not self.mesh.connected:
+            return None
+        try:
+            g = await info()
+        except Exception as e:
+            log.info("Statistiche del gateway non lette: %s", e)
+            return None
+        if g and any(g.get(k) is not None for k in ("recv", "uptime", "noise_floor")):
+            self.db.add_gateway_stats(g)
+        return g
 
     async def poll_repeaters(self):
         results = {}
@@ -631,6 +649,7 @@ class Core:
         while True:
             try:
                 await self.poll_repeaters()
+                await self.record_gateway()
             except Exception as e:
                 log.exception("Errore poll ripetitori: %s", e)
             await asyncio.sleep(int(self.cfg.get("repeater_interval_min", 60)) * 60)
@@ -671,6 +690,9 @@ class Core:
         while True:
             await asyncio.sleep(tick)
             now = time.time()
+            if getattr(self.mesh, "suspended", False):   # aggiornamento del firmware: radio staccata apposta
+                down_since = alerted = None
+                continue
             if self.mesh.connected != was:
                 was = self.mesh.connected
                 self.events.publish("state")   # la pagina mostra subito radio collegata/scollegata
@@ -696,6 +718,39 @@ class Core:
                 last_try = now
                 log.warning("Radio scollegata da %d s: riconnessione completa", now - down_since)
                 asyncio.create_task(self.mesh.reconnect())
+
+    # ---------- firmware MeshCore: avviso una volta per ogni versione nuova
+    async def firmware_check(self):
+        fw = self.firmware
+        st = await fw.status(force=True)
+        notes = []
+        if st["available"] and st["latest"]:
+            key = f"gw:{st['latest']['version']}"
+            if self.db.get("fw_notified_gw") != key:
+                self.db.set("fw_notified_gw", key)
+                how = ("Aggiornalo da Telegram con /firmware o da Gestione → Rete." if not st["problems"]
+                       else "Da qui non si aggiorna: " + "; ".join(st["problems"]) + ".")
+                notes.append(f"📦 Firmware MeshCore {st['latest']['version']} disponibile per il gateway "
+                             f"({st['installed_version']} installato). {how}")
+        for name, cur, new in await fw.outdated_repeaters():
+            key = f"rep_fw_notified:{name}"
+            if self.db.get(key) != new:
+                self.db.set(key, new)
+                notes.append(f"📦 Ripetitore {name}: firmware {cur}, disponibile {new}. Si aggiorna sul posto: "
+                             "/terminale → start ota (ESP32: WiFi del ripetitore; nRF52: app via Bluetooth).")
+        for n in notes:
+            await self.notify(n)
+        return notes
+
+    async def firmware_watch(self, every=12 * 3600, first_delay=900):
+        await asyncio.sleep(first_delay)
+        while True:
+            try:
+                if self.mesh.connected:
+                    await self.firmware_check()
+            except Exception as e:
+                log.info("Controllo del firmware non riuscito: %s", e)
+            await asyncio.sleep(every)
 
     # ---------- nuove versioni del programma
     async def update_watch(self, updater, every=12 * 3600, first_delay=600):

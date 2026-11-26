@@ -73,7 +73,8 @@ async def run(cfg):
     serve = asyncio.create_task(server.serve())
     others = [asyncio.create_task(radio()), asyncio.create_task(updater.announce(
                   core.notify, (lambda: db.get("update_rollback_notified"), lambda v: db.set("update_rollback_notified", v)))),
-              asyncio.create_task(core.maintenance_loop()), asyncio.create_task(core.radio_watchdog())]
+              asyncio.create_task(core.maintenance_loop()), asyncio.create_task(core.radio_watchdog()),
+              asyncio.create_task(core.firmware_watch())]
     if bot:   # senza Internet all'avvio la pagina parte lo stesso; il bot riprova finché la rete torna
         others.append(asyncio.create_task(bot.start_forever()))
     if (cfg.get("update") or {}).get("notify", True):

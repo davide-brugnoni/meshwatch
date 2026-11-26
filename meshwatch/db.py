@@ -4,6 +4,22 @@ import time
 
 COLORS = ["#2fb38a", "#ff7a45", "#5aa9ff", "#e8c547", "#c77dff", "#ff5c8a"]
 
+# colonne aggiunte a repeater_status -> campo della risposta di stato (meshcore)
+REPEATER_EXTRA = {
+    "tx_queue": "tx_queue_len", "airtime": "airtime", "rx_airtime": "rx_airtime",
+    "sent_flood": "sent_flood", "sent_direct": "sent_direct",
+    "recv_flood": "recv_flood", "recv_direct": "recv_direct",
+    "flood_dups": "flood_dups", "direct_dups": "direct_dups",
+    "full_evts": "full_evts", "recv_errors": "recv_errors",
+}
+# colonne di gateway_stats -> campo di MeshClient.gateway_info()
+GATEWAY_COLS = {
+    "bat_mv": "battery_mv", "uptime": "uptime", "queue_len": "queue_len", "errors": "errors",
+    "noise": "noise_floor", "rssi": "last_rssi", "snr": "last_snr",
+    "tx_air": "tx_air_secs", "rx_air": "rx_air_secs", "nb_recv": "recv", "nb_sent": "sent",
+    "sent_flood": "flood_tx", "sent_direct": "direct_tx", "recv_flood": "flood_rx",
+    "recv_direct": "direct_rx", "recv_errors": "recv_errors",
+}
 
 class DB:
     def __init__(self, path):
@@ -76,6 +92,13 @@ class DB:
                     ts INTEGER, tracker_id INTEGER, channel INTEGER, type TEXT, value REAL
                 );
                 CREATE INDEX IF NOT EXISTS i_sens ON sensor_readings(tracker_id, ts);
+                CREATE TABLE IF NOT EXISTS gateway_stats (
+                    ts INTEGER, bat_mv INTEGER, uptime INTEGER, queue_len INTEGER, errors INTEGER,
+                    noise INTEGER, rssi INTEGER, snr REAL, tx_air INTEGER, rx_air INTEGER,
+                    nb_recv INTEGER, nb_sent INTEGER, sent_flood INTEGER, sent_direct INTEGER,
+                    recv_flood INTEGER, recv_direct INTEGER, recv_errors INTEGER
+                );
+                CREATE INDEX IF NOT EXISTS i_gw_ts ON gateway_stats(ts);
                 CREATE TABLE IF NOT EXISTS sensor_rules (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     tracker_id INTEGER, type TEXT, channel INTEGER,
@@ -112,6 +135,11 @@ class DB:
             cols = [r[1] for r in self.conn.execute("PRAGMA table_info(trackers)")]
             if "moving_interval_min" not in cols:
                 self.conn.execute("ALTER TABLE trackers ADD COLUMN moving_interval_min INTEGER DEFAULT 0")
+            # statistiche complete dei ripetitori: traffico, duplicati, airtime, coda, errori
+            cols = [r[1] for r in self.conn.execute("PRAGMA table_info(repeater_status)")]
+            for col in REPEATER_EXTRA:
+                if col not in cols:
+                    self.conn.execute(f"ALTER TABLE repeater_status ADD COLUMN {col} INTEGER")
             self.conn.commit()
 
     def _exec(self, sql, args=()):
@@ -309,12 +337,13 @@ class DB:
 
     def add_repeater_status(self, name, ok, s=None):
         s = s or {}
-        self._exec(
-            "INSERT INTO repeater_status VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (int(time.time()), name, 1 if ok else 0, s.get("bat"), s.get("uptime"),
-             s.get("noise_floor"), s.get("last_rssi"), s.get("last_snr"),
-             s.get("nb_recv"), s.get("nb_sent")),
-        )
+        row = {"ts": int(time.time()), "name": name, "ok": 1 if ok else 0, "bat_mv": s.get("bat"),
+               "uptime": s.get("uptime"), "noise": s.get("noise_floor"), "rssi": s.get("last_rssi"),
+               "snr": s.get("last_snr"), "nb_recv": s.get("nb_recv"), "nb_sent": s.get("nb_sent")}
+        for col, key in REPEATER_EXTRA.items():
+            row[col] = s.get(key)
+        self._exec(f"INSERT INTO repeater_status ({','.join(row)}) VALUES ({','.join('?' * len(row))})",
+                   tuple(row.values()))
 
     def repeater_latest(self, name):
         last = self._one("SELECT * FROM repeater_status WHERE name=? ORDER BY ts DESC LIMIT 1", (name,))
@@ -322,9 +351,22 @@ class DB:
         return last, good
 
     def repeater_history(self, name, since):
+        """Storico per i grafici. I contatori (pacchetti, airtime) crescono di continuo:
+        la pagina mostra la differenza tra due letture (pacchetti all'ora, % di airtime)."""
+        cols = ", ".join(("ts", "bat_mv", "noise", "snr", "rssi", "uptime", "nb_recv", "nb_sent") + tuple(REPEATER_EXTRA))
         return self._all(
-            "SELECT ts, bat_mv, noise, snr, rssi FROM repeater_status WHERE name=? AND ok=1 AND ts>=? ORDER BY ts",
-            (name, since))
+            f"SELECT {cols} FROM repeater_status WHERE name=? AND ok=1 AND ts>=? ORDER BY ts", (name, since))
+
+    # ---------- gateway: statistiche salvate a ogni giro dei ripetitori
+    def add_gateway_stats(self, g):
+        row = {"ts": int(time.time())}
+        for col, key in GATEWAY_COLS.items():
+            row[col] = g.get(key)
+        self._exec(f"INSERT INTO gateway_stats ({','.join(row)}) VALUES ({','.join('?' * len(row))})",
+                   tuple(row.values()))
+
+    def gateway_history(self, since):
+        return self._all("SELECT * FROM gateway_stats WHERE ts>=? ORDER BY ts", (since,))
 
     # ---------- utenti
     def users(self):

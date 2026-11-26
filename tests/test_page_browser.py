@@ -51,8 +51,21 @@ def sample_data():
     mesh.raw[ALICE].update(out_path_len=2, out_path="b2c3", out_path_hash_mode=0)
     db.set_repeater("Rip-Monte", "pw")
     for i in range(10):
-        db._exec("INSERT INTO repeater_status VALUES (?,?,?,?,?,?,?,?,?,?)",
-                 (now - i * 3600, "Rip-Monte", 1, 4000 - i, 9000, -110, -90, 6.5, 10, 10))
+        k = 10 - i   # contatori che crescono: i grafici mostrano pacchetti all'ora e airtime
+        db._exec("INSERT INTO repeater_status (ts, name, ok, bat_mv, uptime, noise, rssi, snr, nb_recv, nb_sent, "
+                 "sent_flood, sent_direct, recv_flood, recv_direct, flood_dups, direct_dups, airtime, rx_airtime, "
+                 "tx_queue, full_evts, recv_errors) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                 (now - i * 3600, "Rip-Monte", 1, 4000 - i, 9000 + k * 3600, -110, -90, 6.5, 300 * k + i * i, 120 * k,
+                  100 * k, 20 * k, 260 * k, 40 * k, 80 * k + i, 2 * k, 36 * k, 300 * k, 0, 0, k))
+    async def gw_info():
+        return {"name": "Casa", "model": "Heltec V3", "battery_mv": 4200, "uptime": 50000, "noise_floor": -115,
+                "recv": 5000, "sent": 900, "flood_tx": 800, "direct_tx": 100, "flood_rx": 4500, "direct_rx": 500,
+                "tx_air_secs": 400, "rx_air_secs": 3000, "contacts": 3}
+    mesh.gateway_info = gw_info
+    for i in range(6):
+        k = 6 - i
+        db._exec("INSERT INTO gateway_stats (ts, bat_mv, uptime, noise, nb_recv, nb_sent, sent_flood, tx_air, rx_air) "
+                 "VALUES (?,?,?,?,?,?,?,?,?)", (now - i * 3600, 4200, 50000 + k * 3600, -115, 400 * k, 90 * k, 80 * k, 30 * k, 250 * k))
     asyncio.run(core.on_message({"kind": "dm", "peer": ALICE[:12], "peer_name": "Alice", "text": "Ciao casa",
                                  "snr": 7.5, "path_len": 2, "sender_ts": 1}))
     return core, db
@@ -132,6 +145,13 @@ def main():
         a.wait_for_function("document.querySelectorAll('.leaflet-overlay-pane path').length > 3")
         check(a.locator(".cov-legend").count() == 1 and a.locator(".node-ic").count() >= 3, "livelli copertura, rete e percorsi")
         a.click("#trackers .sensors .metric-tabs button")
+        reps = a.inner_text("#reps").lower()   # le etichette sono in maiuscolo da CSS
+        check("tx flood/dir." in reps and "duplicati fl./dir." in reps and "errori rx" in reps,
+              "ripetitore: traffico flood/diretto, duplicati ed errori")
+        a.click("#reps .metric-tabs button:has-text('Ricevuti')")
+        check("media 29" in a.inner_text("#reps .spark-range"), "ripetitore: grafico dei pacchetti ricevuti all'ora")
+        a.click("#reps .metric-tabs button:has-text('Airtime TX')")
+        check("media 1.00%" in a.inner_text("#reps .spark-range"), "ripetitore: grafico dell'airtime in %")
         a.click("#tab-chat")
         a.click(".conv")
         a.wait_for_selector(".msg.in")
@@ -147,6 +167,11 @@ def main():
         a.click("#adm-nav [data-sec=rete]")
         a.wait_for_selector("#ctc-list .item")
         check("via Rip-Monte → Rip-Valle" in a.inner_text("#ctc-list"), "gestione: rubrica con percorso")
+        a.wait_for_selector("#gw-chart .metric-tabs")
+        check("tx flood/dir." in a.inner_text("#gw-info").lower() and "Duplicati" not in a.inner_text("#gw-chart"),
+              "gestione: statistiche complete del gateway")
+        a.click("#gw-chart .metric-tabs button:has-text('Inviati flood')")
+        check("media 80/h" in a.inner_text("#gw-chart .spark-range"), "gestione: grafico del gateway")
         a.click("#adm-nav [data-sec=sistema]")
         a.wait_for_selector("#tc-info :text('Tessere salvate')")
         check(a.is_checked("#form-tc [name=enabled]"), "gestione: cache delle mappe attiva")

@@ -64,6 +64,11 @@ class RepeaterIn(BaseModel):
     password: str = Field("", max_length=64)
 
 
+class FirmwareIn(BaseModel):
+    board: str | None = Field(None, max_length=80, pattern=r"^[A-Za-z0-9_.-]+$")
+    confirm: bool = False
+
+
 class GatewayIn(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=31)
     lat: float | None = Field(None, ge=-90, le=90)
@@ -510,13 +515,17 @@ def create_app(core, auth, web_cfg, updater=None, tiles=None):
 
     # ---------- gateway
     @app.get("/api/gateway")
-    async def gateway(u=Depends(admin)):
+    async def gateway(hours: int = 24, u=Depends(admin)):
         if not core.mesh.connected:
             raise HTTPException(503, "radio gateway non collegata")
-        return await core.mesh.gateway_info()
+        g = await core.mesh.gateway_info()
+        since = int(time.time()) - max(1, min(hours, 24 * 30)) * 3600
+        return {**g, "history": await asyncio.to_thread(db.gateway_history, since)}
 
     @app.post("/api/gateway")
     async def gateway_set(body: GatewayIn, u=Depends(admin)):
+        if core.firmware.busy:
+            raise HTTPException(409, "aggiornamento del firmware in corso")
         if not core.mesh.connected:
             raise HTTPException(503, "radio gateway non collegata")
         cur = await core.mesh.gateway_info()
@@ -629,14 +638,55 @@ def create_app(core, auth, web_cfg, updater=None, tiles=None):
 
     @app.post("/api/radio/reconnect")
     async def radio_reconnect(u=Depends(admin)):
+        if core.firmware.busy:
+            raise HTTPException(409, "aggiornamento del firmware in corso")
         if core.mesh.connecting:
             raise HTTPException(409, "riconnessione già in corso")
         audit(u, "riconnessione radio")
         asyncio.create_task(core.mesh.reconnect())
         return {"ok": True}
 
+    # ---------- firmware MeshCore (gateway via USB, versioni dei ripetitori)
+    from .firmware import FirmwareError
+
+    @app.get("/api/firmware")
+    async def firmware_status(u=Depends(admin)):
+        return await core.firmware.status()
+
+    @app.post("/api/firmware/check")
+    async def firmware_check(u=Depends(admin)):
+        return await core.firmware.status(force=True)
+
+    @app.put("/api/firmware/board")
+    async def firmware_board(body: FirmwareIn, u=Depends(admin)):
+        if core.firmware.busy:
+            raise HTTPException(409, "aggiornamento del firmware in corso")
+        core.firmware.set_board(body.board)
+        audit(u, "scheda del gateway", body.board or "automatica")
+        return await core.firmware.status()
+
+    @app.post("/api/firmware/update")
+    async def firmware_update(body: FirmwareIn, u=Depends(admin)):
+        if not body.confirm:
+            raise HTTPException(400, "conferma richiesta")
+        try:
+            st = await core.firmware.start(u["username"], body.board)
+        except FirmwareError as e:
+            raise HTTPException(400, str(e))
+        return {"ok": True, "job": core.firmware.job, "board": st["board"], "version": st["latest"]["version"]}
+
+    @app.post("/api/firmware/repeaters")
+    async def firmware_repeaters(u=Depends(admin)):
+        if not core.mesh.connected:
+            raise HTTPException(503, "radio gateway non collegata")
+        for r in db.repeaters():
+            await core.firmware.poll_repeater_version(r["name"], force=True)
+        return await core.firmware.status()
+
     @app.post("/api/gateway/reboot")
     async def gateway_reboot(u=Depends(admin)):
+        if core.firmware.busy:
+            raise HTTPException(409, "aggiornamento del firmware in corso")
         audit(u, "riavvio gateway")
         await core.mesh.gateway_reboot()
         return {"ok": True}

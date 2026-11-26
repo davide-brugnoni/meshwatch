@@ -172,7 +172,7 @@ let gw = null;
 async function loadGateway() {
   const box = $('gw-info'), f = $('form-gw');
   try { gw = await api('/api/gateway'); }
-  catch (e) { if (e.message !== 'login') box.replaceChildren(el('p', { className: 'muted', textContent: 'Gateway non disponibile: ' + e.message })); f.hidden = true; return; }
+  catch (e) { if (e.message !== 'login') box.replaceChildren(el('p', { className: 'muted', textContent: 'Gateway non disponibile: ' + e.message })); f.hidden = true; $('gw-chart').replaceChildren(); return; }
   f.hidden = false;
   const v = (x, suf = '') => x == null || x === '' ? '—' : x + suf;
   box.replaceChildren(
@@ -181,12 +181,77 @@ async function loadGateway() {
     cell('Alimentazione', gw.battery_mv ? (gw.battery_mv / 1000).toFixed(2) + ' V' : '—'),
     cell('Uptime', fmtUp(gw.uptime)), cell('Coda TX', v(gw.queue_len)),
     cell('Rumore', v(gw.noise_floor, ' dBm')), cell('Ultimo RSSI', v(gw.last_rssi, ' dBm')), cell('Ultimo SNR', v(gw.last_snr)),
-    cell('Pacchetti Rx/Tx', `${v(gw.recv)}/${v(gw.sent)}`), cell('Tempo TX', gw.tx_air_secs != null ? Math.round(gw.tx_air_secs / 60) + ' min' : '—'),
+    ...packetCells({ nb_recv: gw.recv, nb_sent: gw.sent, recv_flood: gw.flood_rx, recv_direct: gw.direct_rx,
+      sent_flood: gw.flood_tx, sent_direct: gw.direct_tx, tx_air: gw.tx_air_secs, rx_air: gw.rx_air_secs,
+      recv_errors: gw.recv_errors }),
+    ...(gw.errors ? [cell('Errori', v(gw.errors))] : []),
     cell('Contatti', v(gw.contacts)));
+  drawGatewayChart();
   f.gw_name.value = gw.name || ''; f.tx_power.value = gw.tx_power ?? ''; f.tx_power.max = gw.max_tx_power || 30;
   f.lat.value = gw.lat ?? ''; f.lon.value = gw.lon ?? ''; f.share_location.checked = !!gw.share_location;
   f.radio_freq.value = gw.radio_freq ?? ''; f.radio_bw.value = String(gw.radio_bw ?? '');
   f.radio_sf.value = String(gw.radio_sf ?? ''); f.radio_cr.value = String(gw.radio_cr ?? '');
+}
+// ---------- firmware MeshCore
+let fw = null;
+async function loadFirmware(path = '/api/firmware', opts) {
+  const box = $('fw-info');
+  try { fw = await api(path, opts); }
+  catch (e) {
+    if (opts) throw e;   // azioni dai pulsanti: l'errore lo mostra action()
+    if (e.message !== 'login') box.replaceChildren(el('p', { className: 'muted', textContent: 'Firmware: ' + e.message }));
+    return;
+  }
+  const busy = ['check', 'download', 'flash', 'reconnect'].includes(fw.job.state);
+  box.replaceChildren(
+    cell('Modello', fw.model || '—'), cell('Installato', fw.installed || '—'),
+    cell('Ultimo rilascio', fw.latest ? fw.latest.version : '—'),
+    cell('Stato', busy ? '⏳ in corso' : fw.available ? '⬆️ da aggiornare' : fw.installed && fw.latest ? '✅ aggiornato' : '—'));
+  const msg = $('fw-msg');
+  const recent = ['done', 'error'].includes(fw.job.state) && Date.now() / 1000 - fw.job.ts < 3600;
+  const text = busy ? '⏳ ' + fw.job.message : recent ? (fw.job.state === 'done' ? '✅ ' : '❌ ') + fw.job.message
+    : fw.problems.length ? 'Non si può aggiornare: ' + fw.problems.join('; ')
+    : fw.tool_missing ? 'Al primo aggiornamento viene installato lo strumento per programmare la scheda (serve Internet).' : '';
+  msg.hidden = !text; msg.textContent = text; msg.className = 'note' + ((fw.job.state === 'error' && recent) || (!busy && fw.problems.length) ? ' warn' : '');
+  const sel = $('form-fw').board, opts2 = [...new Set([...(fw.suggested || []), ...(fw.boards || [])])];
+  if (fw.board && !opts2.includes(fw.board)) opts2.unshift(fw.board);
+  sel.replaceChildren(el('option', { value: '', textContent: opts2.length ? '— scegli —' : 'nessuna scheda' }),
+    ...opts2.map(b => el('option', { value: b, textContent: b + ((fw.suggested || []).includes(b) ? ' ★' : '') })));
+  sel.value = fw.board || '';
+  sel.disabled = busy;
+  $('fw-go').disabled = busy || !fw.latest || fw.problems.length > 0;
+  $('fw-go').textContent = fw.available || !fw.installed ? 'Aggiorna firmware' : 'Reinstalla firmware';
+  const latestRep = fw.latest_repeater;
+  const ver = v => (v || '').match(/v?(\d+)\.(\d+)(?:\.(\d+))?/);
+  const older = (a, b) => { const x = ver(a), y = ver(b); if (!x || !y) return false; for (let i = 1; i < 4; i++) { const d = (+x[i] || 0) - (+y[i] || 0); if (d) return d < 0; } return false; };
+  $('fw-reps').replaceChildren(...fw.repeaters.map(r => el('div', { className: 'item' },
+    el('span', { className: 'name' }, dot(!r.version ? '' : older(r.version, latestRep) ? 'ko' : 'ok'), r.name),
+    el('span', { className: 'info', textContent: (r.version || 'versione non ancora letta') +
+      (older(r.version, latestRep) ? ` · disponibile ${latestRep}: sul posto /terminale → start ota` : '') +
+      (r.ts ? ` · letta ${fmtAgo(r.ts)}` : '') }))));
+  $('fw-reps-read').hidden = !fw.repeaters.length;
+}
+$('form-fw').board.onchange = e => action(null, () => loadFirmware('/api/firmware/board', { method: 'PUT', body: JSON.stringify({ board: e.target.value || null }) }), 'Scheda salvata');
+$('fw-check').onclick = e => action(e.target, () => loadFirmware('/api/firmware/check', { method: 'POST' }));
+$('fw-reps-read').onclick = e => action(e.target, () => loadFirmware('/api/firmware/repeaters', { method: 'POST' }), 'Versioni lette');
+$('form-fw').onsubmit = async e => {
+  e.preventDefault();
+  if (!fw || !fw.latest) return;
+  const board = e.target.board.value;
+  if (!board) { toast('Scegli la scheda del gateway', true); return; }
+  if (!confirm(`Scrivere il firmware ${fw.latest.version} per ${board} nella radio del gateway?\n` +
+    'Per qualche minuto niente radio (posizioni, ripetitori, chat). Non scollegare il cavo USB.\n' +
+    'Se la scheda scelta non è quella giusta la radio può non avviarsi.')) return;
+  await action($('fw-go'), () => post('/api/firmware/update', { board, confirm: true }), 'Aggiornamento del firmware avviato');
+  loadFirmware();
+};
+
+// storico del gateway (salvato a ogni giro dei ripetitori): stessi grafici dei ripetitori
+function drawGatewayChart() {
+  const box = $('gw-chart'), h = (gw && gw.history) || [];
+  const tabs = metricTabs(h, 'gw', drawGatewayChart);
+  box.replaceChildren(...(tabs ? [tabs, metricChart(h, 'gw')]
+    : [el('p', { className: 'muted', style: 'margin:6px 0 0;font-size:12.5px', textContent: 'Grafici: lo storico si riempie a ogni giro dei ripetitori' })]));
 }
 $('form-gw').onsubmit = async e => {
   e.preventDefault();
