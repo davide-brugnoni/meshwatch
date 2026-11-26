@@ -183,10 +183,44 @@ def test_api():
     check(any(a["action"] == "avvisi nodi" for a in db.audit()), "modifica nel registro attività")
 
 
+def test_telegram():
+    from meshwatch.bot import BTN_NET, COMMANDS, KEYBOARD, Bot
+    from tests.test_features import Ctx, FakeChat, FakeLiveBot, FakeUpdate
+    db, mesh, core, ns = setup({"repeater_low_battery_v": 3.5})
+    check("Ancora nessun nodo" in ns.telegram_text(), "/rete senza dati: spiega che lo storico si riempie")
+    now = int(time.time())
+    db.set("nodes_since", now - 30 * 86400)
+    ns.record_advert(ALICE, name="Alice", type="companion", adv_ts=1, now=now - 5 * 86400, seeded=True)
+    ns.record_advert(NEW, name="Nuovo-Nodo", type="companion", adv_ts=1, hops=2, now=now - 3600)
+    ns.record_advert(NEW, name="Nuovo-Nodo", type="companion", adv_ts=2, hops=2, now=now - 60)
+    db.set_repeater("Rip-Monte", "pw")
+    for i in range(48):
+        db._exec("INSERT INTO repeater_status (ts, name, ok, bat_mv) VALUES (?,?,?,?)",
+                 (now - (47 - i) * 3600, "Rip-Monte", 1, int(3700 - 20 * (i / 24))))
+    for d in range(14):
+        db._exec("INSERT INTO link_history VALUES (?,?,?,?)", (now - d * 86400 - 60, "Rip-Monte", REP2[:8], 5.0 if d < 7 else 8.0))
+    t = ns.telegram_text(mesh.contacts(), now=now)
+    check("Nodi attivi 1 (2 in 7 giorni) · conosciuti 2" in t, "/rete: nodi attivi e conosciuti")
+    check("🆕 Nuovi (7 giorni): Nuovo-Nodo" in t and "🔕 Spariti (zitti da più di 72 ore): Alice (5 giorni)" in t,
+          "/rete: nuovi e spariti")
+    check("🏆 Più attivi (7 giorni): Nuovo-Nodo 2, Alice 1" in t, "/rete: più attivi")
+    check("🟢 Rip-Monte · 100.0% · 3.66 V, scende 20 mV/giorno → soglia tra ~8 giorni" in t, "/rete: ripetitore con previsione della batteria")
+    check("Rip-Monte → Rip-Valle -3.0 dB (ora 5.0 dB)" in t, "/rete: collegamento peggiorato")
+    check(("rete" in dict(COMMANDS)) and any(BTN_NET in [b.text for b in row] for row in KEYBOARD.keyboard), "/rete nel menu e pulsante 📶 Rete")
+    bot = Bot({"token": "123456:TEST", "allowed_chat_ids": [1]}, core)
+    bot.app = SimpleNamespace(bot=FakeLiveBot())
+    chat, stranger = FakeChat(1), FakeChat(99)
+    asyncio.run(bot.network_cmd(FakeUpdate(chat), Ctx()))
+    check(chat.sent and chat.sent[-1].startswith("📶 Rete") and "Nuovo-Nodo" in chat.sent[-1], "bot: /rete risponde")
+    asyncio.run(bot.network_cmd(FakeUpdate(stranger), Ctx()))
+    check(not any("📶 Rete" in m for m in stranger.sent), "bot: chat non autorizzata respinta")
+
+
 if __name__ == "__main__":
     test_collect()
     test_rx_event()
     test_gone()
     test_calcs()
     test_api()
+    test_telegram()
     print("Tutti i test superati.")

@@ -508,6 +508,71 @@ class NetStats:
         out.sort(key=lambda x: (x["delta"] is None, x["delta"] if x["delta"] is not None else 0, -x["last_ts"]))
         return out
 
+    # ---------- testo per Telegram (/rete e pulsante 📶 Rete)
+    def telegram_text(self, contacts=(), now=None):
+        now = int(now or time.time())
+        s = self.summary(now)
+        nodes = self.nodes(now)
+        lines = ["📶 Rete – ultime 24 ore"]
+        if not s["nodes"]:
+            lines.append("Ancora nessun nodo nello storico: si riempie man mano che il gateway sente gli advert.")
+        else:
+            lines.append(f"Nodi attivi {s['active_24h']} ({s['active_7d']} in 7 giorni) · conosciuti {s['nodes']}")
+            lines.append(f"Advert {s['adverts_24h']}" + (f" · pacchetti {s['packets_24h']}" if s["packets_24h"] is not None else ""))
+            label = lambda n: n["name"] or n["key"][:8]   # noqa: E731
+
+            def names(items, fmt=label, most=8):
+                out = ", ".join(fmt(n) for n in items[:most])
+                return out + (f" (+{len(items) - most})" if len(items) > most else "")
+            new = sorted((n for n in nodes if n["new"]), key=lambda n: -n["first_seen"])
+            if new:
+                lines.append(f"\n🆕 Nuovi (7 giorni): {names(new)}")
+            gone = sorted((n for n in nodes if now - 30 * DAY <= n["last_seen"] < now - s["gone_h"] * 3600),
+                          key=lambda n: -n["last_seen"])
+            if gone:
+                def away(n):
+                    h = (now - n["last_seen"]) / 3600
+                    return f"{label(n)} ({h / 24:.0f} giorni)" if h >= 48 else f"{label(n)} ({h:.0f} ore)"
+                lines.append(f"🔕 Spariti (zitti da più di {s['gone_h']} ore): {names(gone, away)}")
+            active = sorted((n for n in nodes if n["adverts_7d"]), key=lambda n: -n["adverts_7d"])
+            if active:
+                lines.append("🏆 Più attivi (7 giorni): " + ", ".join(f"{label(n)} {n['adverts_7d']}" for n in active[:3]))
+        avail = {a["name"]: a for a in self.availability(now)}
+        batt = {b["name"]: b for b in self.battery(now)}
+        if avail:
+            lines.append("\n📡 Ripetitori (disponibilità 7 giorni)")
+        for name, a in avail.items():
+            b = batt.get(name) or {}
+            head = "🟢" if a["online"] else "🔴" if a["polls_30d"] else "⚪"
+            parts = [f"{a['pct_7d']:.1f}%" if a["pct_7d"] is not None else "nessun dato"]
+            if b.get("volts"):
+                v = f"{b['volts']:.2f} V"
+                if b.get("trend") == "giù":
+                    v += f", scende {-b['slope_mv_day']:.0f} mV/giorno"
+                    if b.get("days_left") == 0:
+                        v += " → sotto la soglia"
+                    elif b.get("days_left") is not None:
+                        v += (" → soglia tra oltre un anno" if b["days_left"] > 365
+                              else f" → soglia tra ~{b['days_left']:.0f} giorni" if b["days_left"] >= 2
+                              else f" → soglia tra ~{b['days_left'] * 24:.0f} ore")
+                elif b.get("trend") == "su":
+                    v += ", in carica"
+                elif b.get("trend") == "stabile":
+                    v += " stabile"
+                if b.get("solar"):
+                    v += " ☀️"
+                parts.append(v)
+            if not a["online"] and a["offline_since"]:
+                h = (now - a["offline_since"]) / 3600
+                parts.append(f"non risponde da {h / 24:.0f} giorni" if h >= 48 else f"non risponde da {max(1, round(h))} ore")
+            lines.append(f"{head} {name} · " + " · ".join(parts))
+        worse = [x for x in self.links(now, contacts) if x["delta"] is not None and x["delta"] <= -1][:5]
+        if worse:
+            lines.append("\n⚠️ Collegamenti peggiorati (rispetto alla settimana prima)")
+            lines += [f"{x['from']} → {x['to']} {x['delta']:+.1f} dB (ora {x['last']:.1f} dB)" for x in worse]
+        lines.append("\nGrafici e dettagli: pagina → Statistiche")
+        return "\n".join(lines)
+
     def all(self, days=30, contacts=()):
         """Tutto per la pagina. Gira in un thread: la rubrica (che vive nella radio) va letta prima."""
         now = int(time.time())

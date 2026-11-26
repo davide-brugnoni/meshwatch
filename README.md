@@ -308,6 +308,7 @@ Il bot funziona in *polling*: non serve aprire porte né esporre il Raspberry. S
 | `/sensori` · `/percorso` | ultimi valori dei sensori · ripetitori attraversati dall'ultima risposta |
 | `/mappa` · `/mappa 7` | **immagine della mappa** con la traccia delle ultime 24 ore · degli ultimi 7 giorni, l'ultima posizione, gateway e ripetitori della zona |
 | `/nodi` · `/aggiorna` | stato di dispositivi e ripetitori · interroga subito i ripetitori (solo chat admin) |
+| `/rete` | statistiche della rete: nodi attivi, nuovi e spariti, più attivi, disponibilità e batteria dei ripetitori (con previsione), collegamenti peggiorati |
 | `/sistema` | Raspberry (temperatura, memoria, disco, tensione bassa), radio, database, ultimo backup |
 | `/riepilogo` | riepilogo della giornata con la mappa; `/riepilogo 21:00` ogni giorno a quell'ora, `/riepilogo no` lo spegne |
 | `/intervallo 30` · `/pausa` · `/riprendi` | gestione del tracciamento (solo chat admin) |
@@ -316,7 +317,7 @@ Il bot funziona in *polling*: non serve aprire porte né esporre il Raspberry. S
 | `/aggiornamento` · `/versione` | versione installata e, se ne è uscita una nuova, pulsante **Aggiorna ora** con conferma (solo chat admin) |
 | `/terminale` · `/fine` | comandi CLI a un ripetitore (solo chat admin) · chiude il terminale |
 
-La tastiera del bot ha i pulsanti 📍 Posizione ora, 🕓 Ultima posizione, 🗺 Mappa, 👣 Segui 2 ore, 📊 Statistiche, 📝 Riepilogo, 📡 Nodi e 🖥 Sistema. Dopo un aggiornamento che la cambia il bot la rimanda da solo una volta; altrimenti basta /start.
+La tastiera del bot ha i pulsanti 📍 Posizione ora, 🕓 Ultima posizione, 🗺 Mappa, 👣 Segui 2 ore, 📊 Statistiche, 📝 Riepilogo, 📡 Nodi, 📶 Rete e 🖥 Sistema. Dopo un aggiornamento che la cambia il bot la rimanda da solo una volta; altrimenti basta /start.
 
 Con più dispositivi si scrive il nome dopo il comando, anche solo l'inizio e senza badare alle maiuscole: `/dove escursionista`, `/stats 7 esc`, `/intervallo 15 ciclista`, `/segui 3 esc`. Senza nome il bot chiede quale con dei pulsanti. Scrivendo `/` Telegram mostra l'elenco dei comandi.
 
@@ -397,7 +398,7 @@ La scheda **Statistiche** (admin e viewer) raccoglie in una pagina quello che il
 
 Da dove vengono i dati: la radio del gateway passa a MeshWatch ogni pacchetto che sente, anche quelli non destinati a lei, con SNR e RSSI (firmware companion 1.7 o più recente). Se il firmware non lo fa, lo storico dei nodi si ricava comunque dalla rubrica (senza SNR e senza pacchetti all'ora). Al primo avvio i contatti già in rubrica entrano nello storico senza contare come nuovi. I contatori dei pacchetti restano in memoria e vengono scritti ogni 2 minuti, per non consumare la SD.
 
-Gli **avvisi su Telegram** sono spenti all'inizio: in **Gestione → Telegram → Avvisi nodi** si accende quello per i nodi nuovi e si sceglie se avvisare quando un nodo (solo i ripetitori o tutti) non si sente da più di N ore, e di nuovo quando torna. Nel riepilogo giornaliero c'è una riga con nodi attivi, advert, pacchetti, nuovi e spariti.
+Gli **avvisi su Telegram** sono spenti all'inizio: in **Gestione → Telegram → Avvisi nodi** si accende quello per i nodi nuovi e si sceglie se avvisare quando un nodo (solo i ripetitori o tutti) non si sente da più di N ore, e di nuovo quando torna. Nel riepilogo giornaliero c'è una riga con nodi attivi, advert, pacchetti, nuovi e spariti; il comando **/rete** (o il pulsante 📶 Rete) manda un riassunto completo quando serve.
 
 ## Percorso dei pacchetti
 
