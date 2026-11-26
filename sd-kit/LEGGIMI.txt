@@ -64,6 +64,8 @@ COME SI FA DOPO, SENZA TERMINALE
   ripetitori, utenti, avvisi e config, pochi kB) e "Backup dati" (tutto lo storico).
   Su una SD nuova: al primo avvio Gestione -> Sistema -> Ripristina un backup e
   scegli il backup della configurazione: torna tutto come prima.
+  Dal bot: /backup (solo chat admin) manda subito configurazione o dati e
+  sceglie quale backup arriva ogni settimana.
 - Qualcosa non va al primo avvio: sulla SD trovi meshwatch-install.log.
 - Accesso da PC (facoltativo): PuTTY o WinSCP, host meshwatch.local, utente meshwatch,
   con la password scelta al punto 3. Per i comandi da amministratore: sudo.

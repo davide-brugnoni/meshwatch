@@ -57,6 +57,7 @@ COMMANDS = [
     ("advert", "il gateway si annuncia sulla mesh"),
     ("aggiornamento", "nuova versione di MeshWatch: controlla e installa"),
     ("firmware", "firmware MeshCore: aggiorna il gateway, versioni dei ripetitori"),
+    ("backup", "backup della configurazione o dei dati, backup settimanale"),
     ("terminale", "comandi CLI ai ripetitori"),
     ("aiuto", "elenco dei comandi"),
 ]
@@ -64,6 +65,8 @@ FOLLOW_MAX_H = 8
 # azioni che cambiano qualcosa: come sulla pagina, solo admin (le altre sono da viewer)
 ADMIN_ACTIONS = {"pause", "resume", "interval"}
 NOT_ADMIN = "Solo le chat admin possono farlo."
+TG_MAX_FILE = 50 * 2**20   # limite di Telegram per i file mandati da un bot
+BACKUP_BUTTONS = (("configurazione", "⚙️ Configurazione"), ("dati", "🗄️ Dati"), ("completo", "📦 Completo"))
 REPORT_WINDOW_MIN = 30   # riepilogo automatico: se a quell'ora il servizio era fermo, lo manda entro 30 min
 
 
@@ -195,6 +198,7 @@ class Bot:
         a.add_handler(CommandHandler("advert", self.advert))
         a.add_handler(CommandHandler(["aggiornamento", "versione"], self.update_cmd))
         a.add_handler(CommandHandler("firmware", self.firmware_cmd))
+        a.add_handler(CommandHandler("backup", self.backup_cmd))
         a.add_handler(CommandHandler("terminale", self.term_start))
         a.add_handler(CommandHandler("fine", self.term_end))
         a.add_handler(MessageHandler(filters.Text([BTN_POS]), lambda u, c: self.pick(u, "pos")))
@@ -323,6 +327,12 @@ class Bot:
     async def send_file(self, data, filename, caption=""):
         """Backup: solo alle chat admin (contiene password)."""
         from telegram import InputFile
+        if len(data) > TG_MAX_FILE:   # Telegram lo rifiuterebbe: meglio dirlo subito
+            text = (f"⚠️ Backup automatico non inviato: pesa {len(data) / 2**20:.0f} MB e Telegram accetta file fino "
+                    "a 50 MB. Scarica i dati dalla pagina (Gestione → Sistema → Backup) oppure scegli con /backup "
+                    "di ricevere ogni settimana solo la configurazione.")
+            await asyncio.gather(*(self.app.bot.send_message(chat, text) for chat in self.admins), return_exceptions=True)
+            return
         await asyncio.gather(*(
             self._deliver(chat, "Backup", lambda chat=chat: self.app.bot.send_document(
                 chat, InputFile(data, filename=filename), caption=caption, read_timeout=60, write_timeout=60),
@@ -1078,6 +1088,88 @@ class Bot:
         await update.effective_message.reply_text("Controllo le versioni del firmware…")
         await self.firmware_reply(update.effective_chat)
 
+    # ---------- backup
+    def backup_text(self):
+        st = maintenance.settings(self.core.db)
+        d = maintenance.db_info(self.core.db)
+        size = f"{d['db_size'] / 2**20:.1f} MB" if d["db_size"] else "?"
+        week = (f"ogni settimana, {maintenance.KIND_LABEL[st['backup_kind']]}" if st["backup_telegram"] else "spento")
+        return ("💾 Backup di MeshWatch\n"
+                "⚙️ Configurazione: dispositivi, ripetitori, utenti, avvisi e config.yaml (pochi kB, senza storico)\n"
+                f"🗄️ Dati: il database completo con tutto lo storico ({size})\n"
+                "📦 Completo: dati e config.yaml insieme\n\n"
+                f"Backup automatico: {week}\n"
+                f"Ultimo automatico: {fmt_ts(st['last_backup'])}\n"
+                + ("🔒 Protetti da password: si aprono con 7-Zip." if st["backup_protected"]
+                   else "🔓 Senza password (si imposta dalla pagina, Gestione → Sistema → Backup).")
+                + "\n\nScegli quale backup ricevere adesso in questa chat:")
+
+    def backup_keyboard(self):
+        st = maintenance.settings(self.core.db)
+        cur = st["backup_kind"] if st["backup_telegram"] else "off"
+        mark = lambda k, t: ("✅ " if k == cur else "") + t   # noqa: E731
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton(t, callback_data="bk:send:" + k) for k, t in BACKUP_BUTTONS],
+            [InlineKeyboardButton("Automatico ogni settimana:", callback_data="bk:info")],
+            [InlineKeyboardButton(mark(k, t.split(" ", 1)[1]), callback_data="bk:week:" + k) for k, t in BACKUP_BUTTONS]
+            + [InlineKeyboardButton(mark("off", "Spento"), callback_data="bk:week:off")]])
+
+    async def backup_cmd(self, update: Update, ctx):
+        if not self.ok(update):
+            return
+        if not self.is_admin(update):
+            await update.effective_message.reply_text(NOT_ADMIN)
+            return
+        arg = " ".join(ctx.args or []).strip().lower()
+        kind = next((k for k in maintenance.KINDS if arg and k.startswith(arg)), None)
+        if kind:
+            await self.send_backup_here(update.effective_chat, kind)
+            return
+        await update.effective_message.reply_text(self.backup_text(), reply_markup=self.backup_keyboard())
+
+    async def backup_button(self, chat, q, rest):
+        what, _, kind = rest.partition(":")
+        if what == "send" and kind in maintenance.KINDS:
+            await self.send_backup_here(chat, kind)
+        elif what == "week" and (kind in maintenance.KINDS or kind == "off"):
+            db = self.core.db
+            db.set("backup_telegram", "0" if kind == "off" else "1")
+            if kind != "off":
+                db.set("backup_kind", kind)
+            self.core.audit(f"telegram:{chat.id}", "backup su Telegram",
+                            "spento" if kind == "off" else f"ogni settimana, {kind}")
+            try:
+                await q.edit_message_text(self.backup_text(), reply_markup=self.backup_keyboard())
+            except Exception as e:   # testo uguale a prima: Telegram rifiuta la modifica
+                log.debug("Messaggio del backup non modificato: %s", e)
+        elif what == "info":
+            await chat.send_message("Scegli nella riga sotto quale backup ricevere ogni settimana nelle chat admin, "
+                                    "oppure Spento.")
+
+    async def send_backup_here(self, chat, kind):
+        """Backup richiesto da una chat admin: arriva solo a quella chat."""
+        from telegram import InputFile
+        await chat.send_message(f"Preparo il backup ({maintenance.KIND_LABEL[kind]})…")
+        try:
+            data, name = await asyncio.to_thread(maintenance.make_backup, self.core.db,
+                                                 self.core.cfg.get("_config_path"), kind)
+        except maintenance.BackupError as e:
+            await chat.send_message(f"❌ {e}")
+            return
+        if len(data) > TG_MAX_FILE:
+            await chat.send_message(f"❌ Il backup pesa {len(data) / 2**20:.0f} MB: Telegram accetta file fino a 50 MB. "
+                                    "Scaricalo dalla pagina (Gestione → Sistema → Backup) oppure riduci i giorni di "
+                                    "dati conservati. Il backup della configurazione si può sempre mandare qui.")
+            return
+        protected = maintenance.settings(self.core.db)["backup_protected"]
+        caption = (f"💾 Backup di MeshWatch: {maintenance.KIND_LABEL[kind]}"
+                   + (" 🔒 protetto da password: si apre con 7-Zip." if protected
+                      else ". Contiene password: conservalo con cura.")
+                   + "\nSi ripristina dalla pagina: Gestione → Sistema → Ripristina un backup.")
+        await self.app.bot.send_document(chat.id, InputFile(data, filename=name), caption=caption,
+                                         read_timeout=60, write_timeout=60)
+        self.core.audit(f"telegram:{chat.id}", "backup inviato su Telegram", name)
+
     async def firmware_reply(self, chat, force=True):
         from .firmware import FirmwareError
         try:
@@ -1142,8 +1234,11 @@ class Bot:
             await self.do(chat, action, tid, arg)
             return
         if not admin:
-            if action in ("upd", "node", "ok", "no", "fw"):
+            if action in ("upd", "node", "ok", "no", "fw", "bk"):
                 await chat.send_message(NOT_ADMIN)
+            return
+        if action == "bk":
+            await self.backup_button(chat, q, rest)
             return
         if action == "fw":
             await self.firmware_button(chat, q, rest)

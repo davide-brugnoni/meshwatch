@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import yaml  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from meshwatch import restore, updater  # noqa: E402
+from meshwatch import maintenance, restore, updater  # noqa: E402
 from meshwatch.auth import Auth, hash_password  # noqa: E402
 from meshwatch.core import Core  # noqa: E402
 from meshwatch.db import DB  # noqa: E402
@@ -261,7 +261,70 @@ def main():
         expired = "scaduto" in str(e)
     check(expired, "caricamento non confermato entro un'ora: scaduto")
     config_and_data_backups()
+    bot_backup()
     print("Tutti i test superati.")
+
+
+def bot_backup():
+    """/backup su Telegram: solo admin, arriva solo alla chat che lo chiede, backup settimanale."""
+    from types import SimpleNamespace
+    from meshwatch import bot as botmod
+    from tests.test_features import Ctx, FakeChat, FakeUpdate
+    cfg = install(tempfile.mkdtemp())
+    db, core, _, _ = app_for(cfg)
+    db.add_tracker(contact="Bob", label="Bob")
+    bot = botmod.Bot({"token": "123456:TEST", "allowed_chat_ids": [1, 2], "admin_chat_ids": [1]}, core)
+    docs = []
+
+    class DocBot:
+        async def send_document(self, cid, doc, caption="", **kw):
+            docs.append((cid, doc.filename, caption))
+    bot.app = SimpleNamespace(bot=DocBot())
+    admin, viewer = FakeChat(1), FakeChat(2)
+    asyncio.run(bot.backup_cmd(FakeUpdate(viewer), Ctx()))
+    check(viewer.sent[-1] == botmod.NOT_ADMIN and not docs, "/backup solo per le chat admin")
+    asyncio.run(bot.backup_cmd(FakeUpdate(admin), Ctx()))
+    check("Configurazione" in admin.sent[-1] and "Dati" in admin.sent[-1] and "automatico: spento" in admin.sent[-1],
+          "/backup: spiega i tipi di backup e lo stato del backup automatico")
+    asyncio.run(bot.backup_cmd(FakeUpdate(admin), Ctx("config")))
+    check(docs and docs[-1][0] == 1 and docs[-1][1].startswith("meshwatch-configurazione-") and "Ripristina" in docs[-1][2],
+          "/backup config: la configurazione arriva solo a questa chat")
+    kb = bot.backup_keyboard()
+    datas = [b.callback_data for row in kb.inline_keyboard for b in row]
+    check({"bk:send:configurazione", "bk:send:dati", "bk:send:completo", "bk:week:dati", "bk:week:off"} <= set(datas),
+          "/backup: pulsanti per inviare subito e per il backup settimanale")
+
+    class Q:
+        def __init__(self, chat, user, data):
+            self.message = SimpleNamespace(chat=chat)
+            self.from_user, self.data, self.text = SimpleNamespace(id=user), data, None
+
+        async def answer(self):
+            pass
+
+        async def edit_message_text(self, text, **kw):
+            self.text = text
+    asyncio.run(bot.on_button(SimpleNamespace(callback_query=Q(viewer, 2, "bk:send:dati")), Ctx()))
+    check(viewer.sent[-1] == botmod.NOT_ADMIN and len(docs) == 1, "pulsante del backup: solo admin")
+    asyncio.run(bot.on_button(SimpleNamespace(callback_query=Q(admin, 1, "bk:send:dati")), Ctx()))
+    check(docs[-1][1].startswith("meshwatch-dati-"), "pulsante Dati: arriva il database")
+    q = Q(admin, 1, "bk:week:configurazione")
+    asyncio.run(bot.on_button(SimpleNamespace(callback_query=q), Ctx()))
+    st = maintenance.settings(db)
+    check(st["backup_telegram"] and st["backup_kind"] == "configurazione" and "ogni settimana, configurazione" in q.text,
+          "backup settimanale della configurazione attivato dal bot")
+    asyncio.run(bot.on_button(SimpleNamespace(callback_query=Q(admin, 1, "bk:week:off")), Ctx()))
+    check(not maintenance.settings(db)["backup_telegram"], "backup settimanale spento dal bot")
+    orig = botmod.TG_MAX_FILE
+    botmod.TG_MAX_FILE = 10
+    try:
+        n = len(docs)
+        asyncio.run(bot.backup_cmd(FakeUpdate(admin), Ctx("dati")))
+        check(len(docs) == n and "50 MB" in admin.sent[-1], "backup troppo grande per Telegram: lo dice")
+    finally:
+        botmod.TG_MAX_FILE = orig
+    acts = [x["action"] for x in db.audit()]
+    check("backup inviato su Telegram" in acts, "nel registro attività")
 
 
 def config_and_data_backups():

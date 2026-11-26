@@ -95,7 +95,7 @@ Le ultime funzionalità aggiunte (si installano con l'[aggiornamento dalla pagin
 - **Bot Telegram più affidabile**: avvisi in parallelo a tutte le chat con nuovi tentativi, permessi come sulla pagina (*viewer* e *admin*), supporto dei gruppi con `admin_user_ids`, posizione in diretta che riprende dopo un riavvio.
 - **Posizione più affidabile in movimento**: flood subito quando il dispositivo cambia ripetitore e risposte in ritardo accettate.
 - **Aggiornamento del programma anche da Telegram** (`/aggiornamento`), con conferma ed esito in chat.
-- **Backup divisi in configurazione e dati**: la configurazione (dispositivi, ripetitori, utenti, avvisi e `config.yaml`) sta in pochi kB e si ripristina senza toccare lo storico, anche su un Raspberry nuovo; i dati sono il database completo. Su Telegram si sceglie quale inviare. Vedi [Manutenzione e backup](#manutenzione-e-backup).
+- **Backup divisi in configurazione e dati**: la configurazione (dispositivi, ripetitori, utenti, avvisi e `config.yaml`) sta in pochi kB e si ripristina senza toccare lo storico, anche su un Raspberry nuovo; i dati sono il database completo. Su Telegram, con **`/backup`**, si riceve subito quello che serve e si sceglie quale arriva ogni settimana. Vedi [Manutenzione e backup](#manutenzione-e-backup).
 
 ## Come funziona
 
@@ -331,6 +331,7 @@ Il bot funziona in *polling*: non serve aprire porte né esporre il Raspberry. S
 | `/intervallo 30` · `/pausa` · `/riprendi` | gestione del tracciamento (solo chat admin) |
 | `/advert` | il gateway si annuncia sulla mesh (solo chat admin) |
 | `/firmware` | versione del firmware del gateway e dei ripetitori; pulsante per aggiornare il gateway, con conferma (solo chat admin) |
+| `/backup` | pulsanti ⚙️ Configurazione · 🗄️ Dati · 📦 Completo per ricevere subito il backup in questa chat, e scelta del backup automatico settimanale; anche `/backup config` o `/backup dati` (solo chat admin) |
 | `/aggiornamento` · `/versione` | versione installata e, se ne è uscita una nuova, pulsante **Aggiorna ora** con conferma (solo chat admin) |
 | `/terminale` · `/fine` | comandi CLI a un ripetitore (solo chat admin) · chiude il terminale |
 
@@ -511,7 +512,7 @@ C'è anche il **backup completo** (`meshwatch-backup-….zip`, database e `confi
 
 Cosa non c'è in nessun backup: lo stato interno del programma (ultima pulizia, sessioni aperte, avvisi già mandati), la cache delle mappe (`tiles.db`) e le impostazioni salvate nella radio (nome, potenza, canali, rubrica: restano nella radio).
 
-- **Backup settimanale su Telegram** (**Gestione → Telegram → Backup su Telegram**): va attivato e si sceglie cosa inviare (completo, solo configurazione o solo dati). Arriva solo alle chat in `admin_chat_ids` (o, se vuoto, a quelle in `allowed_chat_ids`). Si può anche mandare subito. Telegram accetta file fino a 50 MB: con tanti dati conviene mandare la configurazione e scaricare i dati dalla pagina.
+- **Backup su Telegram**: con **`/backup`** (solo chat admin) arrivano i pulsanti **⚙️ Configurazione**, **🗄️ Dati** e **📦 Completo**: il backup scelto arriva subito e solo nella chat che l'ha chiesto. Scorciatoie: `/backup config`, `/backup dati`, `/backup completo`. Nello stesso messaggio si sceglie il **backup automatico ogni settimana** (configurazione, dati, completo o spento), che si regola anche dalla pagina in **Gestione → Telegram → Backup su Telegram**. Quello automatico arriva alle chat in `admin_chat_ids` (o, se vuoto, a quelle in `allowed_chat_ids`). Telegram accetta file fino a 50 MB: se il backup è più grande il bot lo dice e consiglia di scaricare i dati dalla pagina; la configurazione si può mandare sempre.
 - **Password del backup** (facoltativa): i file nello zip vengono cifrati con AES-256, in tutti i backup scaricati e in quello su Telegram. `LEGGIMI.txt` resta leggibile e spiega come aprirlo. Su Windows serve **7-Zip** (Esplora risorse non apre questi zip), su Linux `7z x` (pacchetto `p7zip-full`; `unzip` non li apre). La pagina non mostra mai la password e il registro segna solo che è stata impostata o tolta.
 
 Tutti i backup contengono password (token Telegram, ripetitori, utenti) e quello dei dati anche le posizioni: conservali con cura, meglio se con la password.
