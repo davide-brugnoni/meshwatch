@@ -31,7 +31,7 @@ COSA SERVE
    - password di accesso al Raspberry
    - WiFi e password (vuoto se usi il cavo)
    Poi copia MeshWatch sulla SD e apre meshwatch-config.yaml nel Blocco note:
-   compila almeno il token Telegram (SenseCAP e ripetitori puoi metterli qui
+   compila almeno il token Telegram (dispositivi da seguire e ripetitori puoi metterli qui
    oppure aggiungerli dopo dalla pagina, scheda Gestione). Salva e chiudi.
 
 4. AVVIA
@@ -43,15 +43,21 @@ COME SI FA DOPO, SENZA TERMINALE
 - Dispositivi, ripetitori e utenti: dalla pagina, scheda Gestione (non serve togliere la SD).
 - Token Telegram e impostazioni generali: spegni, metti la SD nel PC, modifica meshwatch-config.yaml,
   rimettila e riaccendi.
-- Aggiornare MeshWatch: dalla pagina, Gestione -> Aggiornamento programma ->
+- Aggiornare MeshWatch: dalla pagina, Gestione -> Sistema -> Aggiornamento programma ->
   "Controlla aggiornamenti" e poi "Aggiorna ora". Non serve togliere la SD:
   in circa un minuto il servizio riparte con la nuova versione. Config e dati restano.
+  Anche dal bot Telegram, fuori casa: /aggiornamento (solo chat admin).
   Se la nuova versione non partisse, il Raspberry torna da solo a quella di prima.
 - Schede preparate prima della versione 1.1 (una volta sola): con il Raspberry acceso
   e in rete, doppio clic su ABILITA-AGGIORNAMENTI.bat (chiede la password dell'utente
   meshwatch). Da li' in poi si aggiorna dalla pagina.
 - Senza Internet sul Raspberry: spegni, metti la SD nel PC, doppio clic su AGGIORNA-SD.bat
   (dal kit nuovo), rimetti la SD e riaccendi.
+- Firmware della radio gateway: dalla pagina, Gestione -> Rete -> Firmware MeshCore,
+  oppure dal bot con /firmware. Nome, chiavi, rubrica e canali della radio restano.
+- Statistiche della rete (nodi nuovi e spariti, ripetitori, batteria, collegamenti):
+  scheda Statistiche della pagina, oppure /rete sul bot. Gli avvisi dei nodi si
+  accendono in Gestione -> Telegram -> Avvisi nodi.
 - Qualcosa non va al primo avvio: sulla SD trovi meshwatch-install.log.
 - Accesso da PC (facoltativo): PuTTY o WinSCP, host meshwatch.local, utente meshwatch,
   con la password scelta al punto 3. Per i comandi da amministratore: sudo.

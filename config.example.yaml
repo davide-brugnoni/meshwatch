@@ -37,14 +37,15 @@ repeaters:
   - name: "Ripetitore-Casa"
     password: "cambiami"
 repeater_interval_min: 60
-repeater_low_battery_v: 3.4
+repeater_low_battery_v: 3.4   # anche per la previsione della batteria (scheda Statistiche)
 
 telegram:
   token: "123456:ABC-il-token-di-BotFather"
   # Solo queste chat possono usare il bot e ricevono gli avvisi.
   # Il tuo ID lo scopri scrivendo /start al bot: te lo risponde lui.
   allowed_chat_ids: []
-  # Chi può gestire: terminale, pausa, intervallo, advert, aggiornamento, riepilogo automatico.
+  # Chi può gestire: terminale, pausa, intervallo, advert, aggiornamento del programma
+  # e del firmware, riepilogo automatico. Le altre chat vedono (posizione, mappa, /rete, ...).
   # Vuoto = tutte le chat autorizzate. Una chat admin è anche autorizzata.
   admin_chat_ids: []
   # Solo per i gruppi tra le chat admin: gli utenti (ID personale) che possono gestire.
@@ -53,6 +54,8 @@ telegram:
   # Riepilogo della giornata con la mappa, ogni giorno a quest'ora (facoltativo).
   # Si cambia anche dal bot: /riepilogo 21:00 oppure /riepilogo no
   # daily_report: "21:00"
+  # Avvisi per i nodi nuovi e spariti, riepilogo e backup si regolano dalla pagina
+  # (Gestione → Telegram).
 
 web:
   # "lan": pagina raggiungibile solo in casa (http://IP-raspberry:8080)
