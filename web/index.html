@@ -159,6 +159,7 @@
     <button data-sec="dispositivi" class="on">Dispositivi</button>
     <button data-sec="rete">Rete</button>
     <button data-sec="telegram">Telegram</button>
+    <button data-sec="dashboard">Dashboard</button>
     <button data-sec="sistema">Sistema</button>
     <button data-sec="accessi">Accessi</button>
   </nav>
@@ -370,6 +371,43 @@
   </section>
   </div>
 
+  <div class="adm-sec" data-sec="dashboard">
+  <section class="card wide" id="pub-card">
+    <h2>Dashboard pubblica</h2>
+    <p class="note" id="pub-state">Caricamento…</p>
+    <form class="edit" id="form-pub">
+      <label class="switch"><input type="checkbox" name="enabled"> Invia le statistiche</label>
+      <label>Indirizzo del sito <input name="url" type="url" maxlength="300" placeholder="https://tuosito.it/api/meshwatch" autocomplete="off"></label>
+      <label>Token <input name="token" type="password" maxlength="200" autocomplete="new-password" placeholder="lascia vuoto per non cambiarlo"></label>
+      <label>Ogni (minuti) <input name="interval_min" type="number" min="5" max="1440" value="15" required></label>
+      <label>Titolo sulla dashboard <input name="title" maxlength="80" placeholder="Rete MeshCore"></label>
+      <label>Posizione dei ripetitori <select name="grid_m">
+        <option value="0">non pubblicare</option><option value="250">approssimata a 250 m</option>
+        <option value="500">approssimata a 500 m</option><option value="1000">approssimata a 1 km</option>
+        <option value="2000">approssimata a 2 km</option><option value="5000">approssimata a 5 km</option>
+      </select></label>
+      <label class="switch"><input type="checkbox" name="companions"> Elenca anche i companion (nome e ultimo advert, mai la posizione)</label>
+      <div class="formacts" style="flex-direction:column;align-items:flex-start;gap:6px">
+        <strong style="font-size:13px">Cosa pubblicare</strong>
+        <div id="pub-sections" class="pub-sections"></div>
+      </div>
+      <div class="formacts">
+        <button class="primary">Salva</button>
+        <button type="button" id="pub-send">Invia ora</button>
+        <button type="button" id="pub-preview">Anteprima dei dati</button>
+        <button type="button" id="pub-gen">Genera un token</button>
+        <button type="button" id="pub-clear">Togli il token</button>
+      </div>
+      <p class="note formacts" id="pub-newtoken" hidden></p>
+    </form>
+    <details class="help"><summary>Cosa parte e cosa no</summary><p>Parte solo un riassunto delle statistiche: nodi attivi, nuovi e spariti, andamento e traffico, disponibilità e batteria dei ripetitori, storico di 7 giorni delle radio, collegamenti, confronto, firmware e stato del Raspberry. Le sezioni spente qui sopra non partono proprio.
+      Non partono mai: posizioni e tracce dei dispositivi seguiti (che non compaiono nemmeno tra i nodi), sensori, chat, rubrica, utenti, password, registro attività, posizione del gateway e nome in rete del Raspberry. I companion sono contati ma non elencati, salvo l'opzione qui sopra. "Anteprima dei dati" mostra esattamente cosa viene inviato.</p></details>
+    <details class="help"><summary>Come preparare il sito (Cloudflare Pages)</summary><p>Nel progetto Pages servono la funzione <span class="mono">functions/api/meshwatch.js</span> e la pagina della dashboard (sono nel repository del sito).
+      Poi, in Cloudflare: <b>Workers &amp; Pages → KV</b> crea un namespace; nel progetto Pages <b>Settings → Bindings</b> aggiungi un KV namespace con nome <span class="mono">MESHWATCH_KV</span>; in <b>Settings → Variables and Secrets</b> aggiungi il secret <span class="mono">MESHWATCH_TOKEN</span> con lo stesso token che metti qui (usa "Genera un token"). Rifai il deploy, poi qui indirizzo <span class="mono">https://tuosito/api/meshwatch</span>, token, "Invia le statistiche" e "Invia ora".
+      È solo il Raspberry a parlare verso il sito: non si apre nessuna porta di casa. Con un KV gratuito non scendere sotto i 5 minuti (1000 scritture al giorno).</p></details>
+  </section>
+  </div>
+
   <div class="adm-sec" data-sec="sistema">
 <section class="card">
     <h2>Sistema</h2>
@@ -554,6 +592,7 @@
 <script src="/assets/js/chat.js"></script>
 <script src="/assets/js/admin.js"></script>
 <script src="/assets/js/stats.js"></script>
+<script src="/assets/js/publish.js"></script>
 <script src="/assets/js/main.js"></script>
 </body>
 </html>

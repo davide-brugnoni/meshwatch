@@ -27,6 +27,7 @@ Gira su un Raspberry Pi con una radio MeshCore in modalità *Companion USB* (Hel
 - [Sensori](#sensori)
 - [Mappa della rete e rubrica](#mappa-della-rete-e-rubrica)
 - [Statistiche della rete](#statistiche-della-rete)
+- [Dashboard pubblica](#dashboard-pubblica)
 - [Percorso dei pacchetti](#percorso-dei-pacchetti)
 - [Mappa della copertura](#mappa-della-copertura)
 - [Mappe e cache delle tessere](#mappe)
@@ -77,6 +78,7 @@ Gira su un Raspberry Pi con una radio MeshCore in modalità *Companion USB* (Hel
 - **Tempo reale**: posizioni, ripetitori, stato della radio e messaggi compaiono sulla pagina appena arrivano, senza ricaricare.
 - **Da telefono**: pagina pensata anche per lo smartphone (barra in basso Mappa · Nodi · Chat · Statistiche · Gestione).
 - **Aggiornamento dalla pagina**: scarica l'ultima versione da GitHub e riavvia, senza togliere la SD; se la nuova versione non parte torna da sola alla precedente. Quando ne esce una nuova arriva un avviso.
+- **Dashboard pubblica**: invio facoltativo delle sole statistiche della rete a un sito esterno, con le sezioni da pubblicare e le posizioni dei ripetitori approssimate. Si configura tutto dalla pagina. Le posizioni dei dispositivi seguiti, la chat e i dati personali non partono mai.
 - **Accesso**: la mappa è libera in casa (sola lettura), la Gestione chiede sempre la password admin. Ruoli *admin* (gestisce tutto) e *viewer* (vede, chiede la posizione e usa la chat). Predisposto per l'accesso da Internet tramite Cloudflare Tunnel.
 - **Funziona senza Internet**: pagina, radio, tracciamento e mappe già viste restano disponibili anche se la connessione di casa cade; il bot Telegram si ricollega da solo quando torna.
 
@@ -88,6 +90,7 @@ Gira su un Raspberry Pi con una radio MeshCore in modalità *Companion USB* (Hel
 
 Le ultime funzionalità aggiunte (si installano con l'[aggiornamento dalla pagina](#aggiornamenti) o da Telegram con `/aggiornamento`):
 
+- **Dashboard pubblica**: solo le statistiche della rete, inviate a un sito esterno (per esempio Cloudflare Pages), senza dati personali e senza aprire porte. Si configura tutto da **Gestione → Dashboard**. Vedi [Dashboard pubblica](#dashboard-pubblica).
 - **Scheda Statistiche**: storico di tutti i nodi sentiti con nodi nuovi e spariti, andamento della rete, mappa di calore del traffico, disponibilità dei ripetitori, previsione della batteria, confronto e qualità dei collegamenti. Vedi [Statistiche della rete](#statistiche-della-rete).
 - **`/rete` e pulsante 📶 Rete** su Telegram: il riassunto delle statistiche della rete anche fuori casa, con disponibilità e batteria dei ripetitori ben distinte (es. *risponde 100% · 🔋 4.12 V*) e dati subito disponibili anche appena dopo un riavvio; avvisi facoltativi per i nodi nuovi e per quelli che non si sentono più (**Gestione → Telegram → Avvisi nodi**).
 - **Firmware MeshCore**: aggiornamento del gateway da **Gestione → Rete → Firmware MeshCore** o con `/firmware`, versioni dei ripetitori e avvisi. Il **controllo automatico** delle nuove versioni si imposta dalla pagina, separato per gateway e ripetitori (interruttore, giorno e ora; di base la domenica alle 9). Vedi [Firmware MeshCore](#firmware-meshcore).
@@ -419,6 +422,25 @@ Da dove vengono i dati: la radio del gateway passa a MeshWatch ogni pacchetto ch
 
 Gli **avvisi su Telegram** sono spenti all'inizio: in **Gestione → Telegram → Avvisi nodi** si accende quello per i nodi nuovi e si sceglie se avvisare quando un nodo (solo i ripetitori o tutti) non si sente da più di N ore, e di nuovo quando torna. Nel riepilogo giornaliero c'è una riga con nodi attivi, advert, pacchetti, nuovi e spariti; il comando **/rete** (o il pulsante 📶 Rete) manda un riassunto completo quando serve.
 
+## Dashboard pubblica
+
+Per far vedere a tutti le statistiche della rete senza aprire la pagina di casa, MeshWatch può mandare **solo le statistiche** a un sito esterno, che le mostra in una dashboard pubblica. È solo il Raspberry a parlare verso il sito, con un POST HTTPS e un token: non si apre nessuna porta e la pagina resta in rete locale.
+
+Si configura tutto da **Gestione → Dashboard**:
+
+- **Invia le statistiche**: accende o spegne l'invio.
+- **Indirizzo del sito** (solo `https://`) e **token**. "Genera un token" ne crea uno casuale da copiare anche nel sito. Il token salvato non si rivede più e un salvataggio con il campo vuoto lo lascia com'è.
+- **Ogni quanti minuti** (da 5 a 1440, di base 15).
+- **Titolo** mostrato sulla dashboard.
+- **Posizione dei ripetitori**: non pubblicata, oppure approssimata a 250 m, 500 m, 1, 2 o 5 km. Ogni ripetitore finisce al centro di una cella di quella misura.
+- **Companion**: di base sono solo contati. Se attivi l'opzione compaiono con nome e ultimo advert, mai con la posizione.
+- **Cosa pubblicare**: mappa dei ripetitori, disponibilità e batteria, storico di 7 giorni delle radio, andamento e traffico, collegamenti, confronto tra le radio, elenco dei nodi, stato del Raspberry con gateway e firmware. Le sezioni spente non partono proprio.
+- **Invia ora**, **Anteprima dei dati** (il JSON esatto che parte) e l'esito dell'ultimo invio.
+
+Cosa non parte mai: posizioni e tracce dei dispositivi seguiti (che non compaiono nemmeno tra i nodi), sensori, chat, rubrica, utenti, password, registro attività, posizione del gateway e nome in rete del Raspberry. Ogni modifica finisce nel **Registro attività**. Le impostazioni stanno nel database e viaggiano con il backup della configurazione. La sezione `publish:` di `config.yaml` (vedi [`config.example.yaml`](config.example.yaml)) dà solo i valori di partenza.
+
+**Il sito.** Va bene qualsiasi indirizzo che accetti `POST` con `Authorization: Bearer <token>` e un corpo JSON. Per Cloudflare Pages c'è un esempio pronto: una Pages Function (`functions/api/meshwatch.js`) salva l'ultimo invio in un KV namespace e lo serve alla pagina della dashboard. Nel progetto Pages servono il binding KV `MESHWATCH_KV` e il secret `MESHWATCH_TOKEN`, cioè lo stesso token impostato in MeshWatch. Con il piano gratuito di KV (1000 scritture al giorno) l'intervallo minimo di 5 minuti va bene.
+
 ## Percorso dei pacchetti
 
 Per raggiungere un nodo il gateway usa un percorso: l'elenco dei ripetitori da attraversare, imparato dalle risposte precedenti. A ogni risposta del dispositivo MeshWatch salva salti e percorso.
@@ -741,6 +763,9 @@ La pagina usa un'API JSON sotto `/api/` (FastAPI). L'autenticazione è con il co
 | POST | `/api/network/neighbours` | admin | chiede subito i vicini ai ripetitori |
 | GET | `/api/stats?days=30` | viewer | statistiche della rete (scheda Statistiche) |
 | GET · PUT | `/api/alerts/nodes` | admin | avvisi per i nodi nuovi e spariti |
+| GET · PUT | `/api/publish` | admin | impostazioni della dashboard pubblica (il token non torna mai indietro) |
+| POST | `/api/publish/send` | admin | invia subito le statistiche al sito |
+| GET | `/api/publish/preview` | admin | i dati esatti che vengono inviati |
 | POST | `/api/trackers/{tid}/poll` | viewer | chiede subito la posizione |
 | POST · PUT · DELETE | `/api/trackers`, `/api/trackers/{tid}` | admin | aggiungi · modifica · rimuovi un dispositivo |
 | DELETE | `/api/trackers/{tid}/track` · `/api/track` | admin | cancella la traccia di uno · di tutti |
@@ -820,6 +845,7 @@ meshwatch/            pacchetto Python
   mesh.py             comunicazione con la radio (libreria meshcore)
   core.py             interrogazioni periodiche, avvisi, stato
   netstats.py         statistiche della rete: storico dei nodi, pacchetti, disponibilità, batteria, collegamenti
+  publish.py          dashboard pubblica: riassunto delle sole statistiche inviato a un sito esterno
   db.py               SQLite: dispositivi, posizioni, ripetitori, utenti, impostazioni
   web.py              API FastAPI e pagina
   bot.py              bot Telegram
@@ -843,6 +869,7 @@ web/assets/js/        script della pagina, caricati in ordine da index.html:
   chat.js             chat
   admin.js            scheda Gestione
   stats.js            scheda Statistiche (grafici SVG, tabelle, avvisi nodi)
+  publish.js          Gestione → Dashboard (dashboard pubblica)
   main.js             avvio (sempre l'ultimo)
 web/vendor/           Leaflet
 tools/
@@ -892,6 +919,7 @@ A ogni push e pull request GitHub Actions ([`.github/workflows/test.yml`](.githu
 | `test_tiles.py` | cache delle mappe con un server delle mappe finto: scadenza, 304, senza Internet, spazio massimo |
 | `test_restore.py` | ripristino dalla pagina: password, file non validi, avvisi, applicazione al riavvio, annullamento, kit SD |
 | `test_netstats.py` | statistiche della rete: storico dei nodi, doppioni, avvisi nodi nuovi e spariti, disponibilità, previsione della batteria, confronto, collegamenti, API |
+| `test_publish.py` | dashboard pubblica: niente dispositivi seguiti né companion, posizioni approssimate, sezioni, token, API |
 | `test_permissions.py` | **ogni** endpoint dell'API per ospite, viewer e admin; fallisce se se ne aggiunge uno senza dichiarare chi può usarlo |
 | `test_system_power.py` | stato dell'alimentazione (tensione bassa) letto da `hwmon` anche sui kernel recenti |
 | `test_watchdog.py` | watchdog di systemd: segnale finché la pagina risponde, riavvio se si blocca |

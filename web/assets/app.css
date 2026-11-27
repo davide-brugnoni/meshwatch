@@ -401,3 +401,7 @@ table.st-table td.worst::before { content:'▲ '; font-size:10px; }
 .bk p { margin:0; font-size:13.5px; line-height:1.45; }
 .bk .row { margin-top:auto; padding-top:4px; }
 #bk-card .note a { color:var(--acc); }
+/* Gestione → Dashboard pubblica */
+.pub-sections { display:grid; grid-template-columns:repeat(auto-fill, minmax(240px, 1fr)); gap:6px 14px; width:100%; }
+.pub-sections label { flex-direction:row !important; align-items:center; gap:8px !important; text-transform:none !important; letter-spacing:normal !important; font-size:13.5px !important; color:var(--fg, inherit) !important; }
+#pub-newtoken { word-break:break-all; }
