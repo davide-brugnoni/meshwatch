@@ -5,11 +5,11 @@
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 [![Licenza MIT](https://img.shields.io/badge/licenza-MIT-green)](LICENSE)
 
-Dashboard self-hosted per reti **MeshCore**: segue la posizione GPS di uno o più dispositivi (per esempio un SenseCAP T1000-E), monitora ripetitori e gateway, raccoglie le **statistiche di tutta la rete**, offre una **chat** dalla radio del gateway e ne **aggiorna il firmware**. Si gestisce da una pagina web in rete locale o da un **bot Telegram** quando si è fuori casa.
+Dashboard self-hosted per reti **MeshCore**: segue la posizione GPS di uno o più dispositivi (per esempio un SenseCAP T1000-E), monitora ripetitori e gateway, raccoglie le **statistiche di tutta la rete**, offre una **chat** dalla radio del gateway, ne **aggiorna il firmware**, fa i **backup** di configurazione e dati e, se vuoi, pubblica le statistiche su una **dashboard pubblica**. Si gestisce da una pagina web in rete locale o da un **bot Telegram** quando si è fuori casa.
 
 Gira su un Raspberry Pi con una radio MeshCore in modalità *Companion USB* (Heltec, RAK, LilyGO, XIAO, …) collegata via USB, oppure col firmware *Companion WiFi* in rete.
 
-*In breve: dashboard per reti MeshCore da ospitare in casa, con tracciamento GPS dei dispositivi tramite richieste di telemetria, monitoraggio dei ripetitori con terminale remoto, statistiche della rete (nodi nuovi e spariti, disponibilità, batteria, collegamenti), chat, aggiornamento del firmware del gateway, pagina web in rete locale e bot Telegram. Gira su un Raspberry Pi con una radio companion collegata via USB.*
+*In breve: dashboard per reti MeshCore da ospitare in casa, con tracciamento GPS dei dispositivi tramite richieste di telemetria, monitoraggio dei ripetitori con terminale remoto, statistiche della rete (nodi nuovi e spariti, disponibilità, batteria, collegamenti), chat, aggiornamento del firmware del gateway, backup e ripristino dalla pagina, dashboard pubblica delle sole statistiche, pagina web in rete locale e bot Telegram. Gira su un Raspberry Pi con una radio companion collegata via USB.*
 
 ![Mappa](docs/screenshots/mappa.png)
 
@@ -224,11 +224,16 @@ Copia `config.example.yaml` in `config.yaml` (con il kit SD il file è `meshwatc
 | `web.public_map` | `true` in lan, `false` in public | mappa visibile senza login (sola lettura) |
 | `web.users` | — | utenti da importare al primo avvio: `username`, `password_hash` (da `meshwatch hashpw`), `role` |
 | `database` | `meshwatch.db` | percorso del database SQLite (relativo alla cartella di lavoro del servizio) |
+| `publish.url` · `publish.token` | — | indirizzo `https://` e token della [dashboard pubblica](#dashboard-pubblica) (solo valori di partenza: poi da Gestione → Dashboard) |
+| `publish.interval_min` | `15` | ogni quanti minuti inviare le statistiche (5–1440) |
+| `publish.grid_m` | `500` | precisione della posizione dei ripetitori in metri: `0` (non pubblicata), `250`, `500`, `1000`, `2000`, `5000` |
+| `publish.companions` | `false` | elencare anche i companion (nome e ultimo advert, mai la posizione) |
+| `publish.title` | `Rete MeshCore` | titolo mostrato sulla dashboard |
 | `update.repo` | `davide-brugnoni/meshwatch` | repository GitHub per l'aggiornamento dalla pagina |
 | `update.branch` | `main` | ramo da cui aggiornare |
 | `update.notify` | `true` | avviso su Telegram e pallino su Gestione quando esce una nuova versione |
 
-Le altre impostazioni (pulizia dei dati, backup, password del backup, cache delle mappe, avvisi batteria, avvisi nodi, riepilogo, aggiunta manuale dei contatti, scheda del gateway e controllo automatico del firmware) si cambiano dalla pagina e stanno nel database.
+Le altre impostazioni (pulizia dei dati, backup, password del backup, cache delle mappe, avvisi batteria, avvisi nodi, riepilogo, aggiunta manuale dei contatti, scheda del gateway, controllo automatico del firmware e dashboard pubblica) si cambiano dalla pagina e stanno nel database.
 
 ### Riga di comando
 
@@ -286,7 +291,8 @@ Su telefono la barra in basso ha Mappa · Nodi · Chat · Statistiche · Gestion
 |---|---|
 | **Dispositivi** | dispositivi tracciati (nome contatto, etichetta, colore, intervallo, intervallo in movimento, fascia oraria, avvisi, soglie dei sensori), avvisi batteria bassa |
 | **Rete** | ripetitori, gateway (radio collegata al Raspberry, con statistiche e grafici del traffico), firmware MeshCore (con controllo automatico), rubrica del gateway |
-| **Telegram** | riepilogo giornaliero (acceso/spento, ora di invio, *Invia ora*), avvisi nodi (nuovi e spariti), backup settimanale, comandi del bot |
+| **Telegram** | riepilogo giornaliero (acceso/spento, ora di invio, *Invia ora*), avvisi nodi (nuovi e spariti), backup settimanale su Telegram, comandi del bot |
+| **Dashboard** | dashboard pubblica: invio delle sole statistiche a un sito esterno (indirizzo, token, intervallo, titolo, posizione dei ripetitori, sezioni, *Invia ora*, anteprima dei dati) |
 | **Sistema** | Raspberry, aggiornamento programma, manutenzione, backup (configurazione e dati), ripristino, cache delle mappe |
 | **Accessi** | utenti della pagina, registro attività |
 
@@ -439,7 +445,11 @@ Si configura tutto da **Gestione → Dashboard**:
 
 Cosa non parte mai: posizioni e tracce dei dispositivi seguiti (che non compaiono nemmeno tra i nodi), sensori, chat, rubrica, utenti, password, registro attività, posizione del gateway e nome in rete del Raspberry. Ogni modifica finisce nel **Registro attività**. Le impostazioni stanno nel database e viaggiano con il backup della configurazione. La sezione `publish:` di `config.yaml` (vedi [`config.example.yaml`](config.example.yaml)) dà solo i valori di partenza.
 
-**Il sito.** Va bene qualsiasi indirizzo che accetti `POST` con `Authorization: Bearer <token>` e un corpo JSON. Per Cloudflare Pages c'è un esempio pronto: una Pages Function (`functions/api/meshwatch.js`) salva l'ultimo invio in un KV namespace e lo serve alla pagina della dashboard. Nel progetto Pages servono il binding KV `MESHWATCH_KV` e il secret `MESHWATCH_TOKEN`, cioè lo stesso token impostato in MeshWatch. Con il piano gratuito di KV (1000 scritture al giorno) l'intervallo minimo di 5 minuti va bene.
+**Come parte.** Il primo invio avviene circa 90 secondi dopo l'avvio (il tempo di collegare la radio), poi ogni `interval_min` minuti. Ogni invio è un `POST` all'indirizzo scelto con `Authorization: Bearer <token>`, `Content-Type: application/json` e `User-Agent: MeshWatch/<versione>`. Se il sito non risponde o rifiuta i dati, MeshWatch riprova dopo 2, 4, 8 e 16 minuti (mai oltre l'intervallo scelto) e in Gestione → Dashboard mostra l'errore (per esempio *token non accettato dal sito (401)*). Salvando le impostazioni l'invio riparte subito.
+
+**I dati.** Un unico JSON (versione `"v": 1`) con `title`, `generated`, `app`, `grid_m`, `sections`, `gateway` (solo nome e parametri radio; con la sezione *sistema* anche modello e firmware), `summary`, `types_24h` e `nodes` (fino a 1000, sentiti negli ultimi 30 giorni, con `pos` approssimata solo per ripetitori e room server). Secondo le sezioni accese si aggiungono `trend`, `availability` e `battery`, `compare`, `links`, `history` (7 giorni di ripetitori e gateway: batteria, rumore, SNR, RSSI, pacchetti all'ora, airtime), `firmware` e `system`. Il modo più semplice per vederlo è **Anteprima dei dati**.
+
+**Il sito.** Va bene qualsiasi indirizzo che accetti `POST` con il token e un corpo JSON, salvi l'ultimo invio e lo mostri in una pagina: per esempio una Function di Cloudflare Pages o Workers che controlla il token (tenuto come secret) e scrive il JSON in un KV namespace, letto poi dalla pagina della dashboard. Con il piano gratuito di KV (1000 scritture al giorno) anche l'intervallo minimo di 5 minuti va bene. Il sito non fa parte di questo repository.
 
 ## Percorso dei pacchetti
 
@@ -726,6 +736,7 @@ curl -s http://localhost:8080/api/health
 | la scheda Statistiche ha pochi dati o niente pacchetti all'ora | lo storico si riempie con gli advert che arrivano dopo l'installazione; pacchetti, SNR e RSSI servono un firmware companion 1.7 o più recente sul gateway |
 | non arrivano gli avvisi dei nodi nuovi o spariti | sono spenti all'inizio: **Gestione → Telegram → Avvisi nodi** |
 | aggiornamento del firmware non proposto o fermo | radio collegata via USB (non WiFi); scheda riconosciuta o scelta dall'elenco; RP2040 e STM32 vanno aggiornate dal PC; se le partizioni sono diverse serve un'installazione completa dal PC; il Raspberry deve raggiungere GitHub e PyPI (per `esptool`/`adafruit-nrfutil`) |
+| la dashboard pubblica non si aggiorna | **Gestione → Dashboard**: invio acceso, indirizzo `https://` e token uguale a quello del sito; l'errore dell'ultimo invio dice se il token è rifiutato (401), l'indirizzo è sbagliato (404) o il sito non è raggiungibile; prova **Invia ora** |
 | SD piena | **Gestione → Sistema**: riduci i giorni di conservazione, svuota o riduci la cache delle mappe |
 
 ## Limiti
@@ -833,7 +844,7 @@ SQLite in `meshwatch.db`; lo schema viene creato e aggiornato da solo all'avvio 
 | `cli_log` | comandi del terminale e risposte |
 | `users` · `login_failures` | utenti della pagina · tentativi falliti (blocco IP) |
 | `audit` | registro attività |
-| `settings` | impostazioni cambiate dalla pagina |
+| `settings` | impostazioni cambiate dalla pagina (comprese quelle della dashboard pubblica) |
 
 La cache delle mappe è in un database separato, `tiles.db` (tabella `tiles`).
 
