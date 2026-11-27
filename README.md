@@ -117,8 +117,8 @@ Il programma è un unico processo Python (asyncio) che fa girare insieme:
 
 | Parte | Cosa fa |
 |---|---|
-| radio (`mesh.py`) | collegamento alla radio, coda delle richieste (una alla volta, la chat ha la precedenza) |
-| ciclo dei dispositivi (`core.py`) | richiesta di telemetria a ogni dispositivo secondo intervallo e fascia oraria, avvisi |
+| radio (`mesh.py`) | collegamento alla radio, coda delle richieste (una alla volta, la chat ha la precedenza), attese adattate ai tempi di risposta di ogni nodo, advert e pacchetti sentiti |
+| ciclo dei dispositivi (`core.py`) | richiesta di telemetria a ogni dispositivo secondo intervallo e fascia oraria (con nuovi tentativi ravvicinati dopo una richiesta a vuoto), posizioni dagli advert, avvisi |
 | ciclo dei ripetitori (`core.py`) | login e statistiche ogni `repeater_interval_min` minuti, vicini ogni 6 ore, versione del firmware una volta al giorno |
 | statistiche della rete (`netstats.py`) | storico dei nodi dagli advert, pacchetti sentiti dalla radio, disponibilità, batteria, collegamenti, avvisi nodi |
 | firmware (`firmware.py`) | controllo delle release di MeshCore nel giorno e all'ora scelti (di base la domenica alle 9), aggiornamento del gateway |
@@ -330,7 +330,7 @@ Il bot funziona in *polling*: non serve aprire porte né esporre il Raspberry. S
 
 | Comando | Cosa fa |
 |---|---|
-| `/start` · `/aiuto` | tastiera del bot (e chat ID se non autorizzato) · elenco dei comandi |
+| `/start` · `/aiuto` (o `/help`) | tastiera del bot (e chat ID se non autorizzato) · elenco dei comandi |
 | `/posizione` | chiede subito la posizione (pin + link Google Maps) |
 | `/dove` · `/ultima` · `/traccia` | ultima posizione ricevuta · punti delle ultime 12 ore |
 | `/segui 2` · `/basta` | posizione **in diretta** di Telegram per 2 ore (massimo 8): il pin si sposta a ogni nuova posizione, anche dopo un riavvio o un aggiornamento · la ferma |
@@ -859,8 +859,8 @@ SQLite in `meshwatch.db`; lo schema viene creato e aggiornato da solo all'avvio 
 | Tabella | Contenuto |
 |---|---|
 | `trackers` | dispositivi seguiti e loro impostazioni |
-| `positions` | posizioni ricevute, con batteria, salti e percorso |
-| `tracker_polls` | ogni richiesta di posizione, riuscita o no (mappa della copertura) |
+| `positions` | posizioni ricevute, con batteria, salti, percorso e provenienza (`src`: risposta alla telemetria o advert) |
+| `tracker_polls` | ogni richiesta di posizione, riuscita o no (mappa della copertura), con l'esito del primo tentativo diretto per giudicare il percorso |
 | `sensor_readings` · `sensor_rules` | letture dei sensori · soglie di avviso |
 | `repeaters` · `repeater_status` | ripetitori configurati · statistiche nel tempo (con traffico, duplicati, airtime, coda ed errori) |
 | `gateway_stats` | statistiche del gateway nel tempo, per i grafici |
@@ -953,7 +953,7 @@ A ogni push e pull request GitHub Actions ([`.github/workflows/test.yml`](.githu
 | `test_chat.py` | chat, rubrica del gateway, mappa della rete, coda della radio |
 | `test_update.py` | aggiornamento dalla pagina e ripristino della versione precedente |
 | `test_firmware.py` | firmware MeshCore: release, scelta della scheda, scrittura ESP32/nRF52 simulata, errori, ripetitori, pagina e bot |
-| `test_features.py` | sensori e soglie, percorsi, copertura, tempo reale, comandi e pulsanti del bot |
+| `test_features.py` | sensori e soglie, percorsi, copertura, tempo reale, comandi, permessi e pulsanti del bot, recupero rapido della posizione, posizioni dagli advert, attese adattive |
 | `test_tiles.py` | cache delle mappe con un server delle mappe finto: scadenza, 304, senza Internet, spazio massimo |
 | `test_restore.py` | ripristino dalla pagina: password, file non validi, avvisi, applicazione al riavvio, annullamento, kit SD |
 | `test_netstats.py` | statistiche della rete: storico dei nodi, doppioni, avvisi nodi nuovi e spariti, disponibilità, previsione della batteria, confronto, collegamenti, API |
