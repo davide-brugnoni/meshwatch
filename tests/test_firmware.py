@@ -159,7 +159,7 @@ def setup():
     core.firmware = FakeManager(core)
     notes = []
 
-    async def collect(text):
+    async def collect(text, actions=None):
         notes.append(text)
     core.notifiers.append(collect)
     return db, mesh, core, notes

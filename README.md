@@ -95,6 +95,7 @@ Le ultime funzionalità aggiunte (si installano con l'[aggiornamento dalla pagin
 - **`/rete` e pulsante 📶 Rete** su Telegram: il riassunto delle statistiche della rete anche fuori casa, con disponibilità e batteria dei ripetitori ben distinte (es. *risponde 100% · 🔋 4.12 V*) e dati subito disponibili anche appena dopo un riavvio; avvisi facoltativi per i nodi nuovi e per quelli che non si sentono più (**Gestione → Telegram → Avvisi nodi**).
 - **Firmware MeshCore**: aggiornamento del gateway da **Gestione → Rete → Firmware MeshCore** o con `/firmware`, versioni dei ripetitori e avvisi. Il **controllo automatico** delle nuove versioni si imposta dalla pagina, separato per gateway e ripetitori (interruttore, giorno e ora; di base la domenica alle 9). Vedi [Firmware MeshCore](#firmware-meshcore).
 - **Statistiche complete di ripetitori e gateway**: traffico, duplicati, airtime, coda ed errori, con grafici; quelle del gateway in **Gestione → Rete**.
+- **Pulsanti sotto avvisi e risposte** su Telegram: riprova, ultima posizione, pausa, interroga il ripetitore, installa la nuova versione, altri periodi per mappa e statistiche, ⏹ Basta per la posizione in diretta, senza scrivere i comandi. Vedi [Pulsanti sotto i messaggi](#pulsanti-sotto-i-messaggi).
 - **Bot Telegram più affidabile**: avvisi in parallelo a tutte le chat con nuovi tentativi, permessi come sulla pagina (*viewer* e *admin*), supporto dei gruppi con `admin_user_ids`, posizione in diretta che riprende dopo un riavvio.
 - **Posizione più affidabile in movimento**: flood subito quando il dispositivo cambia ripetitore e risposte in ritardo accettate.
 - **Aggiornamento del programma anche da Telegram** (`/aggiornamento`), con conferma ed esito in chat.
@@ -358,6 +359,19 @@ Due richieste di posizione allo stesso dispositivo nello stesso momento (dalla p
 
 Con `/segui` conviene attivare l'intervallo adattivo del dispositivo: in movimento le posizioni arrivano più spesso e il pin si sposta di conseguenza.
 
+### Pulsanti sotto i messaggi
+
+Le cose che si fanno più spesso dopo una risposta o un avviso hanno un pulsante, così dal telefono non serve scrivere il comando. Questi pulsanti restano sul messaggio e si possono premere di nuovo; quelli per scegliere il dispositivo invece spariscono dopo la scelta. Valgono le stesse regole dei comandi: i pulsanti che cambiano qualcosa (pausa, riprendi, intervallo, interroga, installa) compaiono e funzionano solo nelle chat admin, e nei gruppi solo per chi può gestire.
+
+| Sotto | Pulsanti |
+|---|---|
+| una posizione (adesso o ultima) | 🔄 Di nuovo · 🗺 Mappa · 👣 Segui |
+| mappa e statistiche | 📅 gli altri periodi: 24 ore · 7 giorni · 30 giorni |
+| posizione in diretta | ⏹ Basta · altre durate (1, 2, 4, 8 ore) |
+| pausa / ripresa del tracciamento | ▶️ Riprendi / ⏸ Pausa (solo admin) |
+| `/nodi` | 🔄 Interroga i ripetitori (solo admin) |
+
+
 ### Avvisi
 
 Arrivano a tutte le chat in `allowed_chat_ids` (e in `admin_chat_ids`), in parallelo. Se la rete cade il bot riprova per qualche minuto, se Telegram chiede di rallentare aspetta; una chat che ha bloccato il bot viene saltata senza togliere l'avviso alle altre:
@@ -370,6 +384,16 @@ Arrivano a tutte le chat in `allowed_chat_ids` (e in `admin_chat_ids`), in paral
 - nodo nuovo sentito e nodo che non si sente più (facoltativi, in **Gestione → Telegram → Avvisi nodi**);
 - nuova versione di MeshWatch disponibile (una volta per versione), esito di aggiornamenti e ripristini;
 - nuovo firmware MeshCore per il gateway e ripetitori rimasti indietro (una volta per versione), avanzamento ed esito dell'aggiornamento del firmware.
+
+Gli avvisi su cui si può fare qualcosa arrivano con i pulsanti:
+
+| Avviso | Pulsanti |
+|---|---|
+| dispositivo che non risponde | 📍 Riprova ora · 🕓 Ultima posizione · ⏸ Pausa (solo chat admin) |
+| batteria bassa del dispositivo | solo chat admin: ⏸ Pausa · ⏱ Ogni 60 min (se l'intervallo è più breve, per risparmiare batteria) |
+| sensore fuori soglia | 🌡️ Sensori |
+| ripetitore che non risponde | 🔄 Interroga ora (solo chat admin) |
+| nuova versione | ⬆️ Installa, solo nelle chat admin: ricontrolla la versione e chiede conferma come `/aggiornamento` |
 
 ### Mappa e riepilogo su Telegram
 
@@ -926,7 +950,7 @@ A ogni push e pull request GitHub Actions ([`.github/workflows/test.yml`](.githu
 | `test_chat.py` | chat, rubrica del gateway, mappa della rete, coda della radio |
 | `test_update.py` | aggiornamento dalla pagina e ripristino della versione precedente |
 | `test_firmware.py` | firmware MeshCore: release, scelta della scheda, scrittura ESP32/nRF52 simulata, errori, ripetitori, pagina e bot |
-| `test_features.py` | sensori e soglie, percorsi, copertura, tempo reale, comandi del bot |
+| `test_features.py` | sensori e soglie, percorsi, copertura, tempo reale, comandi e pulsanti del bot |
 | `test_tiles.py` | cache delle mappe con un server delle mappe finto: scadenza, 304, senza Internet, spazio massimo |
 | `test_restore.py` | ripristino dalla pagina: password, file non validi, avvisi, applicazione al riavvio, annullamento, kit SD |
 | `test_netstats.py` | statistiche della rete: storico dei nodi, doppioni, avvisi nodi nuovi e spariti, disponibilità, previsione della batteria, confronto, collegamenti, API |

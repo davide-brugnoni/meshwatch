@@ -95,7 +95,7 @@ class Core:
         self.cfg = cfg
         self.db = db
         self.mesh = mesh
-        self.notifiers = []          # funzioni async(text) per gli avvisi (Telegram, ...)
+        self.notifiers = []          # funzioni async(text, actions) per gli avvisi (Telegram, ...)
         self.wakeup = asyncio.Event()
         self.next_due = {}           # tracker_id -> timestamp prossima richiesta
         self.alerts = {}             # chiave -> set di avvisi attivi
@@ -147,10 +147,13 @@ class Core:
                 "time": t or self.db.get("tg_report_prev") or "21:00"}
 
     # ---------- avvisi
-    async def notify(self, text):
+    async def notify(self, text, actions=None):
+        """actions: azioni proposte con l'avviso, che Telegram mostra come pulsanti. Tuple
+        ("pos"|"last"|"pause"|"sens", id_dispositivo), ("interval", id, minuti), ("rep", nome
+        del ripetitore), ("upd",) per installare la nuova versione (solo chat admin)."""
         for n in self.notifiers:
             try:
-                await n(text)
+                await n(text, actions or [])
             except Exception as e:
                 log.error("Notifica fallita: %s", e)
 
@@ -163,7 +166,7 @@ class Core:
             repeat = 0
         return {"batt_repeat_h": repeat, "batt_quiet": self.db.get("batt_quiet", "") or ""}
 
-    async def _battery_alert(self, key, v, lim, text):
+    async def _battery_alert(self, key, v, lim, text, actions=None):
         """Batteria sotto la soglia: avvisa subito, poi di nuovo ogni batt_repeat_h ore. Durante
         la fascia di silenzio non manda nulla: se la batteria è ancora bassa l'avviso arriva
         alla prima lettura dopo la fine della fascia. Risale di 0,1 V sopra la soglia: si riparte."""
@@ -179,7 +182,7 @@ class Core:
         if last is not None and (not st["batt_repeat_h"] or time.time() - last < st["batt_repeat_h"] * 3600):
             return
         self.batt_sent[key] = time.time()
-        await self.notify(text)
+        await self.notify(text, actions)
 
     def _flags(self, key):
         return self.alerts.setdefault(key, set())
@@ -283,7 +286,8 @@ class Core:
         lim = t["low_battery_v"]
         if lim and res["batt_v"] is not None:
             await self._battery_alert(("t", t["id"]), res["batt_v"], lim,
-                                      f"🔋 Batteria bassa su {t['label']}: {res['batt_v']:.2f} V")
+                                      f"🔋 Batteria bassa su {t['label']}: {res['batt_v']:.2f} V",
+                                      [("pause", t["id"])] + ([("interval", t["id"], 60)] if t["interval_min"] < 60 else []))
 
     async def _sensor_alerts(self, t, sensors):
         """Soglie impostate dalla pagina: un avviso quando il valore supera la soglia, uno
@@ -300,7 +304,8 @@ class Core:
             limit = f"{'sotto' if r['op'] == '<' else 'sopra'} {fmt_sensor(r['type'], r['channel'], r['value'])}"
             if out and key not in f:
                 f.add(key)
-                await self.notify(f"🌡️ {t['label']}: {what} {fmt_sensor(r['type'], r['channel'], v)} ({limit})")
+                await self.notify(f"🌡️ {t['label']}: {what} {fmt_sensor(r['type'], r['channel'], v)} ({limit})",
+                                  [("sens", t["id"])])
             elif not out and key in f:
                 f.discard(key)
                 await self.notify(f"✅ {t['label']}: {what} di nuovo nella norma ({fmt_sensor(r['type'], r['channel'], v)})")
@@ -327,7 +332,7 @@ class Core:
             if p:
                 when = datetime.fromtimestamp(p["ts"]).strftime("%d/%m %H:%M")
                 msg += f"\nUltima posizione ({when}):\n{maps_link(p['lat'], p['lon'])}"
-            await self.notify(msg)
+            await self.notify(msg, [("pos", t["id"]), ("last", t["id"]), ("pause", t["id"])])
 
     def find_trackers(self, text):
         """Dispositivi che corrispondono a un nome scritto (es. su Telegram): prima uguale al nome
@@ -426,7 +431,7 @@ class Core:
             last, good = self.db.repeater_latest(name)
             if good and time.time() - good["ts"] > 3 * 3600 and "offline" not in f:
                 f.add("offline")
-                await self.notify(f"📡 Il ripetitore {name} non risponde da più di 3 ore.")
+                await self.notify(f"📡 Il ripetitore {name} non risponde da più di 3 ore.", [("rep", name)])
             return
         if "offline" in f:
             f.discard("offline")
@@ -859,7 +864,8 @@ class Core:
                     how = ("Per installarla: /aggiornamento da una chat admin, oppure pagina → Gestione → "
                            "Aggiornamento programma → Aggiorna ora."
                            if not st.get("problems") else "Dalla pagina non si può aggiornare: vedi Gestione → Aggiornamento programma.")
-                    await self.notify(f"🆕 Nuova versione di MeshWatch disponibile:\n{latest.get('message', '')}\n{how}")
+                    await self.notify(f"🆕 Nuova versione di MeshWatch disponibile:\n{latest.get('message', '')}\n{how}",
+                                      [] if st.get("problems") else [("upd",)])
             except Exception as e:
                 log.info("Controllo aggiornamenti non riuscito: %s", e)
             await asyncio.sleep(every)
