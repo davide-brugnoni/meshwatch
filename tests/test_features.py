@@ -73,7 +73,7 @@ def test_sensors():
     db, mesh, core, c, v, anon, tid = setup()
     notes = []
 
-    async def collect(text):
+    async def collect(text, actions=None):
         notes.append(text)
     core.notifiers.append(collect)
 
@@ -149,7 +149,7 @@ def test_battery_alerts():
     db, mesh, core, c, v, anon, tid = setup()
     notes = []
 
-    async def collect(text):
+    async def collect(text, actions=None):
         notes.append(text)
     core.notifiers.append(collect)
     alert = lambda volt: asyncio.run(core._battery_alert(("t", tid), volt, 3.5, f"batt {volt}"))
@@ -429,17 +429,19 @@ class FakeLiveBot:
 
 class FakeChat:
     def __init__(self, cid=1, type="private"):
-        self.id, self.sent, self.locations, self.photos = cid, [], [], []
+        self.id, self.sent, self.locations, self.photos, self.kbs = cid, [], [], [], []
         self.type = type
 
-    async def send_photo(self, photo, caption="", **kw):
+    async def send_photo(self, photo, caption="", reply_markup=None, **kw):
         self.photos.append((photo, caption))
+        self.kbs.append(reply_markup)
 
     async def send_action(self, action):
         pass
 
-    async def send_message(self, text, **kw):
+    async def send_message(self, text, reply_markup=None, **kw):
         self.sent.append(text)
+        self.kbs.append(reply_markup)
 
     async def send_location(self, latitude, longitude, live_period=None, **kw):
         m = FakeMsg(self, latitude, longitude)
@@ -829,6 +831,7 @@ def test_telemetry_retries():
     check(res and res["lat"] == 43.35 and m.mc.commands.calls == 3 and m.mc.commands.resets == 2,
           "risposta al terzo tentativo, dopo due tentativi in flood")
     check(m.tried["Alice"] == (1, ["b2"]), "percorso provato per primo ricordato")
+    check(m.direct["Alice"] == (["b2"], False), "tentativo diretto senza risposta registrato")
     m = radio(answer_at=0)
     check(asyncio.run(m.request_telemetry("Alice")) is None and m.mc.commands.calls == 3, "nessuna risposta dopo tre tentativi")
     m = radio(answer_at=1, late=True)
@@ -836,10 +839,31 @@ def test_telemetry_retries():
     check(res and res["lat"] == 43.35 and m.mc.commands.calls == 2,
           "risposta in ritardo al primo tentativo accettata durante il secondo")
     check(not m.mc.subs, "nessun ascolto rimasto attivo")
+    check(m.direct["Alice"] == (["b2"], True), "risposta in ritardo al tentativo diretto: il percorso funziona")
     m = radio(answer_at=1)
     res = asyncio.run(m.request_telemetry("Alice", flood_first=True))
     check(res and m.mc.commands.resets == 1 and m.tried["Alice"] == (-1, []),
           "in movimento: primo tentativo già in flood")
+    check(m.direct["Alice"] is None, "partendo in flood il percorso salvato non viene giudicato")
+
+    # advert: rubrica riletta e on_advert chiamato solo per i contatti che interessano
+    m = radio(answer_at=1)
+    got, reads = [], []
+
+    async def ensure(follow=False):
+        reads.append(1)
+    m.mc.ensure_contacts = ensure
+    m.mc.get_contact_by_key_prefix = lambda k: next((c for c in m.mc.raw.values() if c["public_key"].startswith(k)), None)
+
+    async def on_adv(info):
+        got.append(info["name"])
+    m.on_advert, m.wants_advert = on_adv, lambda n: n == "Alice"
+    asyncio.run(m._on_advert(SimpleNamespace(payload={"public_key": ALICE})))
+    check(got == ["Alice"] and reads, "advert di un tracker passato al ciclo dei dispositivi")
+    m.wants_advert = lambda n: False
+    got.clear(), reads.clear()
+    asyncio.run(m._on_advert(SimpleNamespace(payload={"public_key": ALICE})))
+    check(not got and not reads, "advert di altri nodi: nessuna lettura in più della rubrica")
 
     db, mesh, core, c, v, anon, tid = setup()
     bot = Bot({"token": "123456:TEST", "allowed_chat_ids": [1]}, core)
@@ -891,13 +915,8 @@ def test_bot_update():
     bot = Bot({"token": "123456:TEST", "allowed_chat_ids": [1, 2], "admin_chat_ids": [1]}, core, None, up)
     chat, viewer = FakeChat(1), FakeChat(2)
     run = asyncio.run
-    kbs = []
+    kbs = chat.kbs   # la conferma arriva con send_message (anche dal pulsante Installa dell'avviso)
     upd = FakeUpdate(chat)
-
-    async def reply(text, reply_markup=None, **kw):
-        chat.sent.append(text)
-        kbs.append(reply_markup)
-    upd.message.reply_text = reply
 
     run(bot.update_cmd(FakeUpdate(viewer), Ctx()))
     check("Solo le chat admin" in viewer.sent[-1], "/aggiornamento: solo chat admin")
@@ -1070,6 +1089,133 @@ def test_bot_permissions():
     mesh.request_telemetry = orig
 
 
+def test_bot_buttons():
+    """Pulsanti sotto avvisi e risposte: azioni con un tocco, periodi, segui, solo admin dove serve."""
+    from meshwatch import bot as botmod
+    from meshwatch.bot import Bot
+    db, mesh, core, c, v, anon, tid = setup()
+    bot = Bot({"token": "123456:TEST", "allowed_chat_ids": [1, 2], "admin_chat_ids": [1]}, core)
+    core.notifiers.remove(bot.broadcast)   # niente Telegram vero: gli avvisi li raccoglie il test
+    chat, viewer = FakeChat(1), FakeChat(2)
+    run = asyncio.run
+    datas = lambda kb: [b.callback_data for row in kb.inline_keyboard for b in row] if kb else []
+
+    # avviso "non risponde": arriva con le azioni, diventano pulsanti in ogni chat
+    got, sent = [], []
+
+    async def collect(text, actions=None):
+        got.append((text, actions))
+    core.notifiers.append(collect)
+    run(core.poll_tracker(tid))
+    db._exec("UPDATE tracker_polls SET ts = ts - 7200")
+    db.update_tracker(tid, offline_alert_min=30)
+    run(core._tracker_fail(db.tracker(tid)))
+    core.notifiers.remove(collect)
+    check(got and "non risponde" in got[-1][0] and got[-1][1] == [("pos", tid), ("last", tid), ("pause", tid)],
+          "avviso non risponde: con le azioni proposte")
+
+    class FakeTgBot:
+        async def send_message(self, cid, text, reply_markup=None, **kw):
+            sent.append((cid, datas(reply_markup)))
+    bot.app = type("A", (), {"bot": FakeTgBot()})()
+    run(bot.broadcast("🆕 Nuova versione", [("upd",), ("rep", "Rip-Monte")]))
+    check(dict(sent) == {1: ["updchk", "rep:Rip-Monte"], 2: []},
+          "avviso: Installa e Interroga solo nelle chat admin")
+    sent.clear()
+    run(bot.broadcast("📻 Radio scollegata"))
+    check(dict(sent) == {1: [], 2: []}, "avviso senza azioni: nessun pulsante")
+    check(datas(botmod.alert_buttons([("pos", tid), ("last", tid), ("pause", tid), ("interval", tid, 60), ("sens", tid)], True))
+          == [f"a:pos:{tid}:", f"a:last:{tid}:", f"a:pause:{tid}:", f"a:interval:{tid}:60", f"a:sens:{tid}:"],
+          "pulsanti degli avvisi")
+    check(all(len(d.encode()) <= 64 for d in datas(botmod.alert_buttons([("rep", "R" * 200)], True))),
+          "callback_data entro i 64 byte di Telegram")
+
+    class Q:
+        def __init__(self, chat, data, user=None):
+            self.message = type("M", (), {"chat": chat})()
+            self.from_user = SimpleNamespace(id=user if user is not None else chat.id)
+            self.data, self.removed = data, False
+
+        async def answer(self):
+            pass
+
+        async def edit_message_reply_markup(self, markup):
+            self.removed = True
+
+    def press(ch, data, user=None):
+        q = Q(ch, data, user)
+        run(bot.on_button(type("U", (), {"callback_query": q})(), None))
+        return q
+
+    # Pausa e intervallo: come sulla pagina, solo admin
+    press(viewer, f"a:pause:{tid}:")
+    check(db.tracker(tid)["paused"] == 0 and viewer.sent[-1] == botmod.NOT_ADMIN, "Pausa dal pulsante: non da un viewer")
+    press(viewer, f"a:interval:{tid}:60")
+    check(db.tracker(tid)["interval_min"] == 30 and viewer.sent[-1] == botmod.NOT_ADMIN, "intervallo dal pulsante: non da un viewer")
+    # Pausa dall'avviso: il pulsante resta, la risposta offre Riprendi
+    q = press(chat, f"a:pause:{tid}:")
+    check(db.tracker(tid)["paused"] == 1 and not q.removed and datas(chat.kbs[-1]) == [f"a:resume:{tid}:"],
+          "Pausa dal pulsante: pulsante lasciato, risposta con Riprendi")
+    press(chat, f"a:resume:{tid}:")
+    check(db.tracker(tid)["paused"] == 0 and datas(chat.kbs[-1]) == [f"a:pause:{tid}:"], "Riprendi dal pulsante")
+    press(chat, f"a:interval:{tid}:60")
+    check(db.tracker(tid)["interval_min"] == 60, "intervallo dal pulsante dell'avviso")
+    press(FakeChat(99), f"a:pause:{tid}:")
+    check(db.tracker(tid)["paused"] == 0, "chat non autorizzata: pulsante ignorato")
+    press(viewer, "a:bogus:1:")
+    press(viewer, "a:pos:9999:")
+    check("non più presente" in viewer.sent[-1], "pulsante su un dispositivo cancellato")
+    # scelta del dispositivo: lì i pulsanti spariscono dopo l'uso
+    check(press(viewer, f"last:{tid}:").removed, "scelta del dispositivo: pulsanti tolti dopo l'uso")
+
+    # posizione: Di nuovo · Mappa · Segui
+    mesh.fix = True
+    run(core.poll_tracker(tid))
+    press(chat, f"a:last:{tid}:")
+    check(datas(chat.kbs[-1]) == [f"a:pos:{tid}:", f"a:map:{tid}:1", f"a:follow:{tid}:2"], "posizione: pulsanti di seguito")
+
+    # statistiche e mappa: gli altri periodi
+    press(chat, f"a:stats:{tid}:7")
+    check("ultimi 7 giorni" in chat.sent[-1] and datas(chat.kbs[-1]) == [f"a:stats:{tid}:1", f"a:stats:{tid}:30"],
+          "statistiche: pulsanti per gli altri periodi")
+    check(datas(botmod.period_buttons("map", "all", 1)) == ["a:map:all:7", "a:map:all:30"], "mappa: pulsanti dei periodi")
+
+    # segui: Basta e altre durate
+    bot.app = SimpleNamespace(bot=FakeLiveBot())   # ferma la posizione in diretta per id, come Telegram
+    press(chat, f"a:follow:{tid}:2")
+    check((1, tid) in bot.live and datas(chat.kbs[-1]) == [f"stop:{tid}", f"a:follow:{tid}:1", f"a:follow:{tid}:4",
+                                                            f"a:follow:{tid}:8"], "segui: Basta e altre durate")
+    live = chat.locations[-1]
+    press(chat, f"stop:{tid}")
+    check(live.stopped and (1, tid) not in bot.live and "fermata" in chat.sent[-1], "⏹ Basta dal pulsante")
+    press(chat, f"stop:{tid}")
+    check("già terminata" in chat.sent[-1], "⏹ Basta su una posizione in diretta già finita")
+
+    # ripetitore e nodi
+    press(viewer, "rep:Sconosciuto")
+    check(viewer.sent[-1] == botmod.NOT_ADMIN, "Interroga ora: non da un viewer")
+    press(viewer, "nodes:refresh")
+    check(viewer.sent[-1] == botmod.NOT_ADMIN, "Interroga i ripetitori: non da un viewer")
+    press(chat, "rep:Sconosciuto")
+    check("non è più tra i ripetitori" in chat.sent[-1], "Interroga ora: ripetitore rimosso")
+    check(datas(botmod.NODES_BUTTONS) == ["nodes:refresh"] and "Stato" in bot.nodes_text(), "/nodi con il pulsante Interroga")
+
+    # Installa: solo admin, ricontrolla la versione
+    press(viewer, "updchk")
+    check(viewer.sent[-1] == botmod.NOT_ADMIN, "Installa da una chat non admin: rifiutato")
+    press(chat, "updchk")
+    check("Aggiornamento non disponibile" in chat.sent[-1], "Installa: passa dal controllo della versione")
+
+    # gruppo admin: Installa e Pausa solo per chi è admin, non per un membro qualsiasi
+    bot.admins.add(-100)
+    bot.allowed.add(-100)
+    group = FakeChat(-100, type="supergroup")
+    press(group, f"a:pause:{tid}:", user=99)
+    check(db.tracker(tid)["paused"] == 0 and group.sent[-1] == botmod.NOT_ADMIN, "gruppo: Pausa non da un membro qualsiasi")
+    press(group, f"a:pause:{tid}:", user=1)
+    check(db.tracker(tid)["paused"] == 1, "gruppo: Pausa dall'admin")
+
+
 def test_packet_stats():
     """Statistiche complete di ripetitori e gateway: salvate, nello storico, nel bot."""
     from meshwatch.bot import traffic_text
@@ -1115,6 +1261,120 @@ def test_packet_stats():
     check(not db.gateway_history(0), "pulizia: storico del gateway vecchio eliminato")
 
 
+def test_reliability():
+    """Recupero rapido dopo un fallimento, posizioni dagli advert, percorso inaffidabile,
+    attese adattive."""
+    import random as _random
+    db, mesh, core, c, v, anon, tid = setup()
+    t = db.tracker(tid)
+    db.update_tracker(tid, interval_min=30)
+    t = db.tracker(tid)
+    _random.seed(1)
+    d = core.next_delay_s(t)
+    check(27 * 60 <= d <= 33 * 60, "intervallo normale con variazione casuale del 10%")
+    mesh.answer = False
+    asyncio.run(core.poll_tracker(tid, attempts=2))
+    check(core.fail_streak[tid] == 1 and core.next_delay_s(t) <= 2 * 60 * 1.1, "dopo un fallimento si riprova dopo 2 minuti")
+    asyncio.run(core.poll_tracker(tid))
+    check(core.next_delay_s(t) <= 5 * 60 * 1.1, "poi dopo 5 minuti")
+    asyncio.run(core.poll_tracker(tid))
+    check(9 * 60 <= core.next_delay_s(t) <= 11 * 60, "poi dopo 10 minuti")
+    asyncio.run(core.poll_tracker(tid))
+    check(18 * 60 <= core.next_delay_s(t) <= 22 * 60, "poi il doppio: 20 minuti")
+    for _ in range(20):
+        asyncio.run(core.poll_tracker(tid))
+    check(27 * 60 <= core.next_delay_s(t) <= 33 * 60, "spento a lungo: si torna all'intervallo normale")
+    check(Core({}, db, mesh).fail_streak.get(tid) == core.fail_streak[tid], "fallimenti di fila ricordati dopo un riavvio")
+    core.fail_streak[tid] = 1
+    db.update_tracker(tid, interval_min=5)
+    check(core.next_delay_s(db.tracker(tid)) <= 5 * 60 * 1.1, "mai oltre l'intervallo normale")
+    db.update_tracker(tid, interval_min=30)
+
+    # advert di un tracker che non rispondeva: richiesta anticipata
+    core.next_due[tid] = time.time() + 600
+    now = int(time.time())
+    info = {"name": "Alice", "last_advert": now - 5, "lat": 43.1, "lon": 12.1}
+    asyncio.run(core.on_advert(info))
+    check(core.next_due[tid] <= time.time() + core.ADVERT_POLL_GAP_S and core.soon.get(tid),
+          "advert dopo richieste senza risposta: si chiede subito la posizione (ma non a meno di un minuto dall'ultima)")
+    core.next_due[tid] = time.time() + 600
+    asyncio.run(core.on_advert({**info, "last_advert": now - 4}))
+    check(core.next_due[tid] > time.time() + 500, "un solo anticipo per serie di fallimenti (collegamento a senso unico)")
+    core.boosted[tid] -= core.ADVERT_REBOOST_S
+    asyncio.run(core.on_advert({**info, "last_advert": now - 3}))
+    check(core.next_due[tid] < time.time() + 500, "mezz'ora dopo un altro advert anticipa di nuovo")
+    n = len(db.positions_since(tid, 0))
+    check(n == 0, "primo advert: posizione solo ricordata (potrebbe essere impostata a mano)")
+    asyncio.run(core.on_advert(info))
+    check(len(db.positions_since(tid, 0)) == 0, "advert ripetuto ignorato")
+    asyncio.run(core.on_advert({**info, "last_advert": now - 2}))
+    check(len(db.positions_since(tid, 0)) == 0, "stessa posizione dell'advert precedente: non è GPS, ignorata")
+    asyncio.run(core.on_advert({**info, "last_advert": now - 1, "lat": 43.2}))
+    pos = db.positions_since(tid, 0)
+    check(len(pos) == 1 and pos[0]["lat"] == 43.2 and pos[0]["src"] == "advert", "posizione nuova dall'advert salvata")
+    asyncio.run(core.on_advert({**info, "last_advert": now, "lat": 43.3}))
+    asyncio.run(core.on_advert({**info, "last_advert": now - 30, "lat": 43.4}))
+    check(len(db.positions_since(tid, 0)) == 2, "advert più vecchio dell'ultimo ricevuto ignorato")
+    db.set(f"advert_{tid}", f"{now + 10 ** 6},43.3,12.1")
+    asyncio.run(core.on_advert({**info, "last_advert": now + 1, "lat": 43.5}))
+    check(len(db.positions_since(tid, 0)) == 3, "dopo un advert con l'ora nel futuro i successivi valgono ancora")
+    asyncio.run(core.on_advert({**info, "last_advert": now + 3 * 3600, "lat": 43.6}))
+    check(len(db.positions_since(tid, 0)) == 3, "advert con l'ora sbagliata di ore: posizione ignorata")
+    check(mesh.wants_advert("Alice") and not mesh.wants_advert("Bob"), "advert letti solo per i tracker")
+    asyncio.run(core.on_advert({"name": "Altro", "last_advert": now, "lat": 1.0, "lon": 1.0}))
+    check(len(db.positions_since(tid, 0)) == 3, "advert di un contatto che non è un tracker ignorato")
+
+    # risposta: tutto torna normale
+    mesh.answer = True
+    asyncio.run(core.poll_tracker(tid))
+    check(core.fail_streak[tid] == 0 and core.next_delay_s(t) >= 27 * 60, "dopo una risposta si torna all'intervallo normale")
+
+    # percorso che fallisce spesso: si parte in flood anche da fermi
+    core.moving[tid] = False
+    check(not core.path_unreliable(tid), "percorso affidabile")
+    route = db.last_route(tid)["path"]
+    for _ in range(5):
+        db.add_tracker_poll(tid, True, len(route), route)   # risposte in flood: non contano per il percorso
+    db.add_tracker_poll(tid, True, len(route), route, direct=(route, True))
+    db.add_tracker_poll(tid, False, len(route), route, direct=(route, False))
+    check(not core.path_unreliable(tid), "un solo fallimento del tentativo diretto: ancora affidabile")
+    db.add_tracker_poll(tid, True, len(route), route, direct=(route, False))   # diretto a vuoto, poi risposta in flood
+    check(core.path_unreliable(tid), "percorso che ha fallito più volte di quante ha risposto: inaffidabile")
+    asyncio.run(core.poll_tracker(tid))
+    check(mesh.flood_first, "con il percorso inaffidabile il primo tentativo è in flood")
+    db._exec("UPDATE tracker_polls SET ts=ts-4*3600 WHERE direct_path IS NOT NULL")
+    check(not core.path_unreliable(tid), "percorso inaffidabile non provato da ore: si riprova in diretto")
+
+    # un giro del ciclo vero: richiesta, ripianificazione, tracker eliminato tolto dalle scadenze
+    async def loop_run():
+        core.POLL_GAP_S = 0
+        core.next_due.clear()
+        mesh.answer = False
+        core.next_due[999] = time.time() - 5     # tracker eliminato
+        task = asyncio.create_task(core.tracker_loop())
+        await asyncio.sleep(0.3)
+        task.cancel()
+    asyncio.run(loop_run())
+    check(999 not in core.next_due and time.time() + 60 < core.next_due[tid] <= time.time() + 2 * 60 * 1.1,
+          "ciclo: dopo una richiesta a vuoto la prossima tra 2 minuti; scadenze dei tracker eliminati tolte")
+    mesh.answer = True
+
+    # attese adattive
+    m = Mesh()
+    check(m.wait_for(False) == m.DIRECT_WAIT_S and m.wait_for(True) == m.FLOOD_WAIT_S, "attese minime senza misure")
+    m._record_latency(False, 40, "Alice")
+    check(m.wait_for(False, name="Alice") == m.DIRECT_WAIT_S, "una sola risposta lenta non cambia l'attesa")
+    for x in (10, 20, 40, 40, 40, 40, 40, 40, 150):
+        m._record_latency(True, x, "Alice")
+    check(m.wait_for(True, name="Alice") == 52 and m.wait_for(False, name="Alice") == m.DIRECT_WAIT_S,
+          "flood lento: si aspetta di più prima di ritrasmettere (il valore anomalo non conta)")
+    check(m.wait_for(True, name="Bob") == m.FLOOD_WAIT_S, "tempi misurati per ogni nodo")
+    for _ in range(20):
+        m._record_latency(True, 200, "Alice")
+    check(m.wait_for(True, name="Alice") == m.MAX_WAIT_S[True], "attesa mai oltre il massimo")
+    check(m.wait_for(False, 25) == 25, "attesa suggerita dalla radio rispettata")
+
+
 def main():
     test_packet_stats()
     test_sensors()
@@ -1127,7 +1387,9 @@ def main():
     test_bot_images()
     test_bot_update()
     test_bot_permissions()
+    test_bot_buttons()
     test_telemetry_retries()
+    test_reliability()
     print("Tutti i test superati.")
 
 

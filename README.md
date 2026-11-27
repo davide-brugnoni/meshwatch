@@ -53,6 +53,8 @@ Gira su un Raspberry Pi con una radio MeshCore in modalità *Companion USB* (Hel
 
 - **Tracciamento GPS**: a intervalli regolari chiede la telemetria ai dispositivi scelti e salva la traccia. Più dispositivi, ognuno con il suo colore, intervallo, fascia oraria e soglie di avviso.
 - **Cambio di ripetitore**: quando il dispositivo passa da un ripetitore all'altro il percorso salvato non vale più: la richiesta passa in flood (subito, se si sta spostando o la richiesta prima è andata a vuoto) e una risposta che arriva in ritardo viene accettata comunque.
+- **Meno posizioni perse**: se una richiesta va a vuoto si riprova dopo 2, poi 5, poi 10 minuti invece di aspettare l'intervallo intero; se il dispositivo manda un advert mentre non rispondeva (è appena tornato in copertura) gli si chiede la posizione entro pochi secondi. Se il percorso salvato fallisce più spesso di quanto funzioni si parte direttamente in flood. L'attesa prima di ritrasmettere si adatta ai tempi di risposta misurati, e gli intervalli hanno una piccola variazione casuale per non trasmettere sempre insieme ad altro traffico periodico.
+- **Posizioni dagli advert**: se il dispositivo condivide la posizione negli advert (GPS), ogni advert con una posizione nuova e recente viene salvato nella traccia senza usare la radio del gateway. Una posizione che negli advert non cambia mai (impostata a mano) viene ignorata. Va attivato sul dispositivo: firmware *sensor* con `gps advert share` (e un `advert.interval` adatto), companion con GPS acceso e condivisione della posizione negli advert. Con l'ora del dispositivo sbagliata di oltre 15 minuti la posizione dell'advert non viene usata.
 - **Intervallo adattivo**: facoltativo, per dispositivo. Se tra due posizioni si è spostato più di 150 m viene interrogato più spesso; quando si ferma torna all'intervallo normale.
 - **Pulizia tracce**: dal cestino sulla mappa (tutti i dispositivi) o da "Cancella traccia" (uno solo) si eliminano tutte le posizioni salvate, compresa l'ultima: sulla mappa non resta nulla. Solo admin.
 - **Sensori**: tutti i valori della telemetria (temperatura, umidità, pressione, luce, tensione, …) salvati a ogni risposta, anche senza fix GPS, con grafico per sensore e **soglie di avviso** su Telegram.
@@ -95,7 +97,9 @@ Le ultime funzionalità aggiunte (si installano con l'[aggiornamento dalla pagin
 - **`/rete` e pulsante 📶 Rete** su Telegram: il riassunto delle statistiche della rete anche fuori casa, con disponibilità e batteria dei ripetitori ben distinte (es. *risponde 100% · 🔋 4.12 V*) e dati subito disponibili anche appena dopo un riavvio; avvisi facoltativi per i nodi nuovi e per quelli che non si sentono più (**Gestione → Telegram → Avvisi nodi**).
 - **Firmware MeshCore**: aggiornamento del gateway da **Gestione → Rete → Firmware MeshCore** o con `/firmware`, versioni dei ripetitori e avvisi. Il **controllo automatico** delle nuove versioni si imposta dalla pagina, separato per gateway e ripetitori (interruttore, giorno e ora; di base la domenica alle 9). Vedi [Firmware MeshCore](#firmware-meshcore).
 - **Statistiche complete di ripetitori e gateway**: traffico, duplicati, airtime, coda ed errori, con grafici; quelle del gateway in **Gestione → Rete**.
+- **Pulsanti sotto avvisi e risposte** su Telegram: riprova, ultima posizione, pausa, interroga il ripetitore, installa la nuova versione, altri periodi per mappa e statistiche, ⏹ Basta per la posizione in diretta, senza scrivere i comandi. Vedi [Pulsanti sotto i messaggi](#pulsanti-sotto-i-messaggi).
 - **Bot Telegram più affidabile**: avvisi in parallelo a tutte le chat con nuovi tentativi, permessi come sulla pagina (*viewer* e *admin*), supporto dei gruppi con `admin_user_ids`, posizione in diretta che riprende dopo un riavvio.
+- **Meno posizioni perse e posizioni dagli advert**: dopo una richiesta a vuoto si riprova dopo 2, 5 e 10 minuti, l'advert di un dispositivo che non rispondeva fa partire subito una richiesta, i percorsi che falliscono spesso partono in flood e le posizioni GPS negli advert finiscono nella traccia senza usare la radio. Vedi [Cosa fa](#cosa-fa).
 - **Posizione più affidabile in movimento**: flood subito quando il dispositivo cambia ripetitore e risposte in ritardo accettate.
 - **Aggiornamento del programma anche da Telegram** (`/aggiornamento`), con conferma ed esito in chat.
 - **Backup divisi in configurazione e dati**: la configurazione (dispositivi, ripetitori, utenti, avvisi e `config.yaml`) sta in pochi kB e si ripristina senza toccare lo storico, anche su un Raspberry nuovo; i dati sono il database completo. Su Telegram, con **`/backup`**, si riceve subito quello che serve e si sceglie quale arriva ogni settimana. Vedi [Manutenzione e backup](#manutenzione-e-backup).
@@ -358,6 +362,19 @@ Due richieste di posizione allo stesso dispositivo nello stesso momento (dalla p
 
 Con `/segui` conviene attivare l'intervallo adattivo del dispositivo: in movimento le posizioni arrivano più spesso e il pin si sposta di conseguenza.
 
+### Pulsanti sotto i messaggi
+
+Le cose che si fanno più spesso dopo una risposta o un avviso hanno un pulsante, così dal telefono non serve scrivere il comando. Questi pulsanti restano sul messaggio e si possono premere di nuovo; quelli per scegliere il dispositivo invece spariscono dopo la scelta. Valgono le stesse regole dei comandi: i pulsanti che cambiano qualcosa (pausa, riprendi, intervallo, interroga, installa) compaiono e funzionano solo nelle chat admin, e nei gruppi solo per chi può gestire.
+
+| Sotto | Pulsanti |
+|---|---|
+| una posizione (adesso o ultima) | 🔄 Di nuovo · 🗺 Mappa · 👣 Segui |
+| mappa e statistiche | 📅 gli altri periodi: 24 ore · 7 giorni · 30 giorni |
+| posizione in diretta | ⏹ Basta · altre durate (1, 2, 4, 8 ore) |
+| pausa / ripresa del tracciamento | ▶️ Riprendi / ⏸ Pausa (solo admin) |
+| `/nodi` | 🔄 Interroga i ripetitori (solo admin) |
+
+
 ### Avvisi
 
 Arrivano a tutte le chat in `allowed_chat_ids` (e in `admin_chat_ids`), in parallelo. Se la rete cade il bot riprova per qualche minuto, se Telegram chiede di rallentare aspetta; una chat che ha bloccato il bot viene saltata senza togliere l'avviso alle altre:
@@ -370,6 +387,16 @@ Arrivano a tutte le chat in `allowed_chat_ids` (e in `admin_chat_ids`), in paral
 - nodo nuovo sentito e nodo che non si sente più (facoltativi, in **Gestione → Telegram → Avvisi nodi**);
 - nuova versione di MeshWatch disponibile (una volta per versione), esito di aggiornamenti e ripristini;
 - nuovo firmware MeshCore per il gateway e ripetitori rimasti indietro (una volta per versione), avanzamento ed esito dell'aggiornamento del firmware.
+
+Gli avvisi su cui si può fare qualcosa arrivano con i pulsanti:
+
+| Avviso | Pulsanti |
+|---|---|
+| dispositivo che non risponde | 📍 Riprova ora · 🕓 Ultima posizione · ⏸ Pausa (solo chat admin) |
+| batteria bassa del dispositivo | solo chat admin: ⏸ Pausa · ⏱ Ogni 60 min (se l'intervallo è più breve, per risparmiare batteria) |
+| sensore fuori soglia | 🌡️ Sensori |
+| ripetitore che non risponde | 🔄 Interroga ora (solo chat admin) |
+| nuova versione | ⬆️ Installa, solo nelle chat admin: ricontrolla la versione e chiede conferma come `/aggiornamento` |
 
 ### Mappa e riepilogo su Telegram
 
@@ -722,7 +749,7 @@ curl -s http://localhost:8080/api/health
 | radio non trovata / "permission denied" sulla porta | radio con firmware **Companion USB** (non Repeater o Room Server); utente nel gruppo `dialout`; prova a fissare `serial_port` con il percorso da `/dev/serial/by-id/` |
 | la radio si scollega spesso | alimentatore e cavo USB (`vcgencmd get_throttled`), cavo dati e non solo ricarica, hub USB alimentato |
 | il dispositivo non risponde alla posizione | nell'app MeshCore del dispositivo: gateway tra i *preferiti* e telemetria posizione consentita; nome del contatto identico; il dispositivo deve essere raggiungibile da un ripetitore; prova *azzera percorso* nella rubrica |
-| in movimento non risponde quando passa da un ripetitore all'altro | MeshWatch prova prima il percorso salvato e poi due volte in flood, e accetta anche le risposte in ritardo; se si sta spostando o la richiesta prima è andata a vuoto parte subito in flood. Nel registro (`journalctl -u meshwatch \| grep Telemetria`) si vede a quale tentativo risponde. Sul dispositivo: nell'app MeshCore azzera il percorso verso il gateway, così risponde lungo la strada nuova |
+| in movimento non risponde quando passa da un ripetitore all'altro | MeshWatch prova prima il percorso salvato e poi in flood (due volte per le richieste a mano), accetta anche le risposte in ritardo e, se non risponde, riprova dopo pochi minuti; se si sta spostando o la richiesta prima è andata a vuoto parte subito in flood. Nel registro (`journalctl -u meshwatch \| grep Telemetria`) si vede a quale tentativo risponde. Sul dispositivo: nell'app MeshCore azzera il percorso verso il gateway, così risponde lungo la strada nuova |
 | posizione arriva ma senza coordinate | il GPS non ha il fix (al chiuso): i sensori vengono salvati comunque |
 | ripetitore senza statistiche | password admin o guest del ripetitore corretta; ripetitore nella rubrica del gateway |
 | il bot non risponde | token corretto; chat ID in `allowed_chat_ids` (il bot lo dice scrivendogli `/start`); Internet sul Raspberry; nel registro cerca `Telegram` |
@@ -926,7 +953,7 @@ A ogni push e pull request GitHub Actions ([`.github/workflows/test.yml`](.githu
 | `test_chat.py` | chat, rubrica del gateway, mappa della rete, coda della radio |
 | `test_update.py` | aggiornamento dalla pagina e ripristino della versione precedente |
 | `test_firmware.py` | firmware MeshCore: release, scelta della scheda, scrittura ESP32/nRF52 simulata, errori, ripetitori, pagina e bot |
-| `test_features.py` | sensori e soglie, percorsi, copertura, tempo reale, comandi del bot |
+| `test_features.py` | sensori e soglie, percorsi, copertura, tempo reale, comandi e pulsanti del bot |
 | `test_tiles.py` | cache delle mappe con un server delle mappe finto: scadenza, 304, senza Internet, spazio massimo |
 | `test_restore.py` | ripristino dalla pagina: password, file non validi, avvisi, applicazione al riavvio, annullamento, kit SD |
 | `test_netstats.py` | statistiche della rete: storico dei nodi, doppioni, avvisi nodi nuovi e spariti, disponibilità, previsione della batteria, confronto, collegamenti, API |

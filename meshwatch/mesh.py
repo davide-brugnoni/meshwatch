@@ -3,6 +3,7 @@ import heapq
 import itertools
 import logging
 import time
+from collections import deque
 
 from meshcore import EventType, MeshCore
 from meshcore.packets import BinaryReqType
@@ -173,6 +174,10 @@ class Mesh:
         self.connecting = False
         self.on_message = None       # funzione async(dict) chiamata per ogni messaggio ricevuto
         self.on_rx = None            # funzione(dict) per ogni pacchetto sentito dalla radio (statistiche)
+        self.on_advert = None        # funzione async(contact_info) chiamata per ogni advert di un contatto
+        self.wants_advert = None     # funzione(nome) → True se on_advert vuole l'advert di quel contatto
+        self.latency = {}            # (nome, "direct"/"flood") → ultimi tempi di risposta alla telemetria (s)
+        self.direct = {}             # nome → (percorso, risposto) del primo tentativo se diretto, altrimenti None
         self.channels = []           # [{idx, name}] canali configurati nella radio
         self.cli_pending = set()     # prefissi dei ripetitori con un comando CLI in corso
         self.active_port = None      # porta USB in uso (serve per aggiornare il firmware)
@@ -276,6 +281,7 @@ class Mesh:
         self.mc.subscribe(EventType.CONTACT_MSG_RECV, self._on_contact_msg)
         self.mc.subscribe(EventType.CHANNEL_MSG_RECV, self._on_channel_msg)
         self.mc.subscribe(EventType.RX_LOG_DATA, self._on_rx_log)
+        self.mc.subscribe(EventType.ADVERTISEMENT, self._on_advert)
         await self.load_channels()
         await self.mc.start_auto_message_fetching()   # chat e risposte CLI
         log.info("Radio connessa, %d contatti, %d canali", len(self.mc.contacts), len(self.channels))
@@ -283,6 +289,25 @@ class Mesh:
     @property
     def connected(self):
         return bool(self.mc and self.mc.is_connected)
+
+    async def _on_advert(self, ev):
+        """Advert ricevuto: si rilegge la rubrica (posizione e ora dell'advert sono lì) e lo si
+        passa a on_advert. Un tracker che manda advert con la posizione la comunica così senza
+        che gliela si chieda, e il fatto di sentirlo dice che è di nuovo in copertura."""
+        key = (ev.payload or {}).get("public_key")
+        if not key or not self.on_advert or not self.mc:
+            return
+        try:
+            c = self.mc.get_contact_by_key_prefix(key)
+            # la libreria rilegge già la rubrica a ogni advert: qui solo per i contatti che interessano
+            if self.wants_advert and not (c and self.wants_advert(c.get("adv_name"))):
+                return
+            await self.mc.ensure_contacts(follow=True)
+            c = self.mc.get_contact_by_key_prefix(key)
+            if c:
+                await self.on_advert(self.contact_info(c))
+        except Exception as e:
+            log.error("Advert %s: %s", key[:12], e)
 
     async def contact(self, name):
         await self.mc.ensure_contacts(follow=True)
@@ -329,6 +354,25 @@ class Mesh:
     DIRECT_WAIT_S = 15    # attesa minima della risposta sul percorso salvato
     FLOOD_WAIT_S = 30     # attesa minima in flood: andata e ritorno attraversano più ripetitori
     LISTEN_S = 150        # per quanto si accetta ancora la risposta a un tentativo già scaduto
+    LATENCY_SAMPLES = 20  # tempi di risposta ricordati per nodo e tipo di invio
+    LATENCY_MIN = 8       # misure necessarie prima di allungare le attese
+    MAX_WAIT_S = {False: 30, True: 60}   # attesa massima di un tentativo (diretto, flood), anche con risposte lente
+
+    def wait_for(self, flood, suggested_s=0, name=None):
+        """Quanto aspettare la risposta a un tentativo prima del successivo: almeno l'attesa
+        minima e quella suggerita dalla radio, di più se le ultime risposte sono state più lente
+        (90° percentile dei tempi misurati, con margine). Così non si ritrasmette mentre la
+        risposta è ancora in viaggio, il che occuperebbe la rete senza alcun vantaggio."""
+        base = max(self.FLOOD_WAIT_S if flood else self.DIRECT_WAIT_S, suggested_s)
+        seen = sorted(self.latency.get((name, "flood" if flood else "direct"), ()))
+        if len(seen) >= self.LATENCY_MIN:
+            p90 = seen[int((len(seen) - 1) * 0.9)]     # un solo valore anomalo non conta
+            base = max(base, min(self.MAX_WAIT_S[flood], p90 * 1.3))
+        return base
+
+    def _record_latency(self, flood, secs, name=None):
+        key = (name, "flood" if flood else "direct")
+        self.latency.setdefault(key, deque(maxlen=self.LATENCY_SAMPLES)).append(secs)
 
     async def request_telemetry(self, name, attempts=3, flood_first=False):
         """Chiede la telemetria al nodo. Ritorna dict (lat, lon, alt, batt_v, sensors, hops, path) o None.
@@ -340,6 +384,8 @@ class Mesh:
         del previsto e prima quella risposta andava persa.
         Il percorso provato per primo resta in self.tried[name] (hops, path), anche se non risponde."""
         async with self.lock:
+            self.direct[name] = None     # nessun giudizio sul percorso se non si trasmette niente
+            self.tried.pop(name, None)
             c = await self.contact(name)
             if not c:
                 log.warning("Contatto '%s' non trovato", name)
@@ -349,11 +395,15 @@ class Mesh:
                 await self.mc.commands.reset_path(c)
                 info = {**info, "hops": -1, "path": []}
             self.tried[name] = (info["hops"], info["path"])
-            tags, last, done = set(), None, asyncio.get_running_loop().create_future()
+            tags, last, done = {}, None, asyncio.get_running_loop().create_future()
+            first = []    # tag del primo tentativo, se diretto
 
             def on_telemetry(ev):
-                if ev.payload.get("tag") in tags and not done.done():
-                    done.set_result((ev.payload.get("tag"), ev.payload.get("lpp")))
+                tag = ev.payload.get("tag")
+                if tag in tags and not done.done():
+                    sent_at, was_flood = tags[tag]
+                    self._record_latency(was_flood, time.monotonic() - sent_at, name)
+                    done.set_result((tag, ev.payload.get("lpp")))
 
             sub = self.mc.subscribe(EventType.TELEMETRY_RESPONSE, on_telemetry)
             try:
@@ -372,12 +422,16 @@ class Mesh:
                                 log.warning("Telemetria %s: la radio ha rifiutato la richiesta (%s)", name, sent.payload)
                             else:
                                 last = sent.payload["expected_ack"].hex()
-                                tags.add(last)
-                                wait = max(self.FLOOD_WAIT_S if flood else self.DIRECT_WAIT_S,
-                                           sent.payload.get("suggested_timeout", 0) / 800)
+                                tags[last] = (time.monotonic(), flood)
+                                if i == 0 and not flood:
+                                    first.append(last)
+                                wait = self.wait_for(flood, sent.payload.get("suggested_timeout", 0) / 800, name)
                                 await asyncio.wait([done], timeout=wait)
                     except Exception as e:
                         log.error("Telemetria %s: %s", name, e)
+                    if first:
+                        # esito del percorso salvato: ha risposto al tentativo diretto (anche in ritardo)?
+                        self.direct[name] = (info["path"], done.done() and done.result()[0] == first[0])
                     if done.done():
                         tag, lpp = done.result()
                         if i:
