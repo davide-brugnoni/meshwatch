@@ -46,6 +46,9 @@ jobs:
       - name: Statistiche della rete (nodi, disponibilità, batteria, collegamenti)
         run: python tests/test_netstats.py
 
+      - name: Pubblicazione delle statistiche
+        run: python tests/test_publish.py
+
       - name: Test aggiornamento dalla pagina
         run: python tests/test_update.py
 

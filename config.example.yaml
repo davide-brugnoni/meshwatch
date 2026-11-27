@@ -70,6 +70,16 @@ web:
 
 database: meshwatch.db
 
+# Dashboard pubblica: invio delle sole statistiche della rete a un sito esterno.
+# Si configura dalla pagina (Gestione → Dashboard); questi sono solo i valori di partenza.
+# publish:
+#   url: https://tuosito.it/api/meshwatch
+#   token: "una-stringa-lunga-e-casuale"
+#   interval_min: 15        # minimo 5
+#   grid_m: 500             # posizione dei ripetitori approssimata (0 = non pubblicarla)
+#   companions: false       # elencare anche i companion (mai la posizione)
+#   title: "Rete MeshCore"
+
 # Aggiornamento dalla pagina (Gestione → Sistema → Aggiornamento programma).
 # Facoltativo: di solito non serve toccarlo.
 # update:

@@ -58,6 +58,18 @@ class NodeAlertsIn(BaseModel):
     gone_h: int | None = Field(None, ge=1, le=24 * 30)
 
 
+class PublishIn(BaseModel):
+    enabled: bool | None = None
+    url: str | None = Field(None, max_length=300, pattern=r"^(|https://[^\s]+)$")
+    token: str | None = Field(None, max_length=200)
+    clear_token: bool | None = None
+    interval_min: int | None = Field(None, ge=5, le=1440)
+    grid_m: int | None = Field(None, ge=0, le=5000)
+    companions: bool | None = None
+    title: str | None = Field(None, max_length=80)
+    sections: list[str] | None = None
+
+
 class SensorRuleIn(BaseModel):
     type: str = Field(..., min_length=1, max_length=40)
     channel: int = Field(..., ge=0, le=255)
@@ -381,6 +393,49 @@ def create_app(core, auth, web_cfg, updater=None, tiles=None):
         gone = {"off": "spenti", "repeaters": "solo ripetitori", "all": "tutti i nodi"}[st["gone"]]
         audit(u, "avvisi nodi", f"nuovi {'sì' if st['new'] else 'no'}, spariti: {gone} dopo {st['gone_h']} ore")
         return st
+
+    # ---------- dashboard pubblica (Gestione → Dashboard)
+    def publish_info():
+        from .publish import GRIDS, SECTIONS
+        st = core.publisher.settings()
+        return {**{k: st[k] for k in ("url", "interval_min", "grid_m", "companions", "title", "sections")},
+                "enabled": st["on"], "ready": st["enabled"], "token_set": bool(st["token"]),
+                "last": core.publisher.last, "all_sections": SECTIONS, "grids": GRIDS}
+
+    @app.get("/api/publish")
+    async def publish_get(u=Depends(admin)):
+        return publish_info()
+
+    @app.put("/api/publish")
+    async def publish_set(body: PublishIn, u=Depends(admin)):
+        from .publish import GRIDS, SECTIONS, save_settings
+        new = body.model_dump(exclude_none=True)
+        if "sections" in new:
+            new["sections"] = [x for x in new["sections"] if x in SECTIONS]
+        if "grid_m" in new and new["grid_m"] not in GRIDS:
+            raise HTTPException(422, "precisione delle posizioni non valida")
+        if "title" in new:
+            new["title"] = new["title"].strip()
+        st = save_settings(db, core.cfg, **new)
+        core.publisher.wake.set()
+        audit(u, "dashboard pubblica", (f"attiva, ogni {st['interval_min']} min verso {st['url']}" if st["enabled"]
+                                         else "spenta" if not st["on"] else "incompleta (manca indirizzo o token)")
+              + (" · token cambiato" if body.token or body.clear_token else ""))
+        return publish_info()
+
+    @app.post("/api/publish/send")
+    async def publish_send(u=Depends(admin)):
+        try:
+            await core.publisher.send_once()
+        except Exception as e:
+            core.publisher.last = {"ok": False, "ts": int(time.time()), "error": str(e)[:200], "bytes": None}
+            raise HTTPException(502, str(e)[:200])
+        audit(u, "dashboard pubblica", "invio manuale")
+        return publish_info()
+
+    @app.get("/api/publish/preview")
+    async def publish_preview(u=Depends(admin)):
+        return await core.publisher.data()
 
     # ---------- tracker
     @app.post("/api/trackers/{tid}/poll")

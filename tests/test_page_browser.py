@@ -173,7 +173,7 @@ def main():
         check("rumore" in a.locator("#st-compare th.sorted").inner_text().lower() and a.locator("#st-nfilter .on").get_attribute("data-f") == "new",
               "statistiche: filtri e ordinamento")
         a.click("#tab-admin")
-        check(a.is_visible("#adm-nav") and a.locator("#adm-nav button").count() == 5, "gestione: 5 sezioni")
+        check(a.is_visible("#adm-nav") and a.locator("#adm-nav button").count() == 6, "gestione: 6 sezioni")
         a.click("#adm-nav [data-sec=dispositivi]")
         a.wait_for_selector("#adm-trackers .item")
         check(a.is_hidden("#ctc-list") and a.is_hidden("#sys-info"), "gestione: si vede solo la sezione scelta")
@@ -191,6 +191,22 @@ def main():
         a.click("#adm-nav [data-sec=sistema]")
         a.wait_for_selector("#tc-info :text('Tessere salvate')")
         check(a.is_checked("#form-tc [name=enabled]"), "gestione: cache delle mappe attiva")
+        a.click("#adm-nav [data-sec=dashboard]")
+        a.wait_for_selector("#pub-sections input")
+        check(a.evaluate("document.querySelectorAll('#pub-sections input:checked').length") == 8, "dashboard: tutte le sezioni proposte")
+        a.fill("#form-pub [name=url]", "https://esempio.test/api/meshwatch")
+        a.click("#pub-gen")
+        check(len(a.input_value("#form-pub [name=token]")) == 48, "dashboard: token generato nella pagina")
+        a.check("#form-pub [name=enabled]")
+        a.uncheck("#pub-sections input[value=nodes]")
+        a.click("#form-pub .primary")
+        a.wait_for_function("document.getElementById('pub-state').textContent.startsWith('Attiva')")
+        st = core.publisher.settings()
+        check(st["enabled"] and len(st["token"]) == 48 and "nodes" not in st["sections"], "dashboard: impostazioni salvate dalla pagina")
+        check("impostato" in a.get_attribute("#form-pub [name=token]", "placeholder") and not a.input_value("#form-pub [name=token]"),
+              "dashboard: il token salvato non si rivede")
+        if os.environ.get("SHOT"):
+            a.screenshot(path=os.environ["SHOT"], full_page=False)
         a.click("#adm-nav [data-sec=telegram]")
         a.wait_for_selector("#rep-off", state="visible")
         a.wait_for_function("document.querySelector('#form-nodes-alert [name=gone]').value === 'off'")
@@ -218,7 +234,7 @@ def main():
             ph.click(f"#mnav [data-t={tab}]")
             ph.wait_for_timeout(300)
             if tab == "admin":
-                for sec in ("dispositivi", "rete", "telegram", "sistema", "accessi"):
+                for sec in ("dispositivi", "rete", "telegram", "dashboard", "sistema", "accessi"):
                     ph.click(f"#adm-nav [data-sec={sec}]")
                     ph.wait_for_timeout(150)
                 over = ph.evaluate("document.getElementById('admin-scroll').scrollWidth > window.innerWidth + 1")
